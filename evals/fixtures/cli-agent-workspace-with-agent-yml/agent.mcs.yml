@@ -1,0 +1,10 @@
+mcs.metadata:
+  componentName: EvalCliAgent
+kind: GptComponentMetadata
+displayName: Eval CLI Agent
+instructions: |
+  You are a helpful IT helpdesk assistant for Contoso.
+  Be concise and ask a clarifying question when a request is ambiguous.
+conversationStarters:
+  - title: Get Started
+    text: How can you help me?

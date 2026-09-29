@@ -1,0 +1,7 @@
+mcs.metadata:
+  componentName: CheckVpnStatus
+kind: InlineAgentSkill
+displayName: Check VPN status
+description: Help the user find out why their VPN connection is failing.
+instructions: |
+  Ask which VPN client the user runs, then walk through the standard connectivity checks.

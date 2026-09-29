@@ -1,0 +1,6 @@
+mcs.metadata:
+  componentName: HelpCenter
+kind: KnowledgeSourceConfiguration
+source:
+  kind: PublicSiteSearchSource
+  site: https://help.example.com

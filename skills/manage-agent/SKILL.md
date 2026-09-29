@@ -97,6 +97,8 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 ## Phase 2: Execute Command
 
+**Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin).
+
 All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`) and read connection details from it.
 
 ### Pull (download remote changes)

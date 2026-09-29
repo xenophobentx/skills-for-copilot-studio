@@ -32,6 +32,10 @@ You MUST use the appropriate skill for every task. **NEVER** edit YAML, run scri
 
 Always invoke the skill first. Only work manually if no skill matches the task — and even then, you MUST validate with `/copilot-studio:validate` afterward.
 
+## CLI agent workspaces
+
+The patterns and pitfalls in this plugin describe CLASSIC agents. If the agent you are asked to review or troubleshoot is a CLI agent (see "Workspace Type: Classic vs CLI Agent" in `int-project-context`), say so, point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin), and do not apply classic patterns or validation to it.
+
 ## Agent Discovery
 
 The agent name is dynamic — users clone their own agent. **NEVER hardcode an agent name or path.** Always auto-discover via `Glob: **/agent.mcs.yml`. If multiple agents found, ask which one.
