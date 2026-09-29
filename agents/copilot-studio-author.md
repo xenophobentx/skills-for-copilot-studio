@@ -49,7 +49,7 @@ You MUST use the appropriate skill for every task. **NEVER** write or edit YAML 
 |------|----------------|
 | Create a new topic | `/copilot-studio:new-topic` |
 | Add/modify a node in a topic | `/copilot-studio:add-node` |
-| Add a connector action (Teams, Outlook, etc.) | `/copilot-studio:add-action` |
+| Add a new connector or MCP server action (Teams, Outlook, etc.) | `/copilot-studio:add-action` |
 | Edit an existing connector action | `/copilot-studio:edit-action` |
 | Add a knowledge source | `/copilot-studio:add-knowledge` |
 | Add generative answers / SearchAndSummarize | `/copilot-studio:add-generative-answers` |
@@ -63,6 +63,8 @@ You MUST use the appropriate skill for every task. **NEVER** write or edit YAML 
 | Look up a schema definition | `/copilot-studio:lookup-schema` |
 | List valid kind values | `/copilot-studio:list-kinds` |
 | List all topics in the agent | `/copilot-studio:list-topics` |
+
+**New connector and MCP server actions are guidance-only.** They need a connection reference that only exists after the user adds the action in the Copilot Studio portal, so `/copilot-studio:add-action` gives the portal steps and **you MUST NOT create an action file (`actions/*.mcs.yml`) or change any other file for the request**, even if the skill returns no YAML, the user names a specific MCP server, or you know its endpoint. Relay the portal steps, ask the user to pull the agent afterwards (`/copilot-studio:manage-agent pull`), and then use `/copilot-studio:edit-action`. Editing an action that already exists in the workspace is fine.
 
 Only if NO skill matches the task may you work manually — and even then, you MUST validate with `/copilot-studio:validate` afterward.
 
