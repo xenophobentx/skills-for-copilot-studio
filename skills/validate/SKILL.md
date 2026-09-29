@@ -27,8 +27,9 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
    Connection details come from `.mcs/conn.json` — read it to get tenant-id, environment-id, environment-url, and agent-mgmt-url.
 
 3. **Parse the JSON output**:
-   - `valid: true` → all files pass (may still have warnings)
+   - `status: "ok"` / `valid: true` → all files pass (may still have warnings)
    - `valid: false` + `summary.errors > 0` → report errors as FAIL items
+   - `status: "incomplete"` (also `incomplete: true`, with a non-zero exit code) → the language server timed out or exited before publishing diagnostics for every file, or a file could not be read. **This is NOT a pass.** Report `message` and the files listed in `missingFiles` and `unreadableFiles` as UNVERIFIED, and re-run validation. Do not tell the user the YAML is valid.
    - `summary.warnings > 0` → report as WARN items
    - Each file with diagnostics is listed with severity, message, code, and line range
 
@@ -47,6 +48,7 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
    [PASS] <filename> — no issues
    [FAIL] <filename> — <error message> (line X)
    [WARN] <filename> — <warning message> (line X)
+   [UNVERIFIED] <filename> — no diagnostics received (validation incomplete)
 
    Summary: X files checked, Y errors, Z warnings
    ```

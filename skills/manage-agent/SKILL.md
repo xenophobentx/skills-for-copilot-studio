@@ -116,7 +116,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
 
 **Important:** Always `pull` before `push` to get fresh row versions. If you push without pulling first, you'll get a `ConcurrencyVersionMismatch` error.
 
-Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors. Add `--force` to bypass validation (not recommended).
+Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors, or if validation is incomplete (the language server timed out or exited before reporting diagnostics for every file, or a file could not be read; the output then has `validation.status: "incomplete"` and the command exits non-zero). Add `--force` to bypass validation (not recommended).
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js push \
@@ -140,7 +140,9 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js validate \
   --agent-mgmt-url "<mgmtUrl>"
 ```
 
-Returns JSON: `{ "valid": true|false, "summary": { "errors": N, "warnings": N }, "files": [...] }`
+Returns JSON: `{ "status": "ok"|"error"|"incomplete", "valid": true|false, "summary": { "errors": N, "warnings": N }, "files": [...] }`
+
+If the language server times out or exits before publishing diagnostics for every file, or a file cannot be read, `status` is `"incomplete"` (`valid` is `false`), the output adds `incomplete: true`, `reason` (`"timeout"`, `"lsp-exited"` or `"unreadable"`), `message`, `missingFiles` and `unreadableFiles` (`[{ file, error }]`), and the process exits with code 1. An incomplete run is not a clean pass; re-run it.
 
 ### Clone (download agent to new local folder)
 

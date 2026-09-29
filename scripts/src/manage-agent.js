@@ -329,6 +329,8 @@ class LspClient {
     this._pipeServer = null;
     this._diagnostics = new Map(); // uri → diagnostics[]
     this._onDiagnosticsCallback = null;
+    this._onExitCallback = null;
+    this.exitInfo = null; // set when the LSP process exits or errors
   }
 
   async start() {
@@ -377,11 +379,15 @@ class LspClient {
     this.process.on("exit", (code, signal) => {
       log(`LSP process exited: code=${code}, signal=${signal}`);
       this.running = false;
+      this.exitInfo = `exited (code=${code}, signal=${signal})`;
+      if (this._onExitCallback) this._onExitCallback();
     });
 
     this.process.on("error", (err) => {
       log(`LSP process error: ${err.message}`);
       this.running = false;
+      this.exitInfo = `failed (${err.message})`;
+      if (this._onExitCallback) this._onExitCallback();
     });
 
     // Wait for the binary to connect to our socket
@@ -547,6 +553,7 @@ function findMcsYmlFiles(dir, results = []) {
   return results;
 }
 
+// Returns the files that could not be read (and so were not opened): [{ filePath, error }]
 function openFilesForDiagnostics(client, filePaths) {
   // Notify the server about all files via workspace/didChangeWatchedFiles first.
   // This mirrors the VS Code extension's file watcher behavior and triggers
@@ -559,49 +566,85 @@ function openFilesForDiagnostics(client, filePaths) {
   client.sendNotification("workspace/didChangeWatchedFiles", { changes: fileEvents });
 
   // Then open each file for per-document diagnostics
+  const unreadable = [];
   for (const filePath of filePaths) {
     const uri = toFileUri(filePath);
     let text = "";
     try { text = fs.readFileSync(filePath, "utf8"); }
-    catch (e) { log(`[validate] Could not read ${filePath}: ${e.message}`); continue; }
+    catch (e) {
+      log(`[validate] Could not read ${filePath}: ${e.message}`);
+      unreadable.push({ filePath, error: e.message });
+      continue;
+    }
     client.sendNotification("textDocument/didOpen", {
       textDocument: { uri, languageId: "yaml", version: 1, text },
     });
   }
+  return unreadable;
 }
 
-function waitForDiagnostics(client, settleMs = 500, timeoutMs = 15000) {
+// Normalize a file URI or path so URIs from the server and from toFileUri()
+// compare equal regardless of percent-encoding, and (on Windows) case/slashes.
+function diagnosticsKey(uri) {
+  let p = uri.replace(/^file:\/\//, "");
+  try { p = decodeURIComponent(p); } catch {}
+  if (os.platform() === "win32") {
+    p = p.replace(/^\/([A-Za-z]:)/, "$1").replace(/\\/g, "/").toLowerCase();
+  }
+  return p;
+}
+
+// Files that were sent to the server but never got a publishDiagnostics
+// (an empty diagnostics array counts as published).
+function findFilesWithoutDiagnostics(filePaths, diagnosticsMap) {
+  const received = new Set();
+  for (const uri of diagnosticsMap.keys()) received.add(diagnosticsKey(uri));
+  return filePaths.filter((filePath) => !received.has(diagnosticsKey(toFileUri(filePath))));
+}
+
+// Resolves with { diagnostics, reason }. reason is null when diagnostics arrived
+// for every file in filePaths, "timeout" if the wait timed out first, or
+// "lsp-exited" if the LSP process went away while waiting.
+function waitForDiagnostics(client, filePaths, settleMs = 500, timeoutMs = 15000) {
   return new Promise((resolve) => {
     let settleTimer = null;
     let hardTimer = null;
     let resolved = false;
 
-    function done() {
+    function done(reason) {
       if (resolved) return;
       resolved = true;
       client._onDiagnosticsCallback = null;
+      client._onExitCallback = null;
       if (settleTimer) clearTimeout(settleTimer);
       if (hardTimer) clearTimeout(hardTimer);
-      resolve(new Map(client._diagnostics));
+      resolve({ diagnostics: new Map(client._diagnostics), reason });
     }
 
     function resetSettle() {
       if (settleTimer) clearTimeout(settleTimer);
-      settleTimer = setTimeout(done, settleMs);
+      // Only settle once every file has reported; otherwise keep waiting for
+      // the remaining files until the hard timeout.
+      settleTimer = setTimeout(() => {
+        if (findFilesWithoutDiagnostics(filePaths, client._diagnostics).length === 0) done(null);
+      }, settleMs);
     }
 
     hardTimer = setTimeout(() => {
-      log("[validate] Diagnostics wait timed out, using current results");
-      done();
+      log("[validate] Diagnostics wait timed out");
+      done("timeout");
     }, timeoutMs);
 
     client._onDiagnosticsCallback = () => resetSettle();
+    client._onExitCallback = () => done("lsp-exited");
+    if (!client.running) done("lsp-exited");
+    else if (filePaths.length === 0) done(null);
   });
 }
 
 const SEVERITY_NAMES = { 1: "error", 2: "warning", 3: "information", 4: "hint" };
 
-function formatValidationOutput(diagnosticsMap, agentDir) {
+function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null) {
   let errorCount = 0, warningCount = 0, infoCount = 0;
   const files = [];
 
@@ -628,12 +671,32 @@ function formatValidationOutput(diagnosticsMap, agentDir) {
     files.push({ file: filePath, diagnostics: mapped });
   }
 
-  return {
-    status: errorCount === 0 ? "ok" : "error",
-    valid: errorCount === 0,
+  const output = {
+    status: errorCount > 0 ? "error" : incomplete ? "incomplete" : "ok",
+    valid: errorCount === 0 && !incomplete,
     summary: { errors: errorCount, warnings: warningCount, info: infoCount },
     files,
   };
+  if (incomplete) {
+    // Fail closed: diagnostics are missing, so a clean result cannot be trusted
+    output.incomplete = true;
+    output.reason = incomplete.reason;
+    output.message = incomplete.message;
+    output.missingFiles = incomplete.missingFiles;
+    output.unreadableFiles = incomplete.unreadableFiles || [];
+  }
+  return output;
+}
+
+function pushBlockedError(validation) {
+  const errors = validation.summary.errors;
+  if (validation.incomplete && errors === 0) {
+    return `Push blocked: ${validation.message} Re-run, or use --force to bypass.`;
+  }
+  if (validation.incomplete) {
+    return `Push blocked: ${errors} validation error(s). ${validation.message} Fix errors and re-run before pushing, or use --force to bypass.`;
+  }
+  return `Push blocked: ${errors} validation error(s). Fix errors before pushing, or use --force to bypass.`;
 }
 
 async function runValidation(client, args, tokens) {
@@ -657,12 +720,37 @@ async function runValidation(client, args, tokens) {
   }
 
   log(`[validate] Found ${filePaths.length} .mcs.yml file(s)`);
-  openFilesForDiagnostics(client, filePaths);
+  const unreadable = openFilesForDiagnostics(client, filePaths);
+  // Files that could not be read were never opened, so do not wait for them
+  const unreadablePaths = new Set(unreadable.map((u) => u.filePath));
+  const expected = filePaths.filter((f) => !unreadablePaths.has(f));
 
   log("[validate] Waiting for diagnostics...");
-  const diagnosticsMap = await waitForDiagnostics(client);
+  const { diagnostics: diagnosticsMap, reason } = await waitForDiagnostics(client, expected);
 
-  const output = formatValidationOutput(diagnosticsMap, agentDir);
+  // Every file must have been read and have reported diagnostics; a timeout,
+  // a crashed LSP process or an unreadable file must not look like a clean pass.
+  const missing = findFilesWithoutDiagnostics(expected, diagnosticsMap);
+  let incomplete = null;
+  if (missing.length > 0 || unreadable.length > 0) {
+    const problems = [];
+    if (missing.length > 0) {
+      const why = reason === "lsp-exited"
+        ? `the LSP process ${client.exitInfo || "exited"}`
+        : "the wait for diagnostics timed out";
+      problems.push(`${why}; no diagnostics received for ${missing.length} of ${filePaths.length} file(s)`);
+    }
+    if (unreadable.length > 0) problems.push(`${unreadable.length} file(s) could not be read`);
+    incomplete = {
+      reason: missing.length > 0 ? reason || "timeout" : "unreadable",
+      message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
+      missingFiles: missing.map((f) => path.relative(agentDir, f)),
+      unreadableFiles: unreadable.map((u) => ({ file: path.relative(agentDir, u.filePath), error: u.error })),
+    };
+    log(`[validate] ${incomplete.message}`);
+  }
+
+  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete);
   output.fileCount = filePaths.length;
   return output;
 }
@@ -906,12 +994,9 @@ async function cmdWithLsp(args, method) {
       const validation = await runValidation(client, args, tokens);
       if (!validation.valid) {
         process.stdout.write(
-          JSON.stringify({
-            status: "error",
-            error: `Push blocked: ${validation.summary.errors} validation error(s). Fix errors before pushing, or use --force to bypass.`,
-            validation,
-          }, null, 2) + "\n"
+          JSON.stringify({ status: "error", error: pushBlockedError(validation), validation }, null, 2) + "\n"
         );
+        if (validation.incomplete) process.exitCode = 1;
         return;
       }
       log(`[push] Validation passed (${validation.summary.warnings} warning(s))`);
@@ -953,6 +1038,7 @@ async function cmdValidate(args) {
     await client.start();
     const output = await runValidation(client, args, tokens);
     process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+    if (output.incomplete) process.exitCode = 1;
   } finally {
     await client.stop();
   }
@@ -1469,7 +1555,7 @@ async function main() {
 
   // Ensure Node exits even if stale event-loop handles linger (e.g. from
   // the LSP binary's pipe server or unresolved timers).
-  process.exit(0);
+  process.exit(process.exitCode || 0);
 }
 
 // Expose helpers for testing when loaded as a module
