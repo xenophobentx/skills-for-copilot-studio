@@ -20944,22 +20944,266 @@ var require_shared_utils = __commonJS({
 var require_msal_cache = __commonJS({
   "src/msal-cache.js"(exports2, module2) {
     var { PersistenceCreator, PersistenceCachePlugin, DataProtectionScope } = require("@azure/msal-node-extensions");
+    var crypto4 = require("crypto");
+    var fs7 = require("fs");
     var path3 = require("path");
     var os2 = require("os");
     var CACHE_DIR = path3.join(os2.homedir(), ".copilot-studio-cli");
     var SERVICE_NAME = "copilot-studio-cli";
-    async function createCachePlugin(accountName) {
-      const cachePath = path3.join(CACHE_DIR, `${accountName}.cache.json`);
-      const persistence = await PersistenceCreator.createPersistence({
-        cachePath,
-        dataProtectionScope: DataProtectionScope.CurrentUser,
-        serviceName: SERVICE_NAME,
-        accountName,
-        usePlaintextFileOnLinux: true
-      });
-      return new PersistenceCachePlugin(persistence);
+    var LOCK_STALE_MS = 3e4;
+    var LOCK_WAIT_MS = 1e4;
+    var LOCK_POLL_MS = 50;
+    var LINUX_SECRET_SERVICE_UNAVAILABLE_PATTERNS = [
+      /org\.freedesktop\.secrets was not provided/i,
+      /cannot autolaunch d-bus/i,
+      /no such interface[\s\S]*secret/i
+    ];
+    function isSecretServiceUnavailableError(e) {
+      const message = e && e.message ? String(e.message) : "";
+      return LINUX_SECRET_SERVICE_UNAVAILABLE_PATTERNS.some((re) => re.test(message));
     }
-    module2.exports = { createCachePlugin };
+    var TRANSIENT_PERSISTENCE_ERROR_PATTERNS = [
+      /\b(?:ENOENT|EPERM|EBUSY|EACCES)\b/,
+      /could not be read/i,
+      /is different\s+from data read/i,
+      /already exists in the keychain/i,
+      /could not be found in the keychain/i,
+      /may have been deleted from the keychain/i
+    ];
+    function isTransientPersistenceError(e) {
+      const message = e && e.message ? String(e.message) : "";
+      return TRANSIENT_PERSISTENCE_ERROR_PATTERNS.some((re) => re.test(message));
+    }
+    function isPidDead(pid) {
+      if (!Number.isInteger(pid) || pid <= 0) return false;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (e) {
+        return e.code === "ESRCH";
+      }
+    }
+    function restoreStolenLock(takeoverPath, lockPath, contents) {
+      try {
+        fs7.linkSync(takeoverPath, lockPath);
+      } catch (linkErr) {
+        if (linkErr.code === "EEXIST") return;
+        try {
+          fs7.writeFileSync(lockPath, contents, { flag: "wx", mode: 384 });
+        } catch {
+        }
+      }
+    }
+    async function withPersistenceLock(lockPath, fn, {
+      waitMs = LOCK_WAIT_MS,
+      staleMs = LOCK_STALE_MS,
+      pollMs = LOCK_POLL_MS,
+      platform: platform2 = process.platform,
+      warn,
+      sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = {}) {
+      const deadline = Date.now() + waitMs;
+      const token = `${process.pid}:${crypto4.randomBytes(8).toString("hex")}`;
+      const isContention = (e) => {
+        if (e.code === "EEXIST") return e.syscall === "open";
+        if (platform2 === "win32" && e.code === "EBUSY") return true;
+        if (platform2 === "win32" && (e.code === "EPERM" || e.code === "EACCES")) {
+          try {
+            fs7.statSync(lockPath);
+            return true;
+          } catch (statErr) {
+            return statErr.code === "EPERM";
+          }
+        }
+        return false;
+      };
+      let fd;
+      let holdingLock = false;
+      for (; ; ) {
+        try {
+          fs7.mkdirSync(path3.dirname(lockPath), { recursive: true, mode: 448 });
+          fd = fs7.openSync(lockPath, "wx", 384);
+          try {
+            fs7.writeSync(fd, token);
+          } catch (writeErr) {
+            try {
+              fs7.closeSync(fd);
+            } catch {
+            }
+            fd = void 0;
+            try {
+              fs7.unlinkSync(lockPath);
+            } catch {
+            }
+            throw writeErr;
+          }
+          holdingLock = true;
+          break;
+        } catch (e) {
+          if (!isContention(e)) {
+            if (typeof warn === "function") {
+              warn(
+                `Could not acquire the persistence lock at ${lockPath} (${e.code || e.message}); continuing without it.`
+              );
+            }
+            fd = void 0;
+            break;
+          }
+          try {
+            const lockContents = fs7.readFileSync(lockPath, "utf-8");
+            const holderPid = Number((/^(\d+):/.exec(lockContents) || [])[1]);
+            const stale = isPidDead(holderPid) || Date.now() - fs7.statSync(lockPath).mtimeMs > staleMs;
+            if (stale) {
+              const takeoverPath = `${lockPath}.stale-${process.pid}-${crypto4.randomBytes(4).toString("hex")}`;
+              try {
+                fs7.renameSync(lockPath, takeoverPath);
+                try {
+                  let movedContents;
+                  try {
+                    movedContents = fs7.readFileSync(takeoverPath, "utf-8");
+                  } catch {
+                    movedContents = void 0;
+                  }
+                  if (movedContents !== void 0 && movedContents !== lockContents) {
+                    restoreStolenLock(takeoverPath, lockPath, movedContents);
+                  }
+                } finally {
+                  try {
+                    fs7.unlinkSync(takeoverPath);
+                  } catch {
+                  }
+                }
+              } catch {
+              }
+            }
+          } catch {
+          }
+        }
+        if (Date.now() >= deadline) {
+          fd = void 0;
+          if (typeof warn === "function") {
+            warn(`Waited ${waitMs} ms for the persistence lock at ${lockPath}; continuing without it.`);
+          }
+          break;
+        }
+        await sleep(pollMs + Math.random() * pollMs);
+      }
+      const heartbeat = holdingLock ? setInterval(
+        () => {
+          try {
+            const now = /* @__PURE__ */ new Date();
+            fs7.utimesSync(lockPath, now, now);
+          } catch {
+          }
+        },
+        Math.max(50, Math.floor(staleMs / 3))
+      ) : null;
+      if (heartbeat && heartbeat.unref) heartbeat.unref();
+      try {
+        return await fn();
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        if (holdingLock && fd !== void 0) {
+          try {
+            fs7.closeSync(fd);
+          } catch {
+          }
+          try {
+            if (fs7.readFileSync(lockPath, "utf-8") === token) fs7.unlinkSync(lockPath);
+          } catch {
+          }
+        }
+      }
+    }
+    async function createPersistenceWithRetry(creator, options, {
+      attempts = 4,
+      plaintextAttempts = 3,
+      delayMs = 100,
+      platform: platform2 = process.platform,
+      sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = {}) {
+      const allowPlaintext = platform2 === "linux" && Boolean(options.usePlaintextFileOnLinux);
+      const total = attempts + (allowPlaintext ? plaintextAttempts : 0);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await creator.createPersistence({
+            ...options,
+            usePlaintextFileOnLinux: allowPlaintext && attempt > attempts
+          });
+        } catch (e) {
+          if (!e || e.errorCode !== "CachePersistenceError" || attempt >= total) throw e;
+          const transient = isTransientPersistenceError(e);
+          const encryptedStageOnLinux = platform2 === "linux" && attempt <= attempts;
+          if (encryptedStageOnLinux && (!transient || isSecretServiceUnavailableError(e))) {
+            if (!allowPlaintext) throw e;
+            attempt = attempts;
+            continue;
+          }
+          if (!transient) throw e;
+          const step = attempt >= attempts ? attempt - attempts + 1 : attempt;
+          await sleep(delayMs * step + Math.random() * delayMs);
+        }
+      }
+    }
+    async function createCachePlugin(accountName, {
+      extensions,
+      warn = (msg) => process.stderr.write(msg + "\n"),
+      lockPath,
+      cachePath,
+      ...retry
+    } = {}) {
+      const extensionsModule = extensions || {
+        PersistenceCreator,
+        PersistenceCachePlugin,
+        DataProtectionScope,
+        // Only needed to detect the Linux fallback below.
+        FilePersistence: require("@azure/msal-node-extensions").FilePersistence
+      };
+      if (!cachePath) cachePath = path3.join(CACHE_DIR, `${accountName}.cache.json`);
+      if (!lockPath) lockPath = path3.join(path3.dirname(cachePath), ".persistence.lock");
+      const persistence = await withPersistenceLock(
+        lockPath,
+        () => createPersistenceWithRetry(
+          extensionsModule.PersistenceCreator,
+          {
+            cachePath,
+            dataProtectionScope: extensionsModule.DataProtectionScope.CurrentUser,
+            serviceName: SERVICE_NAME,
+            accountName,
+            usePlaintextFileOnLinux: true
+          },
+          retry
+        ),
+        { ...retry, warn }
+      );
+      const isPlaintextFallback = extensionsModule.FilePersistence ? persistence instanceof extensionsModule.FilePersistence : Boolean(
+        persistence && persistence.constructor && persistence.constructor.name === "FilePersistence"
+      );
+      if (isPlaintextFallback) {
+        tightenPlaintextPermissions(cachePath);
+        warn(
+          `Encrypted token storage is unavailable on this machine (no usable keyring/libsecret). Falling back to a plaintext token cache at ${cachePath}; tokens are stored unencrypted.`
+        );
+      }
+      return new extensionsModule.PersistenceCachePlugin(persistence);
+    }
+    function tightenPlaintextPermissions(cachePath) {
+      try {
+        fs7.chmodSync(path3.dirname(cachePath), 448);
+      } catch {
+      }
+      try {
+        if (fs7.existsSync(cachePath)) fs7.chmodSync(cachePath, 384);
+      } catch {
+      }
+    }
+    module2.exports = {
+      createCachePlugin,
+      createPersistenceWithRetry,
+      isTransientPersistenceError,
+      withPersistenceLock,
+      tightenPlaintextPermissions
+    };
   }
 });
 
