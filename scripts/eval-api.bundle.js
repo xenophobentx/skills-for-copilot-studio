@@ -220,9 +220,35 @@ var require_shared_utils = __commonJS({
 // src/msal-cache.js
 var require_msal_cache = __commonJS({
   "src/msal-cache.js"(exports2, module2) {
-    var { PersistenceCreator, PersistenceCachePlugin, DataProtectionScope } = require("@azure/msal-node-extensions");
     var path3 = require("path");
     var os2 = require("os");
+    function stubMissingKeytarOnWindows() {
+      if (process.platform !== "win32") return;
+      let keytarPath;
+      try {
+        const extDir = path3.dirname(require.resolve("@azure/msal-node-extensions/package.json"));
+        keytarPath = require.resolve("keytar", { paths: [extDir] });
+        require(keytarPath);
+        return;
+      } catch {
+        if (!keytarPath) return;
+      }
+      const unavailable = () => Promise.reject(new Error("keytar native binding is not available on this platform"));
+      const Module = require("module");
+      const stub = new Module(keytarPath);
+      stub.filename = keytarPath;
+      stub.loaded = true;
+      stub.exports = {
+        getPassword: unavailable,
+        setPassword: unavailable,
+        deletePassword: unavailable,
+        findPassword: unavailable,
+        findCredentials: unavailable
+      };
+      require.cache[keytarPath] = stub;
+    }
+    stubMissingKeytarOnWindows();
+    var { PersistenceCreator, PersistenceCachePlugin, DataProtectionScope } = require("@azure/msal-node-extensions");
     var CACHE_DIR = path3.join(os2.homedir(), ".copilot-studio-cli");
     var SERVICE_NAME = "copilot-studio-cli";
     async function createCachePlugin(accountName) {
