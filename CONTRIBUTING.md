@@ -45,9 +45,10 @@ The plugin includes bundled Node.js scripts (schema lookup, chat-with-agent) bui
 
 ```bash
 cd scripts
-npm install
 npm run build
 ```
+
+`npm run build` runs `npm ci` first (the `prebuild` script), so the dependency versions come from the committed `scripts/package-lock.json` and no separate install is needed. The per-target scripts (for example `npm run build:manage-agent`) skip that step, so run `npm ci` once before using them. Only change the lockfile (`npm install <pkg>@<version>`) when you intentionally update a dependency, and commit it together with the rebuilt bundles.
 
 ## Plugin management
 
