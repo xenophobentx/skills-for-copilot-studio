@@ -15374,6 +15374,29 @@ function findMcsYmlFiles(dir, results = []) {
   }
   return results;
 }
+var CONFLICT_MARKER_RE = /^(<{7}|={7}|>{7})( |$)/;
+function findConflictMarkers(agentDir) {
+  const conflicts = [];
+  for (const file of findMcsYmlFiles(agentDir).sort()) {
+    let text;
+    try {
+      text = fs6.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const lines = [];
+    text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((line, i) => {
+      if (CONFLICT_MARKER_RE.test(line)) lines.push(i + 1);
+    });
+    if (lines.length > 0) {
+      conflicts.push({ file: path2.relative(agentDir, file).split(path2.sep).join("/"), lines });
+    }
+  }
+  return conflicts;
+}
+function formatConflicts(conflicts) {
+  return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
+}
 function openFilesForDiagnostics(client, filePaths) {
   const fileEvents = filePaths.map((filePath) => ({
     uri: toFileUri(filePath),
@@ -15651,6 +15674,20 @@ async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  if (method === "powerplatformls/syncPush") {
+    const conflicts = findConflictMarkers(findAgentDir(args.workspace));
+    if (conflicts.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "error",
+          error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
+          conflicts
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -15684,9 +15721,23 @@ async function cmdWithLsp(args, method) {
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
     const result = await sendCustomRequestWithRetries(client, method, request);
-    process.stdout.write(
-      JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
-    );
+    const conflicts = method === "powerplatformls/syncPull" ? findConflictMarkers(findAgentDir(args.workspace)) : [];
+    if (conflicts.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "conflict",
+          method,
+          result,
+          conflicts,
+          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+    } else {
+      process.stdout.write(
+        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
+      );
+    }
   } finally {
     await client.stop();
   }
@@ -16115,7 +16166,7 @@ async function main() {
   } catch (e) {
     die(`${args.command} failed: ${e.message}`);
   }
-  process.exit(0);
+  process.exit(process.exitCode || 0);
 }
 if (typeof module !== "undefined") {
   module.exports = { parseAgentUrl };

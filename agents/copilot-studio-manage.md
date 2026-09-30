@@ -36,7 +36,8 @@ You MUST use the appropriate skill for every task. **NEVER** run scripts or mana
 4. **Check for pending changes before publishing.** Run `changes` before `publish`. If there are no pending changes between local and remote, tell the user: "The agent is already up to date — nothing to publish." Only publish if there are actual changes to make live.
 5. **Always warn before publishing.** Publishing makes changes available to **all end users** the agent is shared with. Before publishing, tell the user: "This will make the current draft live for all users. Should I proceed?" In a development environment the user may say to skip this warning — respect that, but always warn at least once per session.
 6. **Pull before showing changes.** A `changes` diff is most useful after a fresh pull so you're comparing against the latest remote state.
-7. **Improvement loop.** When iterating (edit → push → publish → test), always use the publish command's API-confirmed completion before testing. Do not use time-based waits.
+7. **Never report a conflicted pull as a success.** If `pull` returns `"status":"conflict"`, the same lines were changed locally and on the server and conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) were written into the listed files. Tell the user which files and lines, help pick the right version, remove the markers, run `validate`, then push. `push` refuses to upload files with markers, even with `--force`.
+8. **Improvement loop.** When iterating (edit → push → publish → test), always use the publish command's API-confirmed completion before testing. Do not use time-based waits.
 
 ## Authentication
 

@@ -112,11 +112,15 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
   --agent-mgmt-url "<mgmtUrl>"
 ```
 
+If the same line of a file was changed both locally and on the server, pull writes git-style conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) into that `.mcs.yml` file. The command then prints `"status":"conflict"` with a `conflicts` list (`file` and `lines`) and exits non-zero. **Do not report this as a successful pull.** Tell the user which files and lines are affected, ask which version between the markers is the right one (or propose one), remove the marker lines, run `validate`, and only then push. Pull does not resolve conflicts itself.
+
 ### Push (upload local changes)
 
 **Important:** Always `pull` before `push` to get fresh row versions. If you push without pulling first, you'll get a `ConcurrencyVersionMismatch` error.
 
 Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors. Add `--force` to bypass validation (not recommended).
+
+Push also refuses (`"status":"error"`, non-zero exit, with a `conflicts` list) when any `.mcs.yml` file still contains conflict markers. This check runs before any sign-in or upload, and `--force` does not bypass it. Resolve the markers first (see Pull).
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js push \
@@ -250,6 +254,12 @@ All commands output JSON to stdout with a `status` field:
 {"status":"ok","method":"powerplatformls/syncPull","result":{...}}
 ```
 
+### Conflict (pull wrote merge markers)
+```json
+{"status":"conflict","method":"powerplatformls/syncPull","result":{...},"conflicts":[{"file":"topics/Greeting.mcs.yml","lines":[12,14,16]}],"message":"..."}
+```
+The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / `>>>>>>>` marker lines that must be resolved by hand. The exit code is non-zero.
+
 ### Error
 ```json
 {"status":"error","error":"description of what went wrong"}
@@ -263,6 +273,7 @@ All commands output JSON to stdout with a `status` field:
 | LSP request timed out | Binary not responding or wrong protocol version | Check extension version, try updating |
 | device_code_expired | User didn't authenticate in time | Re-run auth, authenticate promptly |
 | ConcurrencyVersionMismatch | Push without fresh row versions | Pull first, then push |
+| `conflict` status after pull, or "Push refused: unresolved merge conflict markers" | Same line changed locally and on the server | Pick the right version between the markers, delete the marker lines, run `validate`, then push |
 | Token expired + silent refresh failed | Refresh token expired (~90 days) | Run `auth` command for new device code flow |
 | Binary missing | Extension installed but binary not present | Reinstall the extension |
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |
