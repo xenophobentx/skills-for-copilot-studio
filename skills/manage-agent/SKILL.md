@@ -267,3 +267,12 @@ All commands output JSON to stdout with a `status` field:
 | Binary missing | Extension installed but binary not present | Reinstall the extension |
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |
 | Publish timed out | Publish still in progress after timeout | Increase `--timeout` or check the Copilot Studio UI for status |
+| `No .mcs/botdefinition.json found in ...` | The workspace has no `.mcs/botdefinition.json`. `.mcs/.gitignore` ignores everything, so a workspace that went through git, or was copied without `.mcs/`, loses it | See "Missing `.mcs/botdefinition.json`" below |
+
+### Missing `.mcs/botdefinition.json`
+
+`validate`, `push`, `pull` and `changes` stop with `No .mcs/botdefinition.json found` when the workspace lacks that file. `clone` creates it, but it is not tracked in git: `.mcs/.gitignore` contains `*`. A workspace restored from git, or copied without `.mcs/`, therefore does not have it, and the LSP would otherwise report a misleading `Missing required property 'CdsBotId'` or `Please resync`. There is no resync command. To recover:
+
+1. `clone` the agent again into a new, empty folder.
+2. Copy the edited `.mcs.yml` files over the new clone.
+3. Run `validate`, then `push`.
