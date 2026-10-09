@@ -3012,6 +3012,153 @@ var require_shared_utils = __commonJS({
   }
 });
 
+// src/pac-utils.js
+var require_pac_utils = __commonJS({
+  "src/pac-utils.js"(exports2, module2) {
+    var fs7 = require("fs");
+    var path3 = require("path");
+    var MIN_PAC_VERSION = "2.13.1";
+    function parsePacVersion(helpText) {
+      const m = /Version:\s*(\d+\.\d+\.\d+)/.exec(helpText || "");
+      return m ? m[1] : null;
+    }
+    function versionAtLeast(version2, min = MIN_PAC_VERSION) {
+      const a = String(version2).split(".").map(Number);
+      const b = min.split(".").map(Number);
+      if (a.length < 3 || a.some(Number.isNaN)) return false;
+      for (let i = 0; i < 3; i++) {
+        if (a[i] !== b[i]) return a[i] > b[i];
+      }
+      return true;
+    }
+    function defaultIsFile(p) {
+      try {
+        return fs7.statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    }
+    function resolvePac(env = process.env, platform2 = process.platform, isFile = defaultIsFile) {
+      const win = platform2 === "win32";
+      const names = win ? ["pac.exe", "pac.cmd", "pac.bat"] : ["pac"];
+      const override = env.CPS_PAC_PATH;
+      if (override) {
+        if (isFile(override)) return override;
+        for (const n of names) {
+          const p = path3.join(override, n);
+          if (isFile(p)) return p;
+        }
+        return null;
+      }
+      const dirs = (env.PATH || env.Path || "").split(win ? ";" : ":").filter(Boolean);
+      for (const dir of dirs) {
+        for (const n of names) {
+          const p = path3.join(dir.replace(/^"|"$/g, ""), n);
+          if (isFile(p)) return p;
+        }
+      }
+      return null;
+    }
+    function buildPacCommand(file, args, platform2 = process.platform, comspec = "cmd.exe") {
+      if (platform2 === "win32" && /\.(cmd|bat)$/i.test(file)) {
+        if (args.some((a) => /["%]/.test(a))) {
+          throw new Error("Quotes and percent signs in arguments are not supported with pac.cmd");
+        }
+        const line = [file, ...args].map((a) => `"${a}"`).join(" ");
+        return { cmd: comspec, args: ["/d", "/s", "/c", `"${line}"`], options: { windowsVerbatimArguments: true } };
+      }
+      return { cmd: file, args, options: {} };
+    }
+    function activeProfileCovers(authListText, envUrl) {
+      const line = String(authListText || "").split(/\r?\n/).find((l) => /^\s*\[\d+\]\s+\*/.test(l));
+      if (!line) return false;
+      if (/\bUNIVERSAL\b/.test(line)) return true;
+      if (!envUrl) return false;
+      const host = envUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
+      return host !== "" && line.toLowerCase().includes(host);
+    }
+    function lines(text) {
+      return String(text || "").split(/\r?\n/);
+    }
+    function firstNumber(re, text) {
+      const m = re.exec(text || "");
+      return m ? parseInt(m[1], 10) : null;
+    }
+    function parsePull(stdout) {
+      return {
+        applied: firstNumber(/Pull complete\.\s*(\d+)\s+change/, stdout),
+        conflict: /contain merge conflicts/.test(stdout || "")
+      };
+    }
+    function parsePush(stdout) {
+      if (/Nothing to push/.test(stdout || "")) return { pushed: 0 };
+      return { pushed: firstNumber(/Push complete\.\s*(\d+)\s+change/, stdout) };
+    }
+    function parseClone(stdout) {
+      const m = /Agent cloned to '([^']+)'/.exec(stdout || "");
+      return m ? m[1] : null;
+    }
+    function publishSucceeded(stdout) {
+      return /Published successfully!/.test(stdout || "");
+    }
+    function isRemoteConflict(text) {
+      return /Remote changes conflict/.test(text || "");
+    }
+    function pacErrorText(stdout, stderr) {
+      const all = [...lines(stdout), ...lines(stderr)];
+      let at = -1;
+      all.forEach((l, i) => {
+        if (/^Error:/.test(l)) at = i;
+      });
+      if (at === -1) return null;
+      const out = [all[at].replace(/^Error:\s*/, "").trim()];
+      for (let i = at + 1; i < all.length && /^\s+\S/.test(all[i]); i++) out.push(all[i].trim());
+      return out.join(" ").slice(0, 800);
+    }
+    function readPublishedOn(settingsText) {
+      const m = /^publishedOn:[ \t]*(.*?)[ \t]*$/m.exec(String(settingsText || "").replace(/\r/g, ""));
+      return m && m[1] ? m[1].replace(/^["']|["']$/g, "") : null;
+    }
+    function mapEnvList(json) {
+      return json.map((e) => ({
+        environmentId: e.EnvironmentIdentifier && e.EnvironmentIdentifier.Id,
+        displayName: e.FriendlyName,
+        dataverseUrl: e.EnvironmentUrl,
+        agentManagementUrl: null,
+        environmentSku: null
+      }));
+    }
+    function parseBackend(value) {
+      const v = String(value || "lsp").toLowerCase();
+      return ["lsp", "pac", "auto"].includes(v) ? v : null;
+    }
+    function chooseBackend(requested, probe) {
+      if (requested === "lsp") return { backend: "lsp" };
+      if (probe.ok) return { backend: "pac" };
+      if (requested === "pac") return { backend: null, error: probe.reason };
+      return { backend: "lsp", note: probe.reason };
+    }
+    module2.exports = {
+      MIN_PAC_VERSION,
+      parsePacVersion,
+      versionAtLeast,
+      resolvePac,
+      buildPacCommand,
+      activeProfileCovers,
+      parsePull,
+      parsePush,
+      parseClone,
+      publishSucceeded,
+      isRemoteConflict,
+      pacErrorText,
+      readPublishedOn,
+      mapEnvList,
+      parseBackend,
+      chooseBackend
+    };
+  }
+});
+
 // src/msal-cache.js
 var require_msal_cache = __commonJS({
   "src/msal-cache.js"(exports2, module2) {
@@ -18575,6 +18722,7 @@ var os2 = require("os");
 var { fileURLToPath: fileURLToPath2 } = require("url");
 var yaml = require_js_yaml();
 var { log, die, sleep } = require_shared_utils();
+var pacUtils = require_pac_utils();
 var {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
@@ -18630,7 +18778,8 @@ function parseArgs() {
     timeout: 3e5,
     // default: 5 minutes for publish polling
     force: false,
-    url: null
+    url: null,
+    backend: process.env.CPS_BACKEND || "lsp"
   };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -18678,8 +18827,13 @@ function parseArgs() {
       case "--url":
         parsed.url = args[++i];
         break;
+<<<<<<< HEAD
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
+=======
+      case "--backend":
+        parsed.backend = args[++i];
+>>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
         break;
       default:
         if (!args[i].startsWith("--") && !parsed.command) {
@@ -18693,6 +18847,9 @@ function parseArgs() {
       "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
     );
   }
+  const backend = pacUtils.parseBackend(parsed.backend);
+  if (!backend) die(`Unknown backend "${parsed.backend}". Use lsp, pac or auto.`);
+  parsed.backend = backend;
   if (parsed.url) {
     const urlInfo = parseAgentUrl(parsed.url);
     if (!urlInfo) {
@@ -18781,7 +18938,11 @@ function searchInDir(extensionsDir, { readOnly = false } = {}) {
   }
   return null;
 }
+<<<<<<< HEAD
 function locateBinary({ readOnly = false } = {}) {
+=======
+function findBinary(optional = false) {
+>>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
   const envBinary = process.env.CPS_LSP_BINARY;
   if (envBinary) {
     if (fs6.existsSync(envBinary)) {
@@ -18817,6 +18978,7 @@ function findBinary() {
     }
     return info;
   }
+  if (optional) return null;
   die(
     `Copilot Studio VS Code extension not found.
 Searched: ${searchDirs.join(", ")}
@@ -19444,6 +19606,29 @@ async function acquireLspTokens(args) {
   }
   return { copilotStudio: cpsToken, dataverse: dvToken };
 }
+function emit(obj, exitCode) {
+  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+  if (exitCode) process.exitCode = exitCode;
+}
+function localPushGuardError(agentDir) {
+  const conflicts = findConflictMarkers(agentDir);
+  if (conflicts.length > 0) {
+    return {
+      status: "error",
+      error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
+      conflicts
+    };
+  }
+  const syntaxErrors = findYamlSyntaxErrors(agentDir);
+  if (syntaxErrors.length > 0) {
+    return {
+      status: "error",
+      error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. Fix the syntax, run validate, then push. --force does not bypass this check.`,
+      syntaxErrors
+    };
+  }
+  return null;
+}
 async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
@@ -19451,6 +19636,7 @@ async function cmdWithLsp(args, method) {
   requireBotDefinition(args);
   const agentDir = findAgentDir(args.workspace);
   if (method === "powerplatformls/syncPush") {
+<<<<<<< HEAD
     const conflicts = findConflictMarkers(agentDir);
     if (conflicts.length > 0) {
       process.stdout.write(
@@ -19475,6 +19661,11 @@ async function cmdWithLsp(args, method) {
         }, null, 2) + "\n"
       );
       process.exitCode = 1;
+=======
+    const refusal = localPushGuardError(findAgentDir(args.workspace));
+    if (refusal) {
+      emit(refusal, 1);
+>>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
       return;
     }
   }
@@ -19513,6 +19704,7 @@ async function cmdWithLsp(args, method) {
       process.stdout.write(
         JSON.stringify({
           status: "conflict",
+          backend: "lsp",
           method,
           result,
           conflicts,
@@ -19522,7 +19714,7 @@ async function cmdWithLsp(args, method) {
       process.exitCode = 1;
     } else {
       process.stdout.write(
-        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
+        JSON.stringify({ status: "ok", backend: "lsp", method, result }, null, 2) + "\n"
       );
     }
   } finally {
@@ -19652,7 +19844,7 @@ async function cmdListEnvs(args) {
     environmentSku: env.properties.environmentSku
   }));
   process.stdout.write(
-    JSON.stringify({ status: "ok", environments }, null, 2) + "\n"
+    JSON.stringify({ status: "ok", backend: "lsp", environments }, null, 2) + "\n"
   );
 }
 async function resolveEnvironmentById(tenantId, environmentId) {
@@ -19734,6 +19926,7 @@ async function cmdPublish(args) {
       const durationMs = Date.now() - startTime;
       const result = {
         status: "ok",
+        backend: "lsp",
         botId,
         publishedOn: currentPublishedOn,
         previousPublishedOn,
@@ -19913,12 +20106,13 @@ async function cmdClone(args) {
       request
     );
     process.stdout.write(
-      JSON.stringify({ status: "ok", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
+      JSON.stringify({ status: "ok", backend: "lsp", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
     );
   } finally {
     await client.stop();
   }
 }
+<<<<<<< HEAD
 function cmdDoctor(args) {
   const result = doctor.runDoctor(doctor.makeContext(args), {
     locateBinary,
@@ -19932,28 +20126,230 @@ function cmdDoctor(args) {
   for (const c of result.checks) process.stderr.write(doctor.formatLine(c) + "\n");
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   if (result.status === "fail") process.exitCode = 1;
+=======
+function runPac(file, argv, timeoutMs = 3e5) {
+  return new Promise((resolve) => {
+    let cmd, cmdArgs, options;
+    try {
+      ({ cmd, args: cmdArgs, options } = pacUtils.buildPacCommand(file, argv));
+    } catch (e) {
+      resolve({ code: -1, stdout: "", stderr: `Error: ${e.message}` });
+      return;
+    }
+    log(`pac ${argv.join(" ")}`);
+    let stdout = "", stderr = "", timedOut = false;
+    const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...options });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+    child.stdout.on("data", (d) => {
+      stdout += d;
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d;
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: `${stderr}
+Error: ${e.message}` });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) stderr += `
+Error: pac did not finish within ${timeoutMs / 1e3}s`;
+      resolve({ code: code === null ? -1 : code, stdout, stderr });
+    });
+  });
+}
+async function probePac(envUrl, needProfile) {
+  const file = pacUtils.resolvePac();
+  if (!file) {
+    return { ok: false, reason: "pac was not found on PATH (or at CPS_PAC_PATH). Install it with: dotnet tool install --global Microsoft.PowerApps.CLI.Tool" };
+  }
+  const help = await runPac(file, ["help"], 3e4);
+  const version2 = pacUtils.parsePacVersion(help.stdout);
+  if (!version2) return { ok: false, reason: `Could not read the pac version from ${file}.` };
+  if (!pacUtils.versionAtLeast(version2)) {
+    return { ok: false, reason: `pac ${version2} is too old. Version ${pacUtils.MIN_PAC_VERSION} or newer is needed, older ones lose data when a pull hits a conflict.` };
+  }
+  if (needProfile) {
+    const auth = await runPac(file, ["auth", "list"], 3e4);
+    if (!pacUtils.activeProfileCovers(auth.stdout, envUrl)) {
+      return { ok: false, reason: "pac has no active auth profile for this environment. Create one with: pac auth create --deviceCode --environment <environment id>" };
+    }
+  }
+  return { ok: true, file, version: version2 };
+}
+async function pickPac(args) {
+  if (args.backend === "lsp") return null;
+  const conn = args.workspace ? loadConnJson(findAgentDir(args.workspace)) : null;
+  const envUrl = args.environmentUrl || conn && conn.DataverseEndpoint || null;
+  const probe = await probePac(envUrl, args.backend === "auto");
+  const choice = pacUtils.chooseBackend(args.backend, probe);
+  if (choice.error) die(choice.error);
+  if (choice.note) log(`Using the LSP backend: ${choice.note}`);
+  if (choice.backend !== "pac") return null;
+  log(`Using the pac backend (pac ${probe.version})`);
+  return probe;
+}
+function pacAgentDir(args) {
+  if (!args.workspace) die("--workspace is required");
+  return findAgentDir(args.workspace);
+}
+function pacFailure(r, what) {
+  return pacUtils.pacErrorText(r.stdout, r.stderr) || `${what} failed (pac exit code ${r.code}).`;
+}
+async function pacClone(args, pac) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.agentId) die("--agent-id (or --url) is required for clone");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  const dir = path2.resolve(args.workspace);
+  fs6.mkdirSync(dir, { recursive: true });
+  const r = await runPac(pac.file, ["copilot", "clone", "--bot", args.agentId, "--environment", args.environmentId, "--output-dir", dir], args.timeout);
+  if (r.code !== 0) return emit({ status: "error", backend: "pac", error: pacFailure(r, "Clone") }, 1);
+  emit({ status: "ok", backend: "pac", result: { agentFolderName: pacUtils.parseClone(r.stdout) } });
+}
+async function pacPullStep(agentDir, pac, timeoutMs) {
+  const r = await runPac(pac.file, ["copilot", "pull", "--project-dir", agentDir], timeoutMs);
+  if (r.code !== 0) return { error: pacFailure(r, "Pull") };
+  const parsed = pacUtils.parsePull(r.stdout);
+  const conflicts = findConflictMarkers(agentDir);
+  return { applied: parsed.applied, conflicts, conflictWarning: parsed.conflict };
+}
+async function pacPull(args, pac) {
+  const agentDir = pacAgentDir(args);
+  const step = await pacPullStep(agentDir, pac, args.timeout);
+  if (step.error) return emit({ status: "error", backend: "pac", error: step.error }, 1);
+  if (step.conflicts.length > 0 || step.conflictWarning) {
+    return emit({
+      status: "conflict",
+      backend: "pac",
+      result: { applied: step.applied },
+      conflicts: step.conflicts,
+      message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(step.conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`
+    }, 1);
+  }
+  emit({ status: "ok", backend: "pac", result: { applied: step.applied } });
+}
+async function pacValidate(args) {
+  const binaryInfo = findBinary(true);
+  if (!binaryInfo) return null;
+  const noTokens = { copilotStudio: { accessToken: "" }, dataverse: { accessToken: "" } };
+  const client = new LspClient(binaryInfo, args.workspace);
+  try {
+    await client.start();
+    return await runValidation(client, args, noTokens);
+  } catch (e) {
+    if (e.code === "MODULE_NOT_FOUND") return null;
+    throw e;
+  } finally {
+    await client.stop();
+  }
+}
+async function pacPush(args, pac) {
+  const agentDir = pacAgentDir(args);
+  const refusal = localPushGuardError(agentDir);
+  if (refusal) return emit({ ...refusal, backend: "pac" }, 1);
+  let validation = "skipped";
+  let note = "--force: LSP validation skipped.";
+  if (!args.force) {
+    const result = await pacValidate(args);
+    if (result === null) {
+      note = "The Copilot Studio VS Code extension (or its vscode-jsonrpc dependency) was not found, so the push was not validated by the LSP. Only conflict markers and YAML syntax were checked.";
+      log(`[push] ${note}`);
+    } else if (!result.valid) {
+      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, result.incomplete ? 1 : 0);
+    } else {
+      validation = "passed";
+      note = null;
+    }
+  }
+  const r = await runPac(pac.file, ["copilot", "push", "--project-dir", agentDir], args.timeout);
+  const text = `${r.stdout}
+${r.stderr}`;
+  if (r.code !== 0) {
+    const error = pacUtils.isRemoteConflict(text) ? "Push refused: the agent changed on the server since the last pull. Run pull first, resolve any conflicts, then push again." : pacFailure(r, "Push");
+    return emit({ status: "error", backend: "pac", error }, 1);
+  }
+  const out = { status: "ok", backend: "pac", result: { pushed: pacUtils.parsePush(r.stdout).pushed }, validation };
+  if (note) out.message = note;
+  emit(out);
+}
+async function pacPublish(args, pac) {
+  const agentDir = pacAgentDir(args);
+  const conn = loadConnJson(agentDir);
+  const botId = args.agentId || conn && conn.AgentId;
+  const envId = args.environmentId || conn && conn.EnvironmentId;
+  if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
+  if (!envId) die("Cannot determine environment ID. Provide --environment-id or ensure .mcs/conn.json exists.");
+  const settingsFile = path2.join(agentDir, "settings.mcs.yml");
+  const readStamp = () => {
+    try {
+      return pacUtils.readPublishedOn(fs6.readFileSync(settingsFile, "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const before = await pacPullStep(agentDir, pac, args.timeout);
+  if (before.error) return emit({ status: "error", backend: "pac", error: before.error }, 1);
+  if (before.conflicts.length > 0) {
+    return emit({ status: "conflict", backend: "pac", conflicts: before.conflicts, message: `Not published. Resolve the merge conflict markers in ${formatConflicts(before.conflicts)} first.` }, 1);
+  }
+  const previousPublishedOn = readStamp();
+  const started = Date.now();
+  const r = await runPac(pac.file, ["copilot", "publish", "--bot", botId, "--environment", envId], args.timeout);
+  const after = await pacPullStep(agentDir, pac, args.timeout);
+  const publishedOn = readStamp();
+  if (publishedOn && publishedOn !== previousPublishedOn) {
+    return emit({ status: "ok", backend: "pac", botId, publishedOn, previousPublishedOn, durationMs: Date.now() - started });
+  }
+  let error;
+  if (r.code !== 0) error = pacFailure(r, "Publish");
+  else if (!pacUtils.publishSucceeded(r.stdout)) error = "Publish did not report success and publishedOn did not change.";
+  else error = "pac reported success but publishedOn did not change.";
+  if (after.error) error += ` The pull after publish also failed: ${after.error}`;
+  emit({ status: "error", backend: "pac", error }, 1);
+}
+async function pacListEnvs(args, pac) {
+  const r = await runPac(pac.file, ["env", "list", "--json"], 6e4);
+  const start = r.stdout.indexOf("[");
+  let list;
+  try {
+    list = JSON.parse(r.stdout.slice(start));
+  } catch {
+    list = null;
+  }
+  if (r.code !== 0 || !list) return emit({ status: "error", backend: "pac", error: pacFailure(r, "env list") }, 1);
+  emit({ status: "ok", backend: "pac", environments: pacUtils.mapEnvList(list) });
+>>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
 }
 async function main() {
   const args = parseArgs();
   try {
+    const pac = ["clone", "pull", "push", "publish", "list-envs"].includes(args.command) ? await pickPac(args) : null;
     switch (args.command) {
       case "auth":
         await cmdAuth(args);
         break;
       case "push":
-        await cmdWithLsp(args, "powerplatformls/syncPush");
+        if (pac) await pacPush(args, pac);
+        else await cmdWithLsp(args, "powerplatformls/syncPush");
         break;
       case "pull":
-        await cmdWithLsp(args, "powerplatformls/syncPull");
+        if (pac) await pacPull(args, pac);
+        else await cmdWithLsp(args, "powerplatformls/syncPull");
         break;
       case "clone":
-        await cmdClone(args);
+        if (pac) await pacClone(args, pac);
+        else await cmdClone(args);
         break;
       case "changes":
         await cmdChanges(args);
         break;
       case "publish":
-        await cmdPublish(args);
+        if (pac) await pacPublish(args, pac);
+        else await cmdPublish(args);
         break;
       case "validate":
         await cmdValidate(args);
@@ -19962,7 +20358,8 @@ async function main() {
         await cmdListAgents(args);
         break;
       case "list-envs":
-        await cmdListEnvs(args);
+        if (pac) await pacListEnvs(args, pac);
+        else await cmdListEnvs(args);
         break;
       case "doctor":
         cmdDoctor(args);

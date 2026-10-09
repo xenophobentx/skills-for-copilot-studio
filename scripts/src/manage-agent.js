@@ -16,6 +16,8 @@
  *
  * Environment variables (all optional):
  *   CPS_LSP_BINARY          Override path to LanguageServerHost binary
+ *   CPS_BACKEND             lsp (default), pac or auto; same as --backend
+ *   CPS_PAC_PATH            Path to the pac executable (default: pac on PATH)
  *   CPS_TENANT_ID           Azure AD tenant ID
  *   CPS_CLIENT_ID           Azure AD client ID (public client)
  *   CPS_ENVIRONMENT_ID      Power Platform environment ID
@@ -37,6 +39,7 @@ const os = require("os");
 const { fileURLToPath } = require("url");
 const yaml = require("js-yaml");
 const { log, die, sleep } = require("./shared-utils");
+const pacUtils = require("./pac-utils");
 const {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
@@ -123,6 +126,7 @@ function parseArgs() {
     timeout: 300000, // default: 5 minutes for publish polling
     force: false,
     url: null,
+    backend: process.env.CPS_BACKEND || "lsp",
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -174,6 +178,9 @@ function parseArgs() {
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
         break;
+      case "--backend":
+        parsed.backend = args[++i];
+        break;
       default:
         if (!args[i].startsWith("--") && !parsed.command) {
           parsed.command = args[i];
@@ -188,6 +195,10 @@ function parseArgs() {
         "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
     );
   }
+
+  const backend = pacUtils.parseBackend(parsed.backend);
+  if (!backend) die(`Unknown backend "${parsed.backend}". Use lsp, pac or auto.`);
+  parsed.backend = backend;
 
   // When --url is provided, extract environmentId and agentId from the URL
   if (parsed.url) {
@@ -343,6 +354,7 @@ function findBinary() {
     return info;
   }
 
+  if (optional) return null;
   die(
     "Copilot Studio VS Code extension not found.\n" +
       `Searched: ${searchDirs.join(", ")}\n` +
@@ -1134,46 +1146,46 @@ async function acquireLspTokens(args) {
   return { copilotStudio: cpsToken, dataverse: dvToken };
 }
 
+function emit(obj, exitCode) {
+  process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
+  if (exitCode) process.exitCode = exitCode;
+}
+
+// Checks that run before any push, on both backends and before any network call.
+// --force does not skip them: it is meant for validation false positives. Returns
+// the JSON to print when the push must be refused, otherwise null.
+function localPushGuardError(agentDir) {
+  const conflicts = findConflictMarkers(agentDir);
+  if (conflicts.length > 0) {
+    return {
+      status: "error",
+      error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
+      conflicts,
+    };
+  }
+  // Files that do not parse as YAML. validate calls such a file valid (measured with
+  // an unclosed quote), and pushing it with pac emptied the topic on the server.
+  const syntaxErrors = findYamlSyntaxErrors(agentDir);
+  if (syntaxErrors.length > 0) {
+    return {
+      status: "error",
+      error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. The real mistake can be above the reported line, for example an unclosed quote. Fix the syntax, run validate, then push. --force does not bypass this check.`,
+      syntaxErrors,
+    };
+  }
+  return null;
+}
+
 async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
   requireBotDefinition(args);
 
-  // Never upload unresolved merge markers. Checked before any network call and
-  // deliberately not bypassed by --force (which is meant for validation
-  // false positives).
-  const agentDir = findAgentDir(args.workspace);
   if (method === "powerplatformls/syncPush") {
-    const conflicts = findConflictMarkers(agentDir);
-    if (conflicts.length > 0) {
-      process.stdout.write(
-        JSON.stringify({
-          status: "error",
-          error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
-          conflicts,
-        }, null, 2) + "\n"
-      );
-      process.exitCode = 1;
-      return;
-    }
-  }
-
-  // Same for files that do not parse as YAML. validate calls such a file valid
-  // (measured with an unclosed quote), and pushing it with pac emptied the
-  // topic on the server. --force is for validation false positives, not for
-  // broken syntax.
-  if (method === "powerplatformls/syncPush") {
-    const syntaxErrors = findYamlSyntaxErrors(agentDir);
-    if (syntaxErrors.length > 0) {
-      process.stdout.write(
-        JSON.stringify({
-          status: "error",
-          error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. The real mistake can be above the reported line, for example an unclosed quote. Fix the syntax, run validate, then push. --force does not bypass this check.`,
-          syntaxErrors,
-        }, null, 2) + "\n"
-      );
-      process.exitCode = 1;
+    const refusal = localPushGuardError(findAgentDir(args.workspace));
+    if (refusal) {
+      emit(refusal, 1);
       return;
     }
   }
@@ -1223,6 +1235,7 @@ async function cmdWithLsp(args, method) {
       process.stdout.write(
         JSON.stringify({
           status: "conflict",
+          backend: "lsp",
           method,
           result,
           conflicts,
@@ -1232,7 +1245,7 @@ async function cmdWithLsp(args, method) {
       process.exitCode = 1;
     } else {
       process.stdout.write(
-        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
+        JSON.stringify({ status: "ok", backend: "lsp", method, result }, null, 2) + "\n"
       );
     }
   } finally {
@@ -1395,7 +1408,7 @@ async function cmdListEnvs(args) {
     }));
 
   process.stdout.write(
-    JSON.stringify({ status: "ok", environments }, null, 2) + "\n"
+    JSON.stringify({ status: "ok", backend: "lsp", environments }, null, 2) + "\n"
   );
 }
 
@@ -1511,6 +1524,7 @@ async function cmdPublish(args) {
       const durationMs = Date.now() - startTime;
       const result = {
         status: "ok",
+        backend: "lsp",
         botId,
         publishedOn: currentPublishedOn,
         previousPublishedOn,
@@ -1731,11 +1745,229 @@ async function cmdClone(args) {
     );
 
     process.stdout.write(
-      JSON.stringify({ status: "ok", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
+      JSON.stringify({ status: "ok", backend: "lsp", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
     );
   } finally {
     await client.stop();
   }
+}
+
+// ---------------------------------------------------------------------------
+// pac backend: clone, pull, push, publish and list-envs through `pac copilot`.
+// validate and changes stay on the LSP.
+// ---------------------------------------------------------------------------
+
+function runPac(file, argv, timeoutMs = 300000) {
+  return new Promise((resolve) => {
+    let cmd, cmdArgs, options;
+    try {
+      ({ cmd, args: cmdArgs, options } = pacUtils.buildPacCommand(file, argv));
+    } catch (e) {
+      resolve({ code: -1, stdout: "", stderr: `Error: ${e.message}` });
+      return;
+    }
+    log(`pac ${argv.join(" ")}`);
+    let stdout = "", stderr = "", timedOut = false;
+    const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...options });
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    child.stdout.on("data", (d) => { stdout += d; });
+    child.stderr.on("data", (d) => { stderr += d; });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: `${stderr}\nError: ${e.message}` });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) stderr += `\nError: pac did not finish within ${timeoutMs / 1000}s`;
+      resolve({ code: code === null ? -1 : code, stdout, stderr });
+    });
+  });
+}
+
+// { ok, file, version } or { ok: false, reason }. needProfile: also require an
+// active auth profile that covers envUrl (auto mode only; with --backend pac
+// pac reports a missing profile itself).
+async function probePac(envUrl, needProfile) {
+  const file = pacUtils.resolvePac();
+  if (!file) {
+    return { ok: false, reason: "pac was not found on PATH (or at CPS_PAC_PATH). Install it with: dotnet tool install --global Microsoft.PowerApps.CLI.Tool" };
+  }
+  const help = await runPac(file, ["help"], 30000);
+  const version = pacUtils.parsePacVersion(help.stdout);
+  if (!version) return { ok: false, reason: `Could not read the pac version from ${file}.` };
+  if (!pacUtils.versionAtLeast(version)) {
+    return { ok: false, reason: `pac ${version} is too old. Version ${pacUtils.MIN_PAC_VERSION} or newer is needed, older ones lose data when a pull hits a conflict.` };
+  }
+  if (needProfile) {
+    const auth = await runPac(file, ["auth", "list"], 30000);
+    if (!pacUtils.activeProfileCovers(auth.stdout, envUrl)) {
+      return { ok: false, reason: "pac has no active auth profile for this environment. Create one with: pac auth create --deviceCode --environment <environment id>" };
+    }
+  }
+  return { ok: true, file, version };
+}
+
+// Returns the pac probe when this command should use pac, otherwise null (LSP).
+async function pickPac(args) {
+  if (args.backend === "lsp") return null;
+  const conn = args.workspace ? loadConnJson(findAgentDir(args.workspace)) : null;
+  const envUrl = args.environmentUrl || (conn && conn.DataverseEndpoint) || null;
+  const probe = await probePac(envUrl, args.backend === "auto");
+  const choice = pacUtils.chooseBackend(args.backend, probe);
+  if (choice.error) die(choice.error);
+  if (choice.note) log(`Using the LSP backend: ${choice.note}`);
+  if (choice.backend !== "pac") return null;
+  log(`Using the pac backend (pac ${probe.version})`);
+  return probe;
+}
+
+function pacAgentDir(args) {
+  if (!args.workspace) die("--workspace is required");
+  return findAgentDir(args.workspace);
+}
+
+function pacFailure(r, what) {
+  return pacUtils.pacErrorText(r.stdout, r.stderr) || `${what} failed (pac exit code ${r.code}).`;
+}
+
+async function pacClone(args, pac) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.agentId) die("--agent-id (or --url) is required for clone");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  const dir = path.resolve(args.workspace);
+  fs.mkdirSync(dir, { recursive: true });
+  const r = await runPac(pac.file, ["copilot", "clone", "--bot", args.agentId, "--environment", args.environmentId, "--output-dir", dir], args.timeout);
+  if (r.code !== 0) return emit({ status: "error", backend: "pac", error: pacFailure(r, "Clone") }, 1);
+  emit({ status: "ok", backend: "pac", result: { agentFolderName: pacUtils.parseClone(r.stdout) } });
+}
+
+// One pull, shared by pull and publish. Returns { error } or { applied, conflicts }.
+async function pacPullStep(agentDir, pac, timeoutMs) {
+  const r = await runPac(pac.file, ["copilot", "pull", "--project-dir", agentDir], timeoutMs);
+  if (r.code !== 0) return { error: pacFailure(r, "Pull") };
+  const parsed = pacUtils.parsePull(r.stdout);
+  // pac exits 0 on a conflicting pull. The marker scan is the real check.
+  const conflicts = findConflictMarkers(agentDir);
+  return { applied: parsed.applied, conflicts, conflictWarning: parsed.conflict };
+}
+
+async function pacPull(args, pac) {
+  const agentDir = pacAgentDir(args);
+  const step = await pacPullStep(agentDir, pac, args.timeout);
+  if (step.error) return emit({ status: "error", backend: "pac", error: step.error }, 1);
+  if (step.conflicts.length > 0 || step.conflictWarning) {
+    return emit({
+      status: "conflict",
+      backend: "pac",
+      result: { applied: step.applied },
+      conflicts: step.conflicts,
+      message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(step.conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`,
+    }, 1);
+  }
+  emit({ status: "ok", backend: "pac", result: { applied: step.applied } });
+}
+
+// Validation gate for a pac push. Runs the LSP validate without a sign-in.
+// Returns null when the LSP cannot be used: no binary, or the vscode-jsonrpc
+// native dependency is not installed.
+async function pacValidate(args) {
+  const binaryInfo = findBinary(true);
+  if (!binaryInfo) return null;
+  const noTokens = { copilotStudio: { accessToken: "" }, dataverse: { accessToken: "" } };
+  const client = new LspClient(binaryInfo, args.workspace);
+  try {
+    await client.start();
+    return await runValidation(client, args, noTokens);
+  } catch (e) {
+    if (e.code === "MODULE_NOT_FOUND") return null;
+    throw e;
+  } finally {
+    await client.stop();
+  }
+}
+
+async function pacPush(args, pac) {
+  const agentDir = pacAgentDir(args);
+
+  // Local guards first: pac pushes whatever is on disk, and an unclosed quote
+  // has emptied a topic on the server. Any new local check goes into
+  // localPushGuardError.
+  const refusal = localPushGuardError(agentDir);
+  if (refusal) return emit({ ...refusal, backend: "pac" }, 1);
+
+  let validation = "skipped";
+  let note = "--force: LSP validation skipped.";
+  if (!args.force) {
+    const result = await pacValidate(args);
+    if (result === null) {
+      note = "The Copilot Studio VS Code extension (or its vscode-jsonrpc dependency) was not found, so the push was not validated by the LSP. Only conflict markers and YAML syntax were checked.";
+      log(`[push] ${note}`);
+    } else if (!result.valid) {
+      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, result.incomplete ? 1 : 0);
+    } else {
+      validation = "passed";
+      note = null;
+    }
+  }
+
+  const r = await runPac(pac.file, ["copilot", "push", "--project-dir", agentDir], args.timeout);
+  const text = `${r.stdout}\n${r.stderr}`;
+  if (r.code !== 0) {
+    const error = pacUtils.isRemoteConflict(text)
+      ? "Push refused: the agent changed on the server since the last pull. Run pull first, resolve any conflicts, then push again."
+      : pacFailure(r, "Push");
+    return emit({ status: "error", backend: "pac", error }, 1);
+  }
+  const out = { status: "ok", backend: "pac", result: { pushed: pacUtils.parsePush(r.stdout).pushed }, validation };
+  if (note) out.message = note;
+  emit(out);
+}
+
+async function pacPublish(args, pac) {
+  const agentDir = pacAgentDir(args);
+  const conn = loadConnJson(agentDir);
+  const botId = args.agentId || (conn && conn.AgentId);
+  const envId = args.environmentId || (conn && conn.EnvironmentId);
+  if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
+  if (!envId) die("Cannot determine environment ID. Provide --environment-id or ensure .mcs/conn.json exists.");
+  const settingsFile = path.join(agentDir, "settings.mcs.yml");
+  const readStamp = () => {
+    try { return pacUtils.readPublishedOn(fs.readFileSync(settingsFile, "utf8")); } catch { return null; }
+  };
+
+  // Pull first so the local publishedOn is current, then compare after the publish.
+  const before = await pacPullStep(agentDir, pac, args.timeout);
+  if (before.error) return emit({ status: "error", backend: "pac", error: before.error }, 1);
+  if (before.conflicts.length > 0) {
+    return emit({ status: "conflict", backend: "pac", conflicts: before.conflicts, message: `Not published. Resolve the merge conflict markers in ${formatConflicts(before.conflicts)} first.` }, 1);
+  }
+  const previousPublishedOn = readStamp();
+
+  const started = Date.now();
+  const r = await runPac(pac.file, ["copilot", "publish", "--bot", botId, "--environment", envId], args.timeout);
+  const after = await pacPullStep(agentDir, pac, args.timeout);
+  const publishedOn = readStamp();
+
+  // Success is a changed publishedOn, whatever pac's exit code was: publish
+  // can exit 1 with an ArgumentException and still go through.
+  if (publishedOn && publishedOn !== previousPublishedOn) {
+    return emit({ status: "ok", backend: "pac", botId, publishedOn, previousPublishedOn, durationMs: Date.now() - started });
+  }
+  let error;
+  if (r.code !== 0) error = pacFailure(r, "Publish");
+  else if (!pacUtils.publishSucceeded(r.stdout)) error = "Publish did not report success and publishedOn did not change.";
+  else error = "pac reported success but publishedOn did not change.";
+  if (after.error) error += ` The pull after publish also failed: ${after.error}`;
+  emit({ status: "error", backend: "pac", error }, 1);
+}
+
+async function pacListEnvs(args, pac) {
+  const r = await runPac(pac.file, ["env", "list", "--json"], 60000);
+  const start = r.stdout.indexOf("[");
+  let list;
+  try { list = JSON.parse(r.stdout.slice(start)); } catch { list = null; }
+  if (r.code !== 0 || !list) return emit({ status: "error", backend: "pac", error: pacFailure(r, "env list") }, 1);
+  emit({ status: "ok", backend: "pac", environments: pacUtils.mapEnvList(list) });
 }
 
 // ---------------------------------------------------------------------------
@@ -1761,24 +1993,31 @@ async function main() {
   const args = parseArgs();
 
   try {
+    const pac = ["clone", "pull", "push", "publish", "list-envs"].includes(args.command)
+      ? await pickPac(args)
+      : null;
     switch (args.command) {
       case "auth":
         await cmdAuth(args);
         break;
       case "push":
-        await cmdWithLsp(args, "powerplatformls/syncPush");
+        if (pac) await pacPush(args, pac);
+        else await cmdWithLsp(args, "powerplatformls/syncPush");
         break;
       case "pull":
-        await cmdWithLsp(args, "powerplatformls/syncPull");
+        if (pac) await pacPull(args, pac);
+        else await cmdWithLsp(args, "powerplatformls/syncPull");
         break;
       case "clone":
-        await cmdClone(args);
+        if (pac) await pacClone(args, pac);
+        else await cmdClone(args);
         break;
       case "changes":
         await cmdChanges(args);
         break;
       case "publish":
-        await cmdPublish(args);
+        if (pac) await pacPublish(args, pac);
+        else await cmdPublish(args);
         break;
       case "validate":
         await cmdValidate(args);
@@ -1787,7 +2026,8 @@ async function main() {
         await cmdListAgents(args);
         break;
       case "list-envs":
-        await cmdListEnvs(args);
+        if (pac) await pacListEnvs(args, pac);
+        else await cmdListEnvs(args);
         break;
       case "doctor":
         cmdDoctor(args);
