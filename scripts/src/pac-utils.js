@@ -32,12 +32,13 @@ function defaultIsFile(p) {
 // On Windows it also accepts pac.cmd and pac.bat (the MSI installs a .cmd shim).
 function resolvePac(env = process.env, platform = process.platform, isFile = defaultIsFile) {
   const win = platform === "win32";
+  const join = win ? path.win32.join : path.posix.join;
   const names = win ? ["pac.exe", "pac.cmd", "pac.bat"] : ["pac"];
   const override = env.CPS_PAC_PATH;
   if (override) {
     if (isFile(override)) return override;
     for (const n of names) {
-      const p = path.join(override, n);
+      const p = join(override, n);
       if (isFile(p)) return p;
     }
     return null;
@@ -45,7 +46,7 @@ function resolvePac(env = process.env, platform = process.platform, isFile = def
   const dirs = (env.PATH || env.Path || "").split(win ? ";" : ":").filter(Boolean);
   for (const dir of dirs) {
     for (const n of names) {
-      const p = path.join(dir.replace(/^"|"$/g, ""), n);
+      const p = join(dir.replace(/^"|"$/g, ""), n);
       if (isFile(p)) return p;
     }
   }

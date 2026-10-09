@@ -40,6 +40,7 @@ const { fileURLToPath } = require("url");
 const yaml = require("js-yaml");
 const { log, die, sleep } = require("./shared-utils");
 const pacUtils = require("./pac-utils");
+
 const {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
@@ -340,7 +341,7 @@ function locateBinary({ readOnly = false } = {}) {
   return { info: null, searchDirs };
 }
 
-function findBinary() {
+function findBinary(optional = false) {
   const { info, searchDirs } = locateBinary();
   if (info) {
     if (info.version !== "custom") {
@@ -1903,7 +1904,7 @@ async function pacPush(args, pac) {
       note = "The Copilot Studio VS Code extension (or its vscode-jsonrpc dependency) was not found, so the push was not validated by the LSP. Only conflict markers and YAML syntax were checked.";
       log(`[push] ${note}`);
     } else if (!result.valid) {
-      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, result.incomplete ? 1 : 0);
+      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, 1);
     } else {
       validation = "passed";
       note = null;

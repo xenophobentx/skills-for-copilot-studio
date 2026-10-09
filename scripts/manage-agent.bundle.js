@@ -3040,12 +3040,13 @@ var require_pac_utils = __commonJS({
     }
     function resolvePac(env = process.env, platform2 = process.platform, isFile = defaultIsFile) {
       const win = platform2 === "win32";
+      const join = win ? path3.win32.join : path3.posix.join;
       const names = win ? ["pac.exe", "pac.cmd", "pac.bat"] : ["pac"];
       const override = env.CPS_PAC_PATH;
       if (override) {
         if (isFile(override)) return override;
         for (const n of names) {
-          const p = path3.join(override, n);
+          const p = join(override, n);
           if (isFile(p)) return p;
         }
         return null;
@@ -3053,7 +3054,7 @@ var require_pac_utils = __commonJS({
       const dirs = (env.PATH || env.Path || "").split(win ? ";" : ":").filter(Boolean);
       for (const dir of dirs) {
         for (const n of names) {
-          const p = path3.join(dir.replace(/^"|"$/g, ""), n);
+          const p = join(dir.replace(/^"|"$/g, ""), n);
           if (isFile(p)) return p;
         }
       }
@@ -18827,13 +18828,11 @@ function parseArgs() {
       case "--url":
         parsed.url = args[++i];
         break;
-<<<<<<< HEAD
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
-=======
+        break;
       case "--backend":
         parsed.backend = args[++i];
->>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
         break;
       default:
         if (!args[i].startsWith("--") && !parsed.command) {
@@ -18938,11 +18937,7 @@ function searchInDir(extensionsDir, { readOnly = false } = {}) {
   }
   return null;
 }
-<<<<<<< HEAD
 function locateBinary({ readOnly = false } = {}) {
-=======
-function findBinary(optional = false) {
->>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
   const envBinary = process.env.CPS_LSP_BINARY;
   if (envBinary) {
     if (fs6.existsSync(envBinary)) {
@@ -18965,7 +18960,7 @@ function findBinary(optional = false) {
   }
   return { info: null, searchDirs };
 }
-function findBinary() {
+function findBinary(optional = false) {
   const { info, searchDirs } = locateBinary();
   if (info) {
     if (info.version !== "custom") {
@@ -19175,9 +19170,9 @@ function conflictMarkerLines(text) {
   });
   return lines;
 }
-function findConflictMarkers(agentDir) {
+function findConflictMarkers(agentDir2) {
   const conflicts = [];
-  for (const file of findMcsYmlFiles(agentDir).sort()) {
+  for (const file of findMcsYmlFiles(agentDir2).sort()) {
     let text;
     try {
       text = fs6.readFileSync(file, "utf8");
@@ -19186,7 +19181,7 @@ function findConflictMarkers(agentDir) {
     }
     const lines = conflictMarkerLines(text);
     if (lines.length > 0) {
-      conflicts.push({ file: path2.relative(agentDir, file).split(path2.sep).join("/"), lines });
+      conflicts.push({ file: path2.relative(agentDir2, file).split(path2.sep).join("/"), lines });
     }
   }
   return conflicts;
@@ -19194,9 +19189,9 @@ function findConflictMarkers(agentDir) {
 function formatConflicts(conflicts) {
   return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
 }
-function findYamlSyntaxErrors(agentDir) {
+function findYamlSyntaxErrors(agentDir2) {
   const errors = [];
-  for (const file of findMcsYmlFiles(agentDir).sort()) {
+  for (const file of findMcsYmlFiles(agentDir2).sort()) {
     let text;
     try {
       text = fs6.readFileSync(file, "utf8");
@@ -19208,7 +19203,7 @@ function findYamlSyntaxErrors(agentDir) {
       yaml.load(text, { json: true });
     } catch (e) {
       errors.push({
-        file: path2.relative(agentDir, file).split(path2.sep).join("/"),
+        file: path2.relative(agentDir2, file).split(path2.sep).join("/"),
         line: e.mark ? e.mark.line + 1 : 1,
         column: e.mark ? e.mark.column + 1 : 1,
         message: e.reason || e.message
@@ -19220,9 +19215,9 @@ function findYamlSyntaxErrors(agentDir) {
 function formatYamlSyntaxErrors(errors) {
   return errors.map((e) => `${e.file} (line ${e.line}, column ${e.column}: ${e.message})`).join("; ");
 }
-function findLocalErrors(agentDir) {
+function findLocalErrors(agentDir2) {
   const errors = [];
-  for (const c of findConflictMarkers(agentDir)) {
+  for (const c of findConflictMarkers(agentDir2)) {
     errors.push({
       file: c.file,
       line: c.lines[0],
@@ -19231,7 +19226,7 @@ function findLocalErrors(agentDir) {
       message: `Unresolved merge conflict markers at line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")}. Keep the right version between the markers and delete the marker lines.`
     });
   }
-  for (const e of findYamlSyntaxErrors(agentDir)) {
+  for (const e of findYamlSyntaxErrors(agentDir2)) {
     errors.push({
       file: e.file,
       line: e.line,
@@ -19313,7 +19308,7 @@ function waitForDiagnostics(client, filePaths, settleMs = 500, timeoutMs = 15e3)
   });
 }
 var SEVERITY_NAMES = { 1: "error", 2: "warning", 3: "information", 4: "hint" };
-function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, localErrors = []) {
+function formatValidationOutput(diagnosticsMap, agentDir2, incomplete = null, localErrors = []) {
   let errorCount = 0, warningCount = 0, infoCount = 0;
   const files = [];
   for (const [uri, diags] of diagnosticsMap) {
@@ -19322,7 +19317,7 @@ function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, loc
     try {
       const unc = process.platform === "win32" && uri.match(/^file:\/\/\/\/(.*)$/);
       const localPath = unc ? "\\\\" + unc[1].split("/").map(decodeURIComponent).join("\\") : fileURLToPath2(uri);
-      filePath = path2.relative(agentDir, localPath);
+      filePath = path2.relative(agentDir2, localPath);
     } catch {
     }
     const mapped = diags.map((d) => {
@@ -19382,13 +19377,13 @@ function pushBlockedError(validation) {
   return `Push blocked: ${errors} validation error(s). Fix errors before pushing, or use --force to bypass.`;
 }
 async function runValidation(client, args, tokens) {
-  const agentDir = findAgentDir(args.workspace);
+  const agentDir2 = findAgentDir(args.workspace);
   try {
     await client.sendCustomRequest("powerplatformls/getLocalChanges", buildSyncRequest(args, tokens));
   } catch (e) {
     log(`[validate] Context init warning: ${e.message}`);
   }
-  const filePaths = findMcsYmlFiles(agentDir);
+  const filePaths = findMcsYmlFiles(agentDir2);
   if (filePaths.length === 0) {
     return {
       status: "ok",
@@ -19417,12 +19412,12 @@ async function runValidation(client, args, tokens) {
     incomplete = {
       reason: missing.length > 0 ? reason || "timeout" : "unreadable",
       message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
-      missingFiles: missing.map((f) => path2.relative(agentDir, f)),
-      unreadableFiles: unreadable.map((u) => ({ file: path2.relative(agentDir, u.filePath), error: u.error }))
+      missingFiles: missing.map((f) => path2.relative(agentDir2, f)),
+      unreadableFiles: unreadable.map((u) => ({ file: path2.relative(agentDir2, u.filePath), error: u.error }))
     };
     log(`[validate] ${incomplete.message}`);
   }
-  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete, findLocalErrors(agentDir));
+  const output = formatValidationOutput(diagnosticsMap, agentDir2, incomplete, findLocalErrors(agentDir2));
   output.fileCount = filePaths.length;
   return output;
 }
@@ -19447,28 +19442,28 @@ function findAgentDir(workspace, quiet = false) {
   return resolvedWs;
 }
 function getMissingBotDefinitionError(workspace) {
-  const agentDir = findAgentDir(workspace);
-  if (fs6.existsSync(path2.join(agentDir, ".mcs", "botdefinition.json"))) {
+  const agentDir2 = findAgentDir(workspace);
+  if (fs6.existsSync(path2.join(agentDir2, ".mcs", "botdefinition.json"))) {
     return null;
   }
-  return `No .mcs/botdefinition.json found in ${agentDir}. clone creates this file, but it is not tracked in git because .mcs/.gitignore ignores everything, so a workspace that went through git or was copied without .mcs/ does not have it. Without it validate reports a misleading missing 'CdsBotId', and push and pull fail with 'Please resync'. To fix it, clone the agent again into a new folder, copy your edited YAML files over the new clone, then run validate and push.`;
+  return `No .mcs/botdefinition.json found in ${agentDir2}. clone creates this file, but it is not tracked in git because .mcs/.gitignore ignores everything, so a workspace that went through git or was copied without .mcs/ does not have it. Without it validate reports a misleading missing 'CdsBotId', and push and pull fail with 'Please resync'. To fix it, clone the agent again into a new folder, copy your edited YAML files over the new clone, then run validate and push.`;
 }
 function requireBotDefinition(args) {
   const message = getMissingBotDefinitionError(args.workspace);
   if (message) die(message);
 }
-function loadConnJson(agentDir) {
+function loadConnJson(agentDir2) {
   try {
-    const connPath = path2.join(agentDir, ".mcs", "conn.json");
+    const connPath = path2.join(agentDir2, ".mcs", "conn.json");
     return JSON.parse(fs6.readFileSync(connPath, "utf8"));
   } catch {
     return null;
   }
 }
 function buildSyncRequest(args, tokens) {
-  const agentDir = findAgentDir(args.workspace);
-  const workspaceUri = toFileUri(agentDir);
-  const conn = loadConnJson(agentDir);
+  const agentDir2 = findAgentDir(args.workspace);
+  const workspaceUri = toFileUri(agentDir2);
+  const conn = loadConnJson(agentDir2);
   log(`Workspace URI: ${workspaceUri}`);
   if (conn) {
     log(`Found .mcs/conn.json \u2014 AgentId: ${conn.AgentId}`);
@@ -19576,8 +19571,8 @@ async function cmdAuth(args) {
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
 }
 async function acquireLspTokens(args) {
-  const agentDir = findAgentDir(args.workspace);
-  const conn = loadConnJson(agentDir);
+  const agentDir2 = findAgentDir(args.workspace);
+  const conn = loadConnJson(agentDir2);
   const clusterCategory = conn?.AccountInfo?.clusterCategory;
   const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
@@ -19610,8 +19605,8 @@ function emit(obj, exitCode) {
   process.stdout.write(JSON.stringify(obj, null, 2) + "\n");
   if (exitCode) process.exitCode = exitCode;
 }
-function localPushGuardError(agentDir) {
-  const conflicts = findConflictMarkers(agentDir);
+function localPushGuardError(agentDir2) {
+  const conflicts = findConflictMarkers(agentDir2);
   if (conflicts.length > 0) {
     return {
       status: "error",
@@ -19619,11 +19614,11 @@ function localPushGuardError(agentDir) {
       conflicts
     };
   }
-  const syntaxErrors = findYamlSyntaxErrors(agentDir);
+  const syntaxErrors = findYamlSyntaxErrors(agentDir2);
   if (syntaxErrors.length > 0) {
     return {
       status: "error",
-      error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. Fix the syntax, run validate, then push. --force does not bypass this check.`,
+      error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. The real mistake can be above the reported line, for example an unclosed quote. Fix the syntax, run validate, then push. --force does not bypass this check.`,
       syntaxErrors
     };
   }
@@ -19634,38 +19629,10 @@ async function cmdWithLsp(args, method) {
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
   requireBotDefinition(args);
-  const agentDir = findAgentDir(args.workspace);
   if (method === "powerplatformls/syncPush") {
-<<<<<<< HEAD
-    const conflicts = findConflictMarkers(agentDir);
-    if (conflicts.length > 0) {
-      process.stdout.write(
-        JSON.stringify({
-          status: "error",
-          error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
-          conflicts
-        }, null, 2) + "\n"
-      );
-      process.exitCode = 1;
-      return;
-    }
-  }
-  if (method === "powerplatformls/syncPush") {
-    const syntaxErrors = findYamlSyntaxErrors(agentDir);
-    if (syntaxErrors.length > 0) {
-      process.stdout.write(
-        JSON.stringify({
-          status: "error",
-          error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. The real mistake can be above the reported line, for example an unclosed quote. Fix the syntax, run validate, then push. --force does not bypass this check.`,
-          syntaxErrors
-        }, null, 2) + "\n"
-      );
-      process.exitCode = 1;
-=======
     const refusal = localPushGuardError(findAgentDir(args.workspace));
     if (refusal) {
       emit(refusal, 1);
->>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
       return;
     }
   }
@@ -19874,8 +19841,8 @@ async function resolveEnvironmentById(tenantId, environmentId) {
 var PUBLISH_POLL_INTERVAL_MS = 1e4;
 async function cmdPublish(args) {
   if (!args.workspace) die("--workspace is required");
-  const agentDir = findAgentDir(args.workspace);
-  const conn = loadConnJson(agentDir);
+  const agentDir2 = findAgentDir(args.workspace);
+  const conn = loadConnJson(agentDir2);
   const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
   if (!tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   const envUrl = (args.environmentUrl || conn?.DataverseEndpoint || "").replace(/\/+$/, "");
@@ -19956,8 +19923,8 @@ async function cmdChanges(args) {
   }
   if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
   if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
-  const agentDir = findAgentDir(args.workspace);
-  const conn = loadConnJson(agentDir);
+  const agentDir2 = findAgentDir(args.workspace);
+  const conn = loadConnJson(agentDir2);
   const clusterCategory = conn?.AccountInfo?.clusterCategory;
   const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
@@ -20112,21 +20079,6 @@ async function cmdClone(args) {
     await client.stop();
   }
 }
-<<<<<<< HEAD
-function cmdDoctor(args) {
-  const result = doctor.runDoctor(doctor.makeContext(args), {
-    locateBinary,
-    compareSemver,
-    minExtensionVersion: MIN_EXTENSION_VERSION,
-    resolveAuthMode,
-    findAgentDir: (workspace) => findAgentDir(workspace, true),
-    findConflictMarkers,
-    formatConflicts
-  });
-  for (const c of result.checks) process.stderr.write(doctor.formatLine(c) + "\n");
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-  if (result.status === "fail") process.exitCode = 1;
-=======
 function runPac(file, argv, timeoutMs = 3e5) {
   return new Promise((resolve) => {
     let cmd, cmdArgs, options;
@@ -20210,16 +20162,16 @@ async function pacClone(args, pac) {
   if (r.code !== 0) return emit({ status: "error", backend: "pac", error: pacFailure(r, "Clone") }, 1);
   emit({ status: "ok", backend: "pac", result: { agentFolderName: pacUtils.parseClone(r.stdout) } });
 }
-async function pacPullStep(agentDir, pac, timeoutMs) {
-  const r = await runPac(pac.file, ["copilot", "pull", "--project-dir", agentDir], timeoutMs);
+async function pacPullStep(agentDir2, pac, timeoutMs) {
+  const r = await runPac(pac.file, ["copilot", "pull", "--project-dir", agentDir2], timeoutMs);
   if (r.code !== 0) return { error: pacFailure(r, "Pull") };
   const parsed = pacUtils.parsePull(r.stdout);
-  const conflicts = findConflictMarkers(agentDir);
+  const conflicts = findConflictMarkers(agentDir2);
   return { applied: parsed.applied, conflicts, conflictWarning: parsed.conflict };
 }
 async function pacPull(args, pac) {
-  const agentDir = pacAgentDir(args);
-  const step = await pacPullStep(agentDir, pac, args.timeout);
+  const agentDir2 = pacAgentDir(args);
+  const step = await pacPullStep(agentDir2, pac, args.timeout);
   if (step.error) return emit({ status: "error", backend: "pac", error: step.error }, 1);
   if (step.conflicts.length > 0 || step.conflictWarning) {
     return emit({
@@ -20248,8 +20200,8 @@ async function pacValidate(args) {
   }
 }
 async function pacPush(args, pac) {
-  const agentDir = pacAgentDir(args);
-  const refusal = localPushGuardError(agentDir);
+  const agentDir2 = pacAgentDir(args);
+  const refusal = localPushGuardError(agentDir2);
   if (refusal) return emit({ ...refusal, backend: "pac" }, 1);
   let validation = "skipped";
   let note = "--force: LSP validation skipped.";
@@ -20259,13 +20211,13 @@ async function pacPush(args, pac) {
       note = "The Copilot Studio VS Code extension (or its vscode-jsonrpc dependency) was not found, so the push was not validated by the LSP. Only conflict markers and YAML syntax were checked.";
       log(`[push] ${note}`);
     } else if (!result.valid) {
-      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, result.incomplete ? 1 : 0);
+      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, 1);
     } else {
       validation = "passed";
       note = null;
     }
   }
-  const r = await runPac(pac.file, ["copilot", "push", "--project-dir", agentDir], args.timeout);
+  const r = await runPac(pac.file, ["copilot", "push", "--project-dir", agentDir2], args.timeout);
   const text = `${r.stdout}
 ${r.stderr}`;
   if (r.code !== 0) {
@@ -20277,13 +20229,13 @@ ${r.stderr}`;
   emit(out);
 }
 async function pacPublish(args, pac) {
-  const agentDir = pacAgentDir(args);
-  const conn = loadConnJson(agentDir);
+  const agentDir2 = pacAgentDir(args);
+  const conn = loadConnJson(agentDir2);
   const botId = args.agentId || conn && conn.AgentId;
   const envId = args.environmentId || conn && conn.EnvironmentId;
   if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
   if (!envId) die("Cannot determine environment ID. Provide --environment-id or ensure .mcs/conn.json exists.");
-  const settingsFile = path2.join(agentDir, "settings.mcs.yml");
+  const settingsFile = path2.join(agentDir2, "settings.mcs.yml");
   const readStamp = () => {
     try {
       return pacUtils.readPublishedOn(fs6.readFileSync(settingsFile, "utf8"));
@@ -20291,7 +20243,7 @@ async function pacPublish(args, pac) {
       return null;
     }
   };
-  const before = await pacPullStep(agentDir, pac, args.timeout);
+  const before = await pacPullStep(agentDir2, pac, args.timeout);
   if (before.error) return emit({ status: "error", backend: "pac", error: before.error }, 1);
   if (before.conflicts.length > 0) {
     return emit({ status: "conflict", backend: "pac", conflicts: before.conflicts, message: `Not published. Resolve the merge conflict markers in ${formatConflicts(before.conflicts)} first.` }, 1);
@@ -20299,7 +20251,7 @@ async function pacPublish(args, pac) {
   const previousPublishedOn = readStamp();
   const started = Date.now();
   const r = await runPac(pac.file, ["copilot", "publish", "--bot", botId, "--environment", envId], args.timeout);
-  const after = await pacPullStep(agentDir, pac, args.timeout);
+  const after = await pacPullStep(agentDir2, pac, args.timeout);
   const publishedOn = readStamp();
   if (publishedOn && publishedOn !== previousPublishedOn) {
     return emit({ status: "ok", backend: "pac", botId, publishedOn, previousPublishedOn, durationMs: Date.now() - started });
@@ -20322,7 +20274,20 @@ async function pacListEnvs(args, pac) {
   }
   if (r.code !== 0 || !list) return emit({ status: "error", backend: "pac", error: pacFailure(r, "env list") }, 1);
   emit({ status: "ok", backend: "pac", environments: pacUtils.mapEnvList(list) });
->>>>>>> ff1ee8f (manage-agent: add a pac backend for clone, pull, push and publish)
+}
+function cmdDoctor(args) {
+  const result = doctor.runDoctor(doctor.makeContext(args), {
+    locateBinary,
+    compareSemver,
+    minExtensionVersion: MIN_EXTENSION_VERSION,
+    resolveAuthMode,
+    findAgentDir: (workspace) => findAgentDir(workspace, true),
+    findConflictMarkers,
+    formatConflicts
+  });
+  for (const c of result.checks) process.stderr.write(doctor.formatLine(c) + "\n");
+  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  if (result.status === "fail") process.exitCode = 1;
 }
 async function main() {
   const args = parseArgs();
