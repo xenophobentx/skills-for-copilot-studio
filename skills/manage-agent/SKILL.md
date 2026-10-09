@@ -125,6 +125,8 @@ Push automatically validates all `.mcs.yml` files before pushing and blocks if t
 
 Push also refuses (`"status":"error"`, non-zero exit, with a `conflicts` list) when any `.mcs.yml` file still contains conflict markers. This check runs before any sign-in or upload, and `--force` does not bypass it. Resolve the markers first (see Pull).
 
+Push also refuses (`"status":"error"`, non-zero exit, with a `syntaxErrors` list of `file`, `line`, `column`, `message`) when a `.mcs.yml` file does not parse as YAML, for example because of an unclosed quote. What was measured: `validate` reported a file with an unclosed quote as valid, and pushing such a file with `pac copilot push` emptied the topic on the server. Push through this script was not tried on a broken file, so the refusal is a precaution. The reported line is where the parser gave up; the real mistake can be above it. Like the conflict check it runs before any sign-in or upload and `--force` does not bypass it. Fix the syntax and run `validate`, which reports the same errors.
+
 **Disambiguation check:** Before pushing, check if any routing-relevant changes were made since the last push (new topics with `modelDescription`, new child agents, changed `modelDescription` or `beginDialog.description` on any surface). If so, suggest a disambiguation check:
 
 > "You've made changes to topic/tool/child agent descriptions since the last push. Want to run a disambiguation check first to catch any routing collisions?"
@@ -285,6 +287,7 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 | device_code_expired | User didn't authenticate in time | Re-run auth, authenticate promptly |
 | ConcurrencyVersionMismatch | Push without fresh row versions | Pull first, then push |
 | `conflict` status after pull, or "Push refused: unresolved merge conflict markers" | Same line changed locally and on the server | Pick the right version between the markers, delete the marker lines, run `validate`, then push |
+| "Push refused: YAML syntax errors", or a `yaml-syntax` error from `validate` | A `.mcs.yml` file does not parse (unclosed quote, tab indentation, bad indentation) | Fix the file at the reported line (the real mistake can be above it), run `validate`, then push |
 | Token expired + silent refresh failed | Refresh token expired (~90 days) | Run `auth` command for new device code flow |
 | Binary missing | Extension installed but binary not present | Reinstall the extension |
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |

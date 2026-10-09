@@ -25,6 +25,10 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
    ```
    This validates all `.mcs.yml` files in the workspace using the LSP binary's full diagnostics: YAML structure, Power Fx expressions, schema validation, cross-file references, and environment-specific checks.
 
+   The language server does not catch every YAML syntax error (an unclosed quote still comes back as valid), so validate also parses each file itself. A file that does not parse shows up as an error with `source: "yaml-syntax"`, and the line and column are in the message and in `range` (zero-based, like the other diagnostics). The reported line is where the parser gave up, which can be below the real mistake, for example after an unclosed quote.
+
+   Files that still contain merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`, left by a conflicted pull) are reported with `source: "conflict-markers"`, one error per file that lists the marker lines, and are not parsed further. Resolve the markers first, then validate again.
+
    Connection details come from `.mcs/conn.json` — read it to get tenant-id, environment-id, environment-url, and agent-mgmt-url.
 
 3. **Parse the JSON output**:
