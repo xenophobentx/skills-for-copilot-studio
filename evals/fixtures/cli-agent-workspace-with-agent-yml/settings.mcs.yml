@@ -1,0 +1,20 @@
+displayName: Eval CLI Agent
+schemaName: eval_cliAgent
+accessControlPolicy: ChatbotReaders
+authenticationMode: None
+configuration:
+  recognizer:
+    kind: CLICopilotRecognizer
+
+  agentSettings:
+    instructions:
+      segments:
+        - kind: StaticSegment
+          value: |
+            You are a helpful IT helpdesk assistant for Contoso.
+            Be concise and ask a clarifying question when a request is ambiguous.
+
+  authoringModel: CliCopilot
+
+template: cliagent-1.0.0
+language: 1033

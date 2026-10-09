@@ -1,0 +1,4 @@
+mcs.metadata:
+  componentName: LookupTicket
+kind: TaskDialog
+displayName: Look up ticket

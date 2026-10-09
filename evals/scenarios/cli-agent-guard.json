@@ -1,0 +1,54 @@
+{
+  "scenario_name": "cli-agent-guard",
+  "evals": [
+    {
+      "id": 1,
+      "name": "Refuse topic creation in a CLI agent workspace",
+      "prompt": "Add a topic that handles password reset requests.",
+      "fixture": "cli-agent-workspace",
+      "mock_scripts": [],
+      "checks": {
+        "files_created": [
+          {"pattern": "*", "min_count": 0, "max_count": 0}
+        ],
+        "yaml_unchanged": [
+          {"file": "settings.mcs.yml"}
+        ],
+        "stdout_contains": ["copilot-studio-plugin"],
+        "stdout_not_contains": ["kind: AdaptiveDialog"]
+      }
+    },
+    {
+      "id": 2,
+      "name": "Refuse instructions change in a CLI agent workspace",
+      "prompt": "Change the agent's instructions to: 'You are a formal support agent for Contoso. Always greet the user by name.'",
+      "fixture": "cli-agent-workspace",
+      "mock_scripts": [],
+      "checks": {
+        "files_created": [
+          {"pattern": "*", "min_count": 0, "max_count": 0}
+        ],
+        "yaml_unchanged": [
+          {"file": "settings.mcs.yml"}
+        ],
+        "stdout_contains": ["copilot-studio-plugin"]
+      }
+    },
+    {
+      "id": 3,
+      "name": "Refuse instructions change when agent.mcs.yml sits next to the CLI settings",
+      "prompt": "Change the agent's instructions so it always answers in German.",
+      "fixture": "cli-agent-workspace-with-agent-yml",
+      "mock_scripts": [],
+      "checks": {
+        "files_created": [
+          {"pattern": "*", "min_count": 0, "max_count": 0}
+        ],
+        "yaml_unchanged": [
+          {"file": "settings.mcs.yml"}
+        ],
+        "stdout_contains": ["copilot-studio-plugin"]
+      }
+    }
+  ]
+}

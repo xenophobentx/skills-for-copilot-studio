@@ -23,6 +23,22 @@ You are working inside a Copilot Studio agent project. All YAML files have the `
 └── agents/            # Child agents (AgentDialog YAML files, each in its own subfolder)
 ```
 
+## Workspace Type: Classic vs CLI Agent
+
+This plugin supports CLASSIC (topic-based) agents only. Copilot Studio CLI agents (agentic-loop / GitHub Copilot harness agents, see #182) use a different layout and schema and are supported by [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). Do not apply the structure above to them. This section is the only place that defines how to detect one; other files refer here.
+
+**Which agent to check.** Only the agent you are about to edit, pull, push or publish. Its root is the directory that contains its `agent.mcs.yml` or `.mcs/` folder (for files you are about to edit: the nearest parent directory with a `settings.mcs.yml`). A CLI agent elsewhere under the working directory (for example next to the classic agent in a migration workspace) does not matter. If the request does not say which of several agents it targets, ask.
+
+**How to check.** Before the first write, pull, push or publish, run `Grep` with pattern `^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)` (case-insensitive) on that agent root's `settings.mcs.yml`. A match means a CLI agent, that is either:
+- `template` starts with `cliagent` (for example `template: cliagent-1.0.0`), or
+- `authoringModel` (or `authoringMode`) is `CliCopilot`; it is usually indented under `configuration:`.
+
+Supporting evidence only, never enough on its own: `configuration.agentSettings.instructions.segments` with `kind: StaticSegment`, a `capabilities/` folder, skills under `behaviors/` with `kind: InlineAgentSkill`, `authoringShape: 2` in `.mcs/botdefinition.json`, and no `agent.mcs.yml`/`topics/`. A classic agent has `agent.mcs.yml` plus `topics/`, `actions/`, `knowledge/`, `variables/`.
+
+**In a CLI agent workspace this plugin only reads and describes.** Do not create or edit files, and do not pull, push, publish or clone into it (pull rewrites the files with classic tooling). Do not fall back to the "no agent found, clone one" flow either. Tell the user:
+
+> This is a Copilot Studio CLI agent workspace, not a classic agent. This plugin targets classic (topic-based) agents, and classic edits are silently ignored or break CLI agents. Use the Copilot Studio plugin for CLI agents instead: https://github.com/microsoft/copilot-studio-plugin
+
 ## Schema Lookup Script
 
 When you write new YAML files, be sure to use the schema lookup script to understand the schema, including mandatory fields, definitions, and references. The script is located at `${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js`, and you can use it in the terminal as follows:
