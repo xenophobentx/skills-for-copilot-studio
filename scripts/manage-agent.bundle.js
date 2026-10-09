@@ -15501,6 +15501,17 @@ function findAgentDir(workspace) {
   }
   return resolvedWs;
 }
+function getMissingBotDefinitionError(workspace) {
+  const agentDir = findAgentDir(workspace);
+  if (fs6.existsSync(path2.join(agentDir, ".mcs", "botdefinition.json"))) {
+    return null;
+  }
+  return `No .mcs/botdefinition.json found in ${agentDir}. clone creates this file, but it is not tracked in git because .mcs/.gitignore ignores everything, so a workspace that went through git or was copied without .mcs/ does not have it. Without it validate reports a misleading missing 'CdsBotId', and push and pull fail with 'Please resync'. To fix it, clone the agent again into a new folder, copy your edited YAML files over the new clone, then run validate and push.`;
+}
+function requireBotDefinition(args) {
+  const message = getMissingBotDefinitionError(args.workspace);
+  if (message) die(message);
+}
 function loadConnJson(agentDir) {
   try {
     const connPath = path2.join(agentDir, ".mcs", "conn.json");
@@ -15654,6 +15665,7 @@ async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -15698,6 +15710,7 @@ async function cmdValidate(args) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -15916,6 +15929,7 @@ async function cmdChanges(args) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);

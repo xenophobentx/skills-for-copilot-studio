@@ -32,6 +32,8 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
    - `summary.warnings > 0` → report as WARN items
    - Each file with diagnostics is listed with severity, message, code, and line range
 
+   If the command fails with `No .mcs/botdefinition.json found`, the workspace was restored from git or copied without `.mcs/`. Do not try to validate or push it: `clone` the agent again into a new folder, copy the edited YAML files over it, and validate that folder. See the manage-agent skill.
+
 4. **If the user asked about a specific file**, filter the output to show only that file's diagnostics.
 
 5. **For additional context on specific errors**, use schema lookup:
