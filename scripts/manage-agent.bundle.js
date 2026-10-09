@@ -18213,7 +18213,7 @@ var require_doctor = __commonJS({
       try {
         auth = deps.resolveAuthMode(ctx.env, ctx.platform);
       } catch (e) {
-        add("session", "WARN", `sign-in mode: ${firstLine(e)}`, "Fix or unset CPS_AUTH_MODE.");
+        add("session", "WARN", `sign-in mode: ${firstLine(e).replace(/\.$/, "")}`, "Fix or unset CPS_AUTH_MODE.");
         return;
       }
       if (auth.mode === "device") {
@@ -18419,7 +18419,7 @@ var require_doctor = __commonJS({
           "pac",
           "OK",
           `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`,
-          `In our own tests ${newest} emptied a file on a conflicting pull, ${MIN_PAC_VERSION} kept both versions. Update before you use the pac backend.`
+          `In our tests pac 2.12.2 emptied a file on a conflicting pull and ${MIN_PAC_VERSION} kept both versions. Update to ${MIN_PAC_VERSION} or later before you use the pac backend.`
         );
       } else {
         add("pac", "OK", `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`);
