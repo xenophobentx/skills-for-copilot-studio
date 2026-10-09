@@ -61,11 +61,13 @@ If the user doesn't have one, guide them:
 
 ## Step 3: Authenticate
 
-Run the auth command (opens a browser; over SSH or without a display it prints a device code instead):
+Run the auth command (opens a browser; over SSH or without a display it prints a device code instead, and `--auth-mode device|interactive` forces one flow):
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js auth --workspace <path> --client-id <id>
 ```
+
+If the output has a `{"status":"device_code",...}` line, show the user the `verificationUri` and `userCode` right away and wait for the command to finish.
 
 If successful, you'll see:
 ```json

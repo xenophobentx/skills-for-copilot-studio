@@ -26,7 +26,11 @@ function extract(name) {
 function die(msg) {
   throw new Error(msg);
 }
-eval(["splitMessageError", "readMessageFile", "parseArgs"].map(extract).join("\n"));
+let authMode = null;
+function setAuthModeOverride(value) {
+  authMode = value;
+}
+eval(["splitMessageError", "messageArg", "readMessageFile", "parseArgs"].map(extract).join("\n"));
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -105,6 +109,22 @@ assertThrows(() => parseArgs(["--message-file", path.join(tmp, "missing.txt")]),
 assertThrows(() => parseArgs(["--message-file", write("empty.txt", "﻿\n")]), /is empty/, "empty file");
 assertThrows(() => parseArgs(["--message-file"]), /needs a path/, "--message-file without a path");
 assertThrows(() => parseArgs(["hi", "--message-file", write("q.txt", "x")]), /either as an argument or with --message-file/, "both argument and file");
+
+// ---------------------------------------------------------------------------
+// --auth-mode takes its value, and followup_command keeps a message file
+// ---------------------------------------------------------------------------
+
+{
+  const p = parseArgs(["--auth-mode", "device", "hello"]);
+  assertEqual([p.utterance, authMode], ["hello", "device"], "--auth-mode value is not taken for the message");
+}
+{
+  const file = write("abs.txt", "hi");
+  const p = parseArgs(["--message-file", file]);
+  assertEqual(p.messageFile, path.resolve(file), "message file path is made absolute");
+  assertEqual(messageArg(p.utterance, p.messageFile), `--message-file "${path.resolve(file)}"`, "followup keeps --message-file");
+}
+assertEqual(messageArg("hello", null), '"hello"', "followup keeps an inline message inline");
 
 fs.rmSync(tmp, { recursive: true, force: true });
 

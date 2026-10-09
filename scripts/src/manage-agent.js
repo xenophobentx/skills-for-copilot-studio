@@ -21,7 +21,8 @@
  *   CPS_ENVIRONMENT_URL     Dataverse environment URL (e.g. https://org123.crm.dynamics.com)
  *   CPS_AGENT_MGMT_URL      Agent management URL
  *   CPS_ENVIRONMENT_NAME    Display name for the environment
- *   CPS_AUTH_MODE           device | interactive (default: device over SSH or without a display, else interactive)
+ *   CPS_AUTH_MODE           device | interactive (default: device over SSH or without a display, else interactive);
+ *                           the --auth-mode flag does the same and wins
  *   CPS_AUTH_TIMEOUT_SECONDS  How long the browser sign-in may take (default 300)
  *
  * Output: JSON on stdout, diagnostics on stderr.
@@ -41,6 +42,7 @@ const {
   acquireTokenDeviceCode,
   acquireTokenInteractive,
   acquireTokenSilent,
+  setAuthModeOverride,
   getOrAcquireToken,
   getOrAcquireIslandToken,
 } = require("./shared-auth");
@@ -164,6 +166,9 @@ function parseArgs() {
         break;
       case "--url":
         parsed.url = args[++i];
+        break;
+      case "--auth-mode":
+        setAuthModeOverride(args[++i]);
         break;
       default:
         if (!args[i].startsWith("--") && !parsed.command) {

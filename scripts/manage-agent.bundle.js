@@ -15082,7 +15082,7 @@ var init_open = __esm({
 // src/shared-auth.js
 var require_shared_auth = __commonJS({
   "src/shared-auth.js"(exports2, module2) {
-    var { log: log2 } = require_shared_utils();
+    var { log: log2, die: die2 } = require_shared_utils();
     var { createCachePlugin } = require_msal_cache();
     var VSCODE_CLIENT_ID2 = "51f81489-12ee-4a9e-aaae-a2591f45987d";
     var ISLAND_RESOURCE_IDS = {
@@ -15170,16 +15170,17 @@ var require_shared_auth = __commonJS({
       return buildTokenInfo2(result);
     }
     var INTERACTIVE_TIMEOUT_SECONDS = 300;
+    var MAX_INTERACTIVE_TIMEOUT_SECONDS = 3600;
     function resolveAuthMode(env = process.env, platform2 = process.platform) {
       const requested = String(env.CPS_AUTH_MODE || "").trim().toLowerCase();
       if (requested === "device" || requested === "device-code") {
-        return { mode: "device", reason: "CPS_AUTH_MODE=device" };
+        return { mode: "device", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
       }
       if (requested === "interactive") {
-        return { mode: "interactive", reason: "CPS_AUTH_MODE=interactive" };
+        return { mode: "interactive", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
       }
       if (requested && requested !== "auto") {
-        throw new Error(`Unknown CPS_AUTH_MODE "${env.CPS_AUTH_MODE}". Use "device" or "interactive".`);
+        throw new Error(`Unknown auth mode "${env.CPS_AUTH_MODE}". Use "device" or "interactive" (--auth-mode or CPS_AUTH_MODE).`);
       }
       if (env.SSH_CONNECTION || env.SSH_TTY) {
         return { mode: "device", reason: "this is an SSH session" };
@@ -15189,16 +15190,32 @@ var require_shared_auth = __commonJS({
       }
       return { mode: "interactive", reason: null };
     }
+    function setAuthModeOverride2(value, env = process.env) {
+      if (value === void 0 || value === "") die2("--auth-mode needs a value: device or interactive.");
+      try {
+        resolveAuthMode({ CPS_AUTH_MODE: value }, "linux");
+      } catch (e) {
+        die2(e.message);
+      }
+      env.CPS_AUTH_MODE = value;
+    }
     function interactiveTimeoutMs(env = process.env) {
-      const seconds = Number(env.CPS_AUTH_TIMEOUT_SECONDS);
-      return (seconds > 0 ? seconds : INTERACTIVE_TIMEOUT_SECONDS) * 1e3;
+      const raw = String(env.CPS_AUTH_TIMEOUT_SECONDS ?? "").trim();
+      if (!raw) return INTERACTIVE_TIMEOUT_SECONDS * 1e3;
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds) || seconds < 1 || seconds > MAX_INTERACTIVE_TIMEOUT_SECONDS) {
+        throw new Error(
+          `CPS_AUTH_TIMEOUT_SECONDS must be a number of seconds between 1 and ${MAX_INTERACTIVE_TIMEOUT_SECONDS}, got "${raw}".`
+        );
+      }
+      return seconds * 1e3;
     }
     function withSignInTimeout(promise, ms) {
       let timer;
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => {
           reject(new Error(
-            `Browser sign-in did not finish within ${Math.round(ms / 1e3)} seconds. If this machine has no usable browser, run again with CPS_AUTH_MODE=device to sign in with a device code. If the browser showed an AADSTS error, you may have picked the wrong account: open the printed URL again and choose another one.`
+            `Browser sign-in did not finish within ${Math.round(ms / 1e3)} seconds. Run the command again and pick the right account. If this machine has no usable browser, run it with --auth-mode device (or CPS_AUTH_MODE=device) to sign in with a device code.`
           ));
         }, ms);
       });
@@ -15206,6 +15223,7 @@ var require_shared_auth = __commonJS({
     }
     async function acquireTokenInteractive2(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
+      const timeoutMs = interactiveTimeoutMs();
       const result = await withSignInTimeout(
         app.acquireTokenInteractive({
           scopes,
@@ -15218,7 +15236,7 @@ var require_shared_auth = __commonJS({
           },
           successTemplate: "<html><body><h1>Login successful. You can close this tab.</h1></body></html>"
         }),
-        interactiveTimeoutMs()
+        timeoutMs
       );
       if (!result) throw new Error("Interactive flow returned no result");
       return buildTokenInfo2(result);
@@ -15227,7 +15245,14 @@ var require_shared_auth = __commonJS({
       const { mode, reason } = resolveAuthMode();
       if (mode === "device") {
         log2(`Signing in with a device code (${reason}).`);
-        return acquireTokenDeviceCode2(tenantId, clientId, scopes, cacheSlot);
+        try {
+          return await acquireTokenDeviceCode2(tenantId, clientId, scopes, cacheSlot);
+        } catch (e) {
+          if (/AADSTS(53003|530036)\b/.test(e.message)) {
+            e.message += " Your tenant may block device code sign-in. On a machine with a browser, run again with --auth-mode interactive.";
+          }
+          throw e;
+        }
       }
       log2("Signing in with the browser...");
       return acquireTokenInteractive2(tenantId, clientId, scopes, cacheSlot);
@@ -15281,6 +15306,7 @@ var require_shared_auth = __commonJS({
       acquireTokenInteractive: acquireTokenInteractive2,
       acquireTokenSignIn,
       resolveAuthMode,
+      setAuthModeOverride: setAuthModeOverride2,
       interactiveTimeoutMs,
       withSignInTimeout,
       acquireTokenSilent: acquireTokenSilent2,
@@ -15305,6 +15331,7 @@ var {
   acquireTokenDeviceCode,
   acquireTokenInteractive,
   acquireTokenSilent,
+  setAuthModeOverride,
   getOrAcquireToken,
   getOrAcquireIslandToken
 } = require_shared_auth();
@@ -15397,6 +15424,9 @@ function parseArgs() {
         break;
       case "--url":
         parsed.url = args[++i];
+        break;
+      case "--auth-mode":
+        setAuthModeOverride(args[++i]);
         break;
       default:
         if (!args[i].startsWith("--") && !parsed.command) {

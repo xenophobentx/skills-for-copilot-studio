@@ -23,7 +23,7 @@ Requires prior authentication via `/copilot-studio:test-auth`. Do NOT ask the us
      --client-id "<clientId>" "<utterance>" [--agent-dir <path>]
    ```
 
-2. **Authentication**: Requires prior authentication via `/copilot-studio:test-auth`. The token is cached in the `"test-agent"` slot and shared with the eval API. If auth fails or the SDK hangs, tell the caller to re-run `test-auth`.
+2. **Authentication**: Requires prior authentication via `/copilot-studio:test-auth`. The token is cached in the `"test-agent"` slot and shared with the eval API. If auth fails or the SDK hangs, tell the caller to re-run `test-auth`. If there is no cached token the script signs in itself: with a browser, or with a device code over SSH or without a display (`--auth-mode device|interactive` forces one). When the output has a `{"status":"device_code",...}` line, show the user the `verificationUri` and `userCode` right away and wait for the command to finish.
 
 3. Parse the JSON output from stdout:
 

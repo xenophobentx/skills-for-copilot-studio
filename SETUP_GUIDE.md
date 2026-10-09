@@ -55,7 +55,7 @@ To verify, type `@` in the input — you should see `copilot-studio:copilot-stud
 @copilot-studio:copilot-studio-manage clone
 ```
 
-This walks you through environment selection, agent selection, and downloads the agent files — all with interactive browser auth (no app registration needed).
+This walks you through environment selection, agent selection, and downloads the agent files. Sign-in is a browser window, or a device code over SSH or without a display. No app registration is needed.
 
 ### Option B: Clone via VS Code
 
@@ -99,7 +99,7 @@ The agent generates a valid YAML file with unique IDs and saves it to the `topic
 @copilot-studio:copilot-studio-manage push
 ```
 
-A browser window may open for sign-in on first use. Tokens are cached after that.
+A browser window may open for sign-in on first use (over SSH or without a display you get a device code to enter instead). Tokens are cached after that. `--auth-mode device|interactive` forces one flow, and `CPS_AUTH_TIMEOUT_SECONDS` changes how long the browser sign-in may take (default 300 seconds).
 
 ### Push via VS Code
 
@@ -132,7 +132,7 @@ Send a single utterance directly to the published agent and see its full respons
 @copilot-studio:copilot-studio-test Send "What products do you offer?" to the published agent
 ```
 
-The test agent will ask for your App Registration Client ID on first use, authenticate via device code flow, and return the agent's full response. Multi-turn is supported — the agent reuses the conversation automatically.
+The test agent will ask for your App Registration Client ID on first use, sign in (device code over SSH or without a display, browser otherwise), and return the agent's full response. Multi-turn is supported and the agent reuses the conversation automatically.
 
 ### Option B: Run a batch test suite (Copilot Studio Kit)
 

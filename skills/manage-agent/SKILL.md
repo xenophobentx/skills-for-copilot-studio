@@ -37,11 +37,13 @@ All commands that need a token sign in the same way. If there is no cached token
 - On a machine with a browser, a browser window opens for Microsoft sign-in. The script waits 5 minutes for it to finish and then fails with an error that names the alternative.
 - Over SSH (`SSH_CONNECTION` or `SSH_TTY` is set), or on Linux without `DISPLAY` or `WAYLAND_DISPLAY`, the script uses the device code flow instead (see "When device code flow starts").
 
-Two environment variables change this. `CPS_AUTH_MODE=device` forces the device code flow, `CPS_AUTH_MODE=interactive` forces the browser. `CPS_AUTH_TIMEOUT_SECONDS` changes the browser wait (default 300).
+Add `--auth-mode device` to force the device code flow or `--auth-mode interactive` to force the browser. The environment variable `CPS_AUTH_MODE` does the same, and the flag wins. `CPS_AUTH_TIMEOUT_SECONDS` (1 to 3600) changes the browser wait (default 300).
+
+When the output has a `{"status":"device_code",...}` line, show the user the `verificationUri` and `userCode` right away and wait for the command to finish.
 
 Push, pull, clone, changes and list-agents use VS Code's first-party client ID with the Island API gateway. No separate auth step is needed before them. Just run the command directly (Phase 2). Tokens are cached in the OS credential store and silently refreshed for about 90 days, after which the sign-in runs again.
 
-If the browser shows an AADSTS error such as AADSTS50020, the user most likely signed in with an account from the wrong tenant. The command keeps waiting. Open the URL it printed again and pick the right account.
+If the browser shows an AADSTS error such as AADSTS50020, the user most likely signed in with an account from the wrong tenant. The command keeps waiting until the timeout and then fails. Run it again and pick the right account.
 
 ### For the `auth` command (chat/test token)
 
@@ -102,7 +104,7 @@ All commands auto-detect the agent directory (finds the subfolder with `.mcs/con
 
 ### Pull (download remote changes)
 
-`--client-id` is optional. When omitted, uses VS Code's 1p client with interactive browser login.
+`--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
@@ -178,7 +180,7 @@ When `--url` is provided, the script extracts `environmentId` and `agentId` from
 
 ### View Changes (diff local vs remote)
 
-`--client-id` is optional. When omitted, uses VS Code's 1p client with interactive browser login.
+`--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js changes \
@@ -275,7 +277,7 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 | Extension not found | Copilot Studio VS Code extension not installed | Install from VS Code marketplace |
 | LSP request timed out | Binary not responding or wrong protocol version | Check extension version, try updating |
 | device_code_expired | User didn't authenticate in time | Re-run auth, authenticate promptly |
-| `Browser sign-in did not finish within 300 seconds` | No browser could open, the tab was closed, or the wrong account was used | Run again with `CPS_AUTH_MODE=device` |
+| `Browser sign-in did not finish within 300 seconds` | No browser could open, the tab was closed, or the wrong account was used | Run again, with `--auth-mode device` if there is no browser |
 | ConcurrencyVersionMismatch | Push without fresh row versions | Pull first, then push |
 | `conflict` status after pull, or "Push refused: unresolved merge conflict markers" | Same line changed locally and on the server | Pick the right version between the markers, delete the marker lines, run `validate`, then push |
 | Token expired + silent refresh failed | Refresh token expired (~90 days) | Run the `auth` command again |

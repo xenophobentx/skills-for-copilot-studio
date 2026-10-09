@@ -16,6 +16,7 @@
  *   node chat-with-agent.bundle.js "hello" --agent-dir <path>
  *   node chat-with-agent.bundle.js "hello" --token-endpoint <url>
  *   node chat-with-agent.bundle.js "hello" --directline-secret <secret>
+ *   node chat-with-agent.bundle.js "hello" --client-id <id> --auth-mode device|interactive
  *
  * Output (stdout): single JSON object with full activity payloads
  * Diagnostics (stderr): human-readable progress lines
@@ -39,6 +40,7 @@ const {
 const {
   VSCODE_CLIENT_ID,
   acquireTokenSilent,
+  setAuthModeOverride,
 } = require("./shared-auth");
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,12 @@ function splitMessageError(parts) {
   return `Got ${parts.length} separate message arguments (${shown}) but expected one. ` +
     "A message with double quotes is split like this by Windows PowerShell 5.1. " +
     "Write the message to a UTF-8 file and pass --message-file <path> instead.";
+}
+
+// The message as it is written into followup_command: a message that came from a file stays a
+// file, because putting it back inline would hit the same quoting problem again.
+function messageArg(utterance, messageFile) {
+  return messageFile ? `--message-file "${messageFile}"` : `"${utterance}"`;
 }
 
 function readMessageFile(file) {
@@ -113,6 +121,9 @@ function parseArgs(args = process.argv.slice(2)) {
       case "--message-file":
         parsed.messageFile = args[++i];
         break;
+      case "--auth-mode":
+        setAuthModeOverride(args[++i]);
+        break;
       case "--detect-only":
         parsed.detectOnly = true;
         break;
@@ -129,6 +140,7 @@ function parseArgs(args = process.argv.slice(2)) {
     if (!parsed.messageFile) die("--message-file needs a path.");
     if (positional.length > 0) die("Give the message either as an argument or with --message-file, not both.");
     parsed.utterance = readMessageFile(parsed.messageFile);
+    parsed.messageFile = path.resolve(parsed.messageFile);
   } else {
     parsed.utterance = positional[0] || null;
   }
@@ -304,7 +316,7 @@ async function chatDirectLine(utterance, conversationId, params) {
         activities: [],
         watermark,
         resume_command: `${connFlag} "<VALIDATION_CODE>" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${watermark}"`,
-        followup_command: `${connFlag} "${utterance}" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${watermark}"`,
+        followup_command: `${connFlag} ${messageArg(utterance, params.messageFile)} --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${watermark}"`,
       };
     }
 
@@ -352,7 +364,7 @@ async function chatDirectLine(utterance, conversationId, params) {
       activities: responseResult.activities,
       watermark: responseResult.watermark,
       resume_command: `${connFlag} "<VALIDATION_CODE>" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${responseResult.watermark}"`,
-      followup_command: `${connFlag} "${utterance}" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${responseResult.watermark}"`,
+      followup_command: `${connFlag} ${messageArg(utterance, params.messageFile)} --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${responseResult.watermark}"`,
     };
   }
 
@@ -387,7 +399,7 @@ async function getSdkAccessToken(tenantId, clientId) {
     return silent.accessToken;
   }
 
-  log("No cached token — signing in...");
+  log("No cached token, signing in...");
   const token = await sharedSignIn(tenantId, clientId, [scope], "test-agent");
   return token.accessToken;
 }
@@ -483,6 +495,7 @@ async function main() {
       directlineDomain: args.directlineDomain,
       directlineToken: args.directlineToken,
       watermark: args.watermark,
+      messageFile: args.messageFile,
     };
     try {
       const result = await chatDirectLine(args.utterance, args.conversationId, params);
@@ -528,6 +541,7 @@ async function main() {
       tokenEndpoint: modeResult.tokenEndpoint,
       directlineToken: args.directlineToken,
       watermark: args.watermark,
+      messageFile: args.messageFile,
     };
     try {
       const result = await chatDirectLine(args.utterance, args.conversationId, params);
@@ -561,4 +575,4 @@ async function main() {
   }
 }
 
-main();
+main().catch((e) => die(`Unexpected error: ${e.message}`));
