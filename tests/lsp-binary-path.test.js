@@ -101,6 +101,21 @@ try {
     assertEqual(r.version, "1.8.22", "falls back to an older version that has a binary");
   }
 
+  // Read-only lookup (doctor): no chmod, reports the executable bit and skipped folders
+  if (process.platform !== "win32") {
+    const dir = path.join(root, "readonly");
+    const bin = makeExt(dir, "1.8.22", "linux-x64", "lspOut/LanguageServerHost");
+    fs.mkdirSync(path.join(dir, `${EXTENSION_ID}-1.9.20-linux-x64`, "lspOut"), { recursive: true });
+    fs.chmodSync(bin, 0o644);
+    const r = load("linux", "x64").searchInDir(dir, { readOnly: true });
+    assertEqual(r.executable, false, "read-only lookup reports a binary that is not executable");
+    assertEqual(r.skipped, ["1.9.20"], "read-only lookup lists the newer folder without a binary");
+    assertEqual((fs.statSync(bin).mode & 0o111) === 0, true, "read-only lookup leaves the mode alone");
+    const w = load("linux", "x64").searchInDir(dir);
+    assertEqual(w.executable, true, "normal lookup fixes the executable bit");
+    assertEqual((fs.statSync(bin).mode & 0o111) !== 0, true, "normal lookup sets the executable bit");
+  }
+
   // Linux keeps lspOut/ and ignores an osx-* folder
   {
     const dir = path.join(root, "linux");

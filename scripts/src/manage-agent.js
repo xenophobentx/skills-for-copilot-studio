@@ -12,6 +12,7 @@
  *   node manage-agent.bundle.js validate --workspace <path>   # Validate YAML via LSP
  *   node manage-agent.bundle.js list-agents                   # List agents in environment
  *   node manage-agent.bundle.js list-envs                     # List environments
+ *   node manage-agent.bundle.js doctor [--workspace <path>]   # Read-only environment check
  *
  * Environment variables (all optional):
  *   CPS_LSP_BINARY          Override path to LanguageServerHost binary
@@ -43,10 +44,12 @@ const {
   acquireTokenDeviceCode,
   acquireTokenInteractive,
   acquireTokenSilent,
+  resolveAuthMode,
   setAuthModeOverride,
   getOrAcquireToken,
   getOrAcquireIslandToken,
 } = require("./shared-auth");
+const doctor = require("./doctor");
 
 // ---------------------------------------------------------------------------
 // Logging helpers
@@ -182,7 +185,7 @@ function parseArgs() {
   if (!parsed.command) {
     die(
       "Usage: manage-agent <command> [options]\n" +
-        "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs"
+        "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
     );
   }
 
@@ -233,7 +236,11 @@ function compareSemver(a, b) {
   return 0;
 }
 
-function searchInDir(extensionsDir) {
+// readOnly: report only. Skips the chmod and the log lines, and says in the
+// result whether the binary is executable (doctor uses this).
+function searchInDir(extensionsDir, { readOnly = false } = {}) {
+  const say = readOnly ? () => {} : log;
+  const skipped = [];
   const suffix = getPlatformSuffix();
   let entries;
   try {
@@ -268,38 +275,45 @@ function searchInDir(extensionsDir) {
     }
     const binaryPath = candidates.find((c) => fs.existsSync(c));
     if (!binaryPath) {
-      log(`Extension found at ${extensionDir} but binary missing: ${candidates.join(" or ")}`);
+      say(`Extension found at ${extensionDir} but binary missing: ${candidates.join(" or ")}`);
+      skipped.push(match.version);
       continue;
     }
 
     // Ensure executable on Unix
+    let executable = true;
     if (os.platform() !== "win32") {
       try {
         fs.accessSync(binaryPath, fs.constants.X_OK);
       } catch {
-        log(`Setting executable permission on ${binaryPath}`);
-        fs.chmodSync(binaryPath, 0o755);
+        if (readOnly) {
+          executable = false;
+        } else {
+          log(`Setting executable permission on ${binaryPath}`);
+          fs.chmodSync(binaryPath, 0o755);
+        }
       }
     }
 
-    return { binaryPath, extensionDir, lspOutDir: path.dirname(binaryPath), version: match.version };
+    return { binaryPath, extensionDir, lspOutDir: path.dirname(binaryPath), version: match.version, executable, skipped };
   }
   return null;
 }
 
-function findBinary() {
+// Looks for the binary without exiting: { info, searchDirs }, info is null when
+// nothing was found. doctor calls it with readOnly.
+function locateBinary({ readOnly = false } = {}) {
   // Check env override first
   const envBinary = process.env.CPS_LSP_BINARY;
   if (envBinary) {
     if (fs.existsSync(envBinary)) {
-      log(`Using CPS_LSP_BINARY override: ${envBinary}`);
+      if (!readOnly) log(`Using CPS_LSP_BINARY override: ${envBinary}`);
       return {
-        binaryPath: envBinary,
-        lspOutDir: path.dirname(envBinary),
-        version: "custom",
+        info: { binaryPath: envBinary, lspOutDir: path.dirname(envBinary), version: "custom" },
+        searchDirs: [],
       };
     }
-    log(`Warning: CPS_LSP_BINARY set but not found: ${envBinary}`);
+    if (!readOnly) log(`Warning: CPS_LSP_BINARY set but not found: ${envBinary}`);
   }
 
   const home = os.homedir();
@@ -309,16 +323,24 @@ function findBinary() {
   ];
 
   for (const dir of searchDirs) {
-    const result = searchInDir(dir);
-    if (result) {
+    const result = searchInDir(dir, { readOnly });
+    if (result) return { info: result, searchDirs };
+  }
+  return { info: null, searchDirs };
+}
+
+function findBinary() {
+  const { info, searchDirs } = locateBinary();
+  if (info) {
+    if (info.version !== "custom") {
       log(
-        `Found Copilot Studio extension v${result.version} at ${result.lspOutDir}`
+        `Found Copilot Studio extension v${info.version} at ${info.lspOutDir}`
       );
-      if (compareSemver(result.version, MIN_EXTENSION_VERSION) < 0) {
-        warn(`Extension v${result.version} is older than tested v${MIN_EXTENSION_VERSION}. Some features may not work. Update: https://marketplace.visualstudio.com/items?itemName=ms-copilotstudio.vscode-copilotstudio`);
+      if (compareSemver(info.version, MIN_EXTENSION_VERSION) < 0) {
+        warn(`Extension v${info.version} is older than tested v${MIN_EXTENSION_VERSION}. Some features may not work. Update: https://marketplace.visualstudio.com/items?itemName=ms-copilotstudio.vscode-copilotstudio`);
       }
-      return result;
     }
+    return info;
   }
 
   die(
@@ -877,7 +899,7 @@ async function runValidation(client, args, tokens) {
   return output;
 }
 
-function findAgentDir(workspace) {
+function findAgentDir(workspace, quiet = false) {
   // If workspace itself has .mcs/, use it directly
   const resolvedWs = path.resolve(workspace);
   if (fs.existsSync(path.join(resolvedWs, ".mcs", "conn.json"))) {
@@ -890,7 +912,7 @@ function findAgentDir(workspace) {
       if (entry.isDirectory() && !entry.name.startsWith(".")) {
         const sub = path.join(resolvedWs, entry.name);
         if (fs.existsSync(path.join(sub, ".mcs", "conn.json"))) {
-          log(`Found agent directory: ${sub}`);
+          if (!quiet) log(`Found agent directory: ${sub}`);
           return sub;
         }
       }
@@ -1720,6 +1742,21 @@ async function cmdClone(args) {
 // Main
 // ---------------------------------------------------------------------------
 
+function cmdDoctor(args) {
+  const result = doctor.runDoctor(doctor.makeContext(args), {
+    locateBinary,
+    compareSemver,
+    minExtensionVersion: MIN_EXTENSION_VERSION,
+    resolveAuthMode,
+    findAgentDir: (workspace) => findAgentDir(workspace, true),
+    findConflictMarkers,
+    formatConflicts,
+  });
+  for (const c of result.checks) process.stderr.write(doctor.formatLine(c) + "\n");
+  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  if (result.status === "fail") process.exitCode = 1;
+}
+
 async function main() {
   const args = parseArgs();
 
@@ -1751,6 +1788,9 @@ async function main() {
         break;
       case "list-envs":
         await cmdListEnvs(args);
+        break;
+      case "doctor":
+        cmdDoctor(args);
         break;
       default:
         die(`Unknown command: ${args.command}`);
