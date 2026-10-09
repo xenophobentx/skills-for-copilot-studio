@@ -48,7 +48,7 @@ You MUST use the appropriate skill for every task. **NEVER** run scripts or mana
 The manage-agent script uses two different auth flows depending on the operation:
 
 - **Push / Pull / Clone / Changes / Publish / List-Agents / Auth**: Use VS Code's first-party client ID, which is pre-authorized with the Island API gateway. With no cached token, a browser window opens for sign-in. Over SSH or on Linux without a display, the script prints a **device code** instead. The `auth` command can pre-authenticate before running manage operations.
-- **Device code**: when the output has a `{"status":"device_code",...}` line, show the user the `verificationUri` and `userCode` right away and wait for the command to finish. `--auth-mode device` or `--auth-mode interactive` forces one flow.
+- **Device code**: A foreground Bash call returns its output only when the command ends, so run it with `run_in_background: true`, check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish. `--auth-mode device` or `--auth-mode interactive` forces one flow.
 
 Tokens are cached. After the first sign-in they refresh silently for ~90 days.
 

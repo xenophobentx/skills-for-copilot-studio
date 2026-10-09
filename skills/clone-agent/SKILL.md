@@ -75,7 +75,7 @@ No `--client-id` is needed. The script uses VS Code's first-party client ID and 
 
 ## Phase 1: Select Environment
 
-Tell the user: **"A browser window may open for Microsoft sign-in (tokens are cached after first login)."** Over SSH or without a display the script prints a device code instead: when the output has a `{"status":"device_code",...}` line, show the user the `verificationUri` and `userCode` right away and wait for the command to finish.
+Tell the user: **"A browser window may open for Microsoft sign-in (tokens are cached after first login)."** Over SSH or without a display the script prints a device code instead. A foreground Bash call returns its output only when the command ends, so run it with `run_in_background: true`, check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
 
 Run the list-envs command:
 
