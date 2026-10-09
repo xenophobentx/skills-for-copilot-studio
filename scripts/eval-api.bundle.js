@@ -15083,7 +15083,7 @@ var init_open = __esm({
 var require_shared_auth = __commonJS({
   "src/shared-auth.js"(exports2, module2) {
     var { log: log2, die: die2 } = require_shared_utils();
-    var { createCachePlugin } = require_msal_cache();
+    var createCachePlugin = (...args) => require_msal_cache().createCachePlugin(...args);
     var VSCODE_CLIENT_ID2 = "51f81489-12ee-4a9e-aaae-a2591f45987d";
     var ISLAND_RESOURCE_IDS = {
       0: "a522f059-bb65-47c0-8934-7db6e5286414",

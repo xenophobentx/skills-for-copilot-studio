@@ -1,0 +1,506 @@
+/**
+ * doctor.js: read-only environment check behind `manage-agent doctor`.
+ *
+ * One line per check: OK, WARN or FAIL plus one sentence on what to do. It
+ * makes no network calls, never signs in, never opens token caches or keyring
+ * entries (only file names, sizes and times), and changes nothing on disk.
+ * Every check catches its own errors.
+ *
+ * Everything the checks touch comes in through ctx (fs, env, home, platform,
+ * ...) and deps (functions from manage-agent.js), so the tests can fake it.
+ */
+
+const path = require("path");
+
+const MIN_NODE_MAJOR = 18;
+const MIN_PAC_VERSION = "2.13.1";
+const NATIVE_MODULES = ["keytar", "@azure/msal-node-extensions", "vscode-jsonrpc"];
+
+function firstLine(e) {
+  return String((e && e.message) || e).split(/\r?\n/)[0].slice(0, 200);
+}
+
+function exists(ctx, p) {
+  try {
+    return ctx.fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+// { value } when the file parses, { missing: true } when it is not there, else { error }
+function readJson(ctx, file) {
+  let text;
+  try {
+    text = ctx.fs.readFileSync(file, "utf8");
+  } catch (e) {
+    return e && e.code === "ENOENT" ? { missing: true } : { error: firstLine(e) };
+  }
+  try {
+    return { value: JSON.parse(text.replace(/^﻿/, "")) };
+  } catch (e) {
+    return { error: firstLine(e) };
+  }
+}
+
+function findOnPath(ctx, names) {
+  const dirs = String(ctx.env.PATH || ctx.env.Path || "").split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    for (const name of names) {
+      const full = path.join(dir, name);
+      if (exists(ctx, full)) return full;
+    }
+  }
+  return null;
+}
+
+function cliDir(ctx) {
+  return path.join(ctx.home, ".copilot-studio-cli");
+}
+
+// Same lookup the bundles do at startup: CLAUDE_PLUGIN_DATA, else plugin-paths.json.
+function pluginData(ctx) {
+  if (ctx.env.CLAUDE_PLUGIN_DATA) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
+  const r = readJson(ctx, path.join(cliDir(ctx), "plugin-paths.json"));
+  if (r.value && typeof r.value.pluginData === "string") {
+    return { dir: r.value.pluginData, source: "plugin-paths.json" };
+  }
+  return null;
+}
+
+// The root of the plugin this bundle belongs to (scripts/ is one level below it).
+function ownRoot(ctx) {
+  return path.resolve(path.dirname(ctx.scriptPath), "..");
+}
+
+function samePath(ctx, a, b) {
+  const real = (p) => {
+    try {
+      return ctx.fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const x = real(a);
+  const y = real(b);
+  return ctx.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+// The pluginRoot in plugin-paths.json when it is not this plugin, else null.
+function foreignRoot(ctx) {
+  const r = readJson(ctx, path.join(cliDir(ctx), "plugin-paths.json"));
+  const root = r.value && r.value.pluginRoot;
+  if (typeof root !== "string" || samePath(ctx, root, ownRoot(ctx))) return null;
+  return root;
+}
+
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
+
+function checkNode(ctx, deps, add) {
+  const major = parseInt(String(ctx.nodeVersion).split(".")[0], 10);
+  if (major >= MIN_NODE_MAJOR) {
+    add("node", "OK", `Node ${ctx.nodeVersion}`);
+  } else {
+    add("node", "FAIL", `Node ${ctx.nodeVersion} is too old`, `Install Node ${MIN_NODE_MAJOR} or newer.`);
+  }
+}
+
+function checkSystem(ctx, deps, add) {
+  const base = `${ctx.platform} ${ctx.arch} ${ctx.release || ""}`.trim();
+  if (ctx.platform === "win32") {
+    const mods = String(ctx.env.PSModulePath || "");
+    if (ctx.env.MSYSTEM) {
+      add("system", "OK", `${base}, Git Bash`);
+    } else if (/[\\/]PowerShell[\\/]7/i.test(mods)) {
+      add("system", "OK", `${base}, PowerShell 7 (pwsh)`);
+    } else if (/WindowsPowerShell/i.test(mods)) {
+      add("system", "OK", `${base}, PowerShell 5.1 or cmd (guessed from PSModulePath)`, "In PowerShell 5.1 chain commands with ';', it has no '&&'.");
+    } else {
+      add("system", "OK", `${base}, shell not detected`);
+    }
+  } else {
+    add("system", "OK", `${base}, shell ${path.basename(ctx.env.SHELL || "unknown")}`);
+  }
+}
+
+function checkSession(ctx, deps, add) {
+  let auth;
+  try {
+    auth = deps.resolveAuthMode(ctx.env, ctx.platform);
+  } catch (e) {
+    add("session", "WARN", `sign-in mode: ${firstLine(e).replace(/\.$/, "")}`, "Fix or unset CPS_AUTH_MODE.");
+    return;
+  }
+  if (auth.mode === "device") {
+    add("session", "OK", `sign-in will use the device code flow (${auth.reason})`);
+  } else {
+    add("session", "OK", "sign-in will open a browser");
+  }
+}
+
+function checkLsp(ctx, deps, add) {
+  const override = ctx.env.CPS_LSP_BINARY;
+  if (override && !exists(ctx, override)) {
+    add("lsp", "WARN", `CPS_LSP_BINARY points to a missing file: ${override}, the extension folder is used instead`, "Fix the path or unset it.");
+  }
+  const { info, searchDirs } = deps.locateBinary({ readOnly: true });
+  if (!info) {
+    add(
+      "lsp",
+      "FAIL",
+      `LanguageServerHost not found in ${searchDirs.join(", ")}`,
+      "Install the Copilot Studio VS Code extension, or set CPS_LSP_BINARY."
+    );
+    return;
+  }
+  const where = `${info.binaryPath} (${info.version === "custom" ? "CPS_LSP_BINARY" : "v" + info.version})`;
+  if (info.executable === false) {
+    add("lsp", "WARN", `${where} is not executable, manage-agent tries chmod +x when it starts it`, `If that fails run: chmod +x "${info.binaryPath}"`);
+  } else if (info.skipped && info.skipped.length > 0) {
+    add(
+      "lsp",
+      "WARN",
+      `${where}; newer extension folder ${info.skipped.join(", ")} has no binary`,
+      "Reinstall the extension so the newest folder is complete."
+    );
+  } else if (info.version !== "custom" && deps.compareSemver(info.version, deps.minExtensionVersion) < 0) {
+    add("lsp", "WARN", `${where} is older than the tested ${deps.minExtensionVersion}`, "Update the VS Code extension.");
+  } else {
+    add("lsp", "OK", where);
+  }
+}
+
+function checkNative(ctx, deps, add) {
+  const pd = pluginData(ctx);
+  const dirs = pd ? [path.join(pd.dir, "node_modules")] : [];
+  const log = pd ? path.join(pd.dir, "install.log") : null;
+  const logHint = log && exists(ctx, log) ? ` See ${log}.` : "";
+  const foreign = foreignRoot(ctx);
+  const session = "Start a new session with this plugin loaded." + (foreign ? " plugin-paths.json points to another plugin." : "");
+  let allLoad = true;
+
+  for (const name of NATIVE_MODULES) {
+    try {
+      ctx.tryRequire(name, dirs);
+      add("native", "OK", `${name} loads`);
+    } catch (e) {
+      // msal-cache.js stubs keytar on Windows, where the token cache uses DPAPI instead.
+      const winKeytar = name === "keytar" && ctx.platform === "win32";
+      if (winKeytar) {
+        try {
+          ctx.stubKeytar(dirs);
+        } catch {}
+      } else {
+        allLoad = false;
+      }
+      add(
+        "native",
+        winKeytar ? "WARN" : "FAIL",
+        `${name} does not load: ${firstLine(e)}${winKeytar ? " (Windows does not use it)" : ""}`,
+        winKeytar ? undefined : (pd ? session : "No plugin data folder is known, start a session with the plugin loaded.") + logHint
+      );
+    }
+  }
+  if (!pd) return;
+
+  const marker = readJson(ctx, path.join(pd.dir, "native-deps.json"));
+  let manifest = null;
+  try {
+    manifest = ctx.fs.readFileSync(path.join(path.dirname(ctx.scriptPath), "native-deps.json"), "utf8");
+  } catch {}
+  let current = null;
+  try {
+    current = ctx.fs.readFileSync(path.join(pd.dir, "native-deps.json"), "utf8");
+  } catch {}
+  if (marker.missing) {
+    add("native-marker", "WARN", `native-deps.json is missing in ${pd.dir}`, "Setup has not finished. " + session + logHint);
+  } else if (manifest !== null && current !== manifest) {
+    add("native-marker", "WARN", `native-deps.json in ${pd.dir} differs from the plugin's copy`, "Setup has to run again. " + session + logHint);
+  } else if (manifest === null) {
+    add("native-marker", "WARN", "could not read the plugin's native-deps.json to compare", "Check that the plugin folder is complete.");
+  } else {
+    add("native-marker", allLoad ? "OK" : "WARN", `setup marker matches (${pd.source})`);
+  }
+}
+
+function checkPluginPaths(ctx, deps, add) {
+  const file = path.join(cliDir(ctx), "plugin-paths.json");
+  const r = readJson(ctx, file);
+  if (r.missing) {
+    if (ctx.env.CLAUDE_PLUGIN_DATA) {
+      add("plugin-paths", "OK", "no plugin-paths.json, CLAUDE_PLUGIN_DATA is set");
+    } else {
+      add("plugin-paths", "WARN", `${file} not found`, "Start a session with the plugin loaded, the setup hook writes it.");
+    }
+    return;
+  }
+  if (r.error || !r.value || typeof r.value !== "object") {
+    add("plugin-paths", "FAIL", `${file} is not valid JSON`, "Delete it and start a new session.");
+    return;
+  }
+  const foreign = foreignRoot(ctx);
+  if (foreign) {
+    add(
+      "plugin-paths",
+      "WARN",
+      `${file} points to another plugin (pluginRoot ${foreign}), this plugin is at ${ownRoot(ctx)}`,
+      "Scripts run outside a Claude Code session load the native modules from that plugin's data folder. Start a session with this plugin loaded to rewrite the file."
+    );
+    return;
+  }
+  const bad = ["pluginData", "pluginRoot"].filter((k) => typeof r.value[k] !== "string" || !exists(ctx, r.value[k]));
+  if (bad.length > 0) {
+    add("plugin-paths", "WARN", `${bad.join(" and ")} in ${file} does not exist`, "Start a new session to rewrite it.");
+  } else {
+    add("plugin-paths", "OK", `${file} points to existing folders`);
+  }
+}
+
+function checkSecretService(ctx, deps, add) {
+  if (ctx.platform !== "linux") return;
+  const bus = ctx.env.DBUS_SESSION_BUS_ADDRESS ||
+    (ctx.env.XDG_RUNTIME_DIR && exists(ctx, path.join(ctx.env.XDG_RUNTIME_DIR, "bus")));
+  if (!bus) {
+    add(
+      "secret-service",
+      "WARN",
+      "no D-Bus session, tokens would be saved in a plaintext file under ~/.copilot-studio-cli",
+      "Fine on a test box. Elsewhere start a keyring (for example gnome-keyring) in this session."
+    );
+  } else {
+    add(
+      "secret-service",
+      "OK",
+      "D-Bus session found",
+      "A locked or missing keyring at sign-in falls back to a plaintext file."
+    );
+  }
+}
+
+function checkTokenCache(ctx, deps, add) {
+  const dir = cliDir(ctx);
+  let names;
+  try {
+    names = ctx.fs.readdirSync(dir).filter((n) => /\.cache\.json$/.test(n)).sort();
+  } catch {
+    add("token-cache", "OK", `no ${dir} yet, nothing cached`);
+    return;
+  }
+  if (names.length === 0) {
+    add("token-cache", "OK", "no cache files, the first push or pull asks for a sign-in");
+    return;
+  }
+  const shown = names.slice(0, 4);
+  const parts = shown.map((n) => {
+    try {
+      const st = ctx.fs.statSync(path.join(dir, n));
+      return `${n} (${st.size} bytes, ${new Date(st.mtimeMs).toISOString().slice(0, 10)})`;
+    } catch {
+      return `${n} (unreadable)`;
+    }
+  });
+  const more = names.length > shown.length ? `, and ${names.length - shown.length} more` : "";
+  add("token-cache", "OK", `${names.length} cache file(s) in ${dir}: ${parts.join(", ")}${more}`);
+}
+
+// pac is only used by the optional pac backend, so this check is informational.
+// It never starts pac: the version comes from the install folder name.
+function pacVersion(ctx, pac) {
+  const dir = path.dirname(pac);
+  const found = [];
+  const add = (folder, re) => {
+    try {
+      for (const n of ctx.fs.readdirSync(folder)) {
+        const m = re.exec(n);
+        if (m) found.push(m[1]);
+      }
+    } catch {}
+  };
+  add(path.join(dir, ".store", "microsoft.powerapps.cli.tool"), /^(\d+\.\d+\.\d+)$/);
+  add(dir, /^Microsoft\.PowerApps\.CLI\.(\d+\.\d+\.\d+)$/i);
+  return found.length > 0 ? found : null;
+}
+
+function checkPac(ctx, deps, add) {
+  const win = ctx.platform === "win32";
+  const fromEnv = ctx.env.CPS_PAC_PATH;
+  const envOk = fromEnv && exists(ctx, fromEnv);
+  const pac = envOk ? fromEnv : findOnPath(ctx, win ? ["pac.exe", "pac.cmd", "pac"] : ["pac"]);
+  const note = fromEnv && !envOk ? `CPS_PAC_PATH points to a missing file (${fromEnv}), PATH was searched instead. ` : "";
+  if (!pac) {
+    add("pac", "OK", `${note}pac not found, only the optional pac backend needs it`);
+    return;
+  }
+  const versions = pacVersion(ctx, pac);
+  if (!versions) {
+    add("pac", "OK", `${note}pac at ${pac}, version not read (pac is only used by the optional pac backend)`);
+    return;
+  }
+  versions.sort(deps.compareSemver);
+  const newest = versions[versions.length - 1];
+  if (deps.compareSemver(newest, MIN_PAC_VERSION) < 0) {
+    add(
+      "pac",
+      "OK",
+      `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`,
+      `In our tests pac 2.12.2 emptied a file on a conflicting pull and ${MIN_PAC_VERSION} kept both versions. Update to ${MIN_PAC_VERSION} or later before you use the pac backend.`
+    );
+  } else {
+    add("pac", "OK", `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`);
+  }
+}
+
+function looksLikeWorkspace(ctx, dir) {
+  return ["agent.mcs.yml", "settings.mcs.yml", ".mcs"].some((n) => exists(ctx, path.join(dir, n)));
+}
+
+function checkWorkspace(ctx, deps, add) {
+  const given = ctx.workspace;
+  const start = path.resolve(ctx.cwd, given || ".");
+  if (given && !exists(ctx, start)) {
+    add("workspace", "FAIL", `${start} does not exist`, "Check the --workspace path.");
+    return;
+  }
+  const dir = deps.findAgentDir(start);
+  if (!given && !looksLikeWorkspace(ctx, dir)) {
+    add("workspace", "OK", `${start} is not an agent folder, pass --workspace to check one`);
+    return;
+  }
+
+  if (ctx.platform === "win32" && /^[\\/]{2}/.test(dir)) {
+    add("workspace-path", "FAIL", `${dir} is a UNC path`, "LanguageServerHost rejects UNC paths. Use a drive letter or a local copy.");
+  }
+
+  const conn = readJson(ctx, path.join(dir, ".mcs", "conn.json"));
+  if (conn.missing) {
+    add("conn.json", "FAIL", `.mcs/conn.json missing in ${dir}`, "This is not a cloned agent. Clone it first.");
+  } else if (conn.error || !conn.value || typeof conn.value !== "object") {
+    add("conn.json", "FAIL", ".mcs/conn.json is not valid JSON", "Clone the agent again into a new folder.");
+  } else {
+    // Clones keep the tenant under AccountInfo, the eval fixtures at the top.
+    const c = conn.value;
+    const missing = [
+      !c.AgentId && "AgentId",
+      !c.EnvironmentId && "EnvironmentId",
+      !((c.AccountInfo && c.AccountInfo.TenantId) || c.TenantId) && "TenantId",
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      add("conn.json", "WARN", `.mcs/conn.json has no ${missing.join(", ")}`, "Clone the agent again into a new folder.");
+    } else {
+      add("conn.json", "OK", ".mcs/conn.json found");
+    }
+  }
+
+  const bot = readJson(ctx, path.join(dir, ".mcs", "botdefinition.json"));
+  if (bot.missing) {
+    add(
+      "botdefinition",
+      "FAIL",
+      ".mcs/botdefinition.json missing (git never tracks it)",
+      "Clone the agent again into a new folder and copy your YAML over."
+    );
+  } else if (bot.error) {
+    add("botdefinition", "FAIL", ".mcs/botdefinition.json is not valid JSON", "Clone the agent again into a new folder.");
+  } else {
+    add("botdefinition", "OK", ".mcs/botdefinition.json found");
+  }
+
+  let settings = "";
+  try {
+    settings = ctx.fs.readFileSync(path.join(dir, "settings.mcs.yml"), "utf8");
+  } catch {}
+  if (/^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im.test(settings)) {
+    add("workspace-type", "WARN", "CLI agent workspace", "Do not pull, push or publish here, use microsoft/copilot-studio-plugin.");
+  } else {
+    add("workspace-type", "OK", "classic agent workspace");
+  }
+
+  const conflicts = deps.findConflictMarkers(dir);
+  if (conflicts.length > 0) {
+    add("conflicts", "FAIL", `merge markers in ${deps.formatConflicts(conflicts)}`, "Pick the right lines, remove the markers, then run validate.");
+  } else {
+    add("conflicts", "OK", "no merge markers");
+  }
+}
+
+const CHECKS = [
+  ["node", checkNode],
+  ["system", checkSystem],
+  ["session", checkSession],
+  ["lsp", checkLsp],
+  ["native", checkNative],
+  ["plugin-paths", checkPluginPaths],
+  ["secret-service", checkSecretService],
+  ["token-cache", checkTokenCache],
+  ["pac", checkPac],
+  ["workspace", checkWorkspace],
+];
+
+// ---------------------------------------------------------------------------
+// Runner
+// ---------------------------------------------------------------------------
+
+function runDoctor(ctx, deps) {
+  const checks = [];
+  for (const [name, fn] of CHECKS) {
+    const add = (id, level, message, hint) => {
+      const c = { name: id, level, message };
+      if (hint) c.hint = hint;
+      checks.push(c);
+    };
+    try {
+      fn(ctx, deps, add);
+    } catch (e) {
+      add(name, "WARN", `check could not run: ${firstLine(e)}`, "Please report this.");
+    }
+  }
+  const count = (level) => checks.filter((c) => c.level === level).length;
+  const summary = { ok: count("OK"), warn: count("WARN"), fail: count("FAIL") };
+  return { status: summary.fail > 0 ? "fail" : "ok", summary, checks };
+}
+
+function formatLine(c) {
+  return `${c.level.padEnd(4)}  ${c.name}: ${c.message}${c.hint ? ". " + c.hint : ""}`;
+}
+
+function makeContext(args) {
+  const fs = require("fs");
+  const os = require("os");
+  return {
+    fs,
+    env: process.env,
+    platform: process.platform,
+    arch: process.arch,
+    release: os.release(),
+    home: os.homedir(),
+    cwd: process.cwd(),
+    nodeVersion: process.versions.node,
+    scriptPath: process.argv[1] || __filename,
+    workspace: args.workspace || null,
+    // Load a module from the plugin data folder first, then the normal path.
+    tryRequire(name, dirs) {
+      if (dirs.length > 0) {
+        try {
+          return require(require.resolve(name, { paths: dirs }));
+        } catch {}
+      }
+      return require(name);
+    },
+    // Same stub msal-cache.js registers on Windows: msal-node-extensions requires
+    // keytar at load time, but only macOS and Linux call it.
+    stubKeytar(dirs) {
+      const Module = require("module");
+      const keytarPath = require.resolve("keytar", { paths: dirs });
+      const unavailable = () => Promise.reject(new Error("keytar native binding is not available on this platform"));
+      const stub = new Module(keytarPath);
+      stub.filename = keytarPath;
+      stub.loaded = true;
+      stub.exports = { getPassword: unavailable, setPassword: unavailable, deletePassword: unavailable, findPassword: unavailable, findCredentials: unavailable };
+      require.cache[keytarPath] = stub;
+    },
+  };
+}
+
+module.exports = { runDoctor, formatLine, makeContext };

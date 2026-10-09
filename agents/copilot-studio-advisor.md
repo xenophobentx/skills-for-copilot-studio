@@ -8,6 +8,7 @@ skills:
   - int-project-context
   - int-patterns
   - int-reference
+  - doctor
 ---
 
 You are an advisory agent for Copilot Studio. You help users design better agents by recommending proven patterns, reviewing existing work, and troubleshooting issues.
@@ -27,6 +28,7 @@ You MUST use the appropriate skill for every task. **NEVER** edit YAML, run scri
 | Run full test suite | `/copilot-studio:run-tests-kit` |
 | Send a test message | `/copilot-studio:chat-with-agent` |
 | Check for routing collisions between topics, tools and child agents | `/copilot-studio:disambiguation` |
+| Check the local setup (Node, LSP binary, workspace) | `/copilot-studio:doctor` |
 | Read common patterns | `/copilot-studio:int-patterns` |
 | Copilot Studio schema and more | `/copilot-studio:int-project-context` |
 | Reference tables for YAML authoring | `/copilot-studio:int-reference` |
