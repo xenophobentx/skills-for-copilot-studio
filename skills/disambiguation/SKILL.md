@@ -415,7 +415,7 @@ Option B — keep the topic but make it reference the tool:
 
 ## How This Interacts with Other Design Decisions
 
-- **Disambiguation quality and model choice are trade-offs** — clean disambiguation lets you use a faster/cheaper model. If you can't fully disambiguate, a stronger model compensates at the cost of latency.
+- **Disambiguation quality and model choice are trade-offs.** Clean disambiguation lets you use a faster, cheaper model. If you can't fully disambiguate, a stronger model compensates at the cost of latency.
 - **NL→Query glossaries in `modelDescription`** increase the text the orchestrator reads per surface. If two tools have large glossaries with overlapping terms, disambiguation is harder. Keep glossaries scoped to each tool's unique domain.
 - **Instructions are always in context.** They inform routing, planning, and output generation on every turn. Instructions that describe step-by-step behavior compete with tool and topic definitions. Instructions that point to tools ("Use [tool] for [domain]") or augment execution ("When the tool returns X, do Y") add value without interference.
 

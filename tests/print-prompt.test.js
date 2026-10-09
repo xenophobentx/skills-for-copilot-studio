@@ -1,5 +1,5 @@
 /**
- * Tests for hooks/print-prompt.js — the SessionStart hook injects the full
+ * Tests for hooks/print-prompt.js. The SessionStart hook injects the full
  * Copilot Studio system prompt only in Copilot Studio projects (.mcs/ or
  * *.mcs.yml) and a short pointer everywhere else.
  *

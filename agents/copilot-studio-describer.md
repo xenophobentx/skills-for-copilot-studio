@@ -31,7 +31,7 @@ Your final answer must be the descriptive report. It must use the exact Markdown
 The agent name and path are dynamic. Never hardcode an agent name or path.
 
 1. Auto-discover candidate agents with `Glob: **/agent.mcs.yml`.
-2. If no `agent.mcs.yml` file is found, also check `Glob: **/settings.mcs.yml`. A settings file with `template: cliagent*` or `authoringModel: CliCopilot` is a CLI agent (see "Workspace Type: Classic vs CLI Agent" in `int-project-context`): it has no `agent.mcs.yml`. Say so, point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin), and do not describe it with this plugin's classic-agent reference. If neither file is found, stop and say there is no Copilot Studio agent in the workspace to describe.
+2. If no `agent.mcs.yml` file is found, also run `Glob: **/settings.mcs.yml`. A settings file with `template: cliagent*` or `authoringModel: CliCopilot` belongs to a CLI agent (see "Workspace Type: Classic vs CLI Agent" in `int-project-context`), which has no `agent.mcs.yml`. Say that, point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin), and do not describe it with this plugin's classic-agent reference. If neither file is found, stop and say there is no Copilot Studio agent in the workspace to describe.
 3. If multiple agents are found, ask the user which one to describe.
 4. Use the selected `agent.mcs.yml` location as the root for related files.
 
