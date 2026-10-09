@@ -1760,6 +1760,20 @@ async function cmdClone(args) {
 // validate and changes stay on the LSP.
 // ---------------------------------------------------------------------------
 
+// Stops pac and everything it started. A .cmd wrapper or a helper process would
+// otherwise keep running (and may still finish a push) after the timeout.
+function killTree(child) {
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } else {
+      process.kill(-child.pid, "SIGKILL");
+    }
+  } catch {
+    try { child.kill("SIGKILL"); } catch {}
+  }
+}
+
 function runPac(file, argv, timeoutMs = 300000) {
   return new Promise((resolve) => {
     let cmd, cmdArgs, options;
@@ -1770,27 +1784,33 @@ function runPac(file, argv, timeoutMs = 300000) {
       return;
     }
     log(`pac ${argv.join(" ")}`);
-    let stdout = "", stderr = "", timedOut = false;
-    const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...options });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    let stdout = "", stderr = "", finished = false;
+    // Own process group on Unix so the whole tree can be killed.
+    const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32", ...options });
+    const finish = (code, extra = "") => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr: stderr + extra });
+    };
+    // Do not wait for the pipes after the kill: a surviving grandchild holds them open.
+    const timer = setTimeout(() => {
+      killTree(child);
+      finish(-1, `\nError: pac did not finish within ${timeoutMs / 1000}s and was stopped`);
+    }, timeoutMs);
     child.stdout.on("data", (d) => { stdout += d; });
     child.stderr.on("data", (d) => { stderr += d; });
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      resolve({ code: -1, stdout, stderr: `${stderr}\nError: ${e.message}` });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) stderr += `\nError: pac did not finish within ${timeoutMs / 1000}s`;
-      resolve({ code: code === null ? -1 : code, stdout, stderr });
-    });
+    child.on("error", (e) => finish(-1, `\nError: ${e.message}`));
+    child.on("close", (code) => finish(code === null ? -1 : code));
+    // exit without close: a helper process still holds the pipes. Give the output a moment.
+    child.on("exit", (code) => setTimeout(() => finish(code === null ? -1 : code), 1000));
   });
 }
 
-// { ok, file, version } or { ok: false, reason }. needProfile: also require an
-// active auth profile that covers envUrl (auto mode only; with --backend pac
-// pac reports a missing profile itself).
-async function probePac(envUrl, needProfile) {
+// { ok, file, version } or { ok: false, reason }. profile: when given, the
+// active pac profile must also fit the workspace ({ tenantId, envUrl }). Only
+// auto mode asks for that; with --backend pac, pac reports a profile problem itself.
+async function probePac(profile) {
   const file = pacUtils.resolvePac();
   if (!file) {
     return { ok: false, reason: "pac was not found on PATH (or at CPS_PAC_PATH). Install it with: dotnet tool install --global Microsoft.PowerApps.CLI.Tool" };
@@ -1801,11 +1821,12 @@ async function probePac(envUrl, needProfile) {
   if (!pacUtils.versionAtLeast(version)) {
     return { ok: false, reason: `pac ${version} is too old. Version ${pacUtils.MIN_PAC_VERSION} or newer is needed, older ones lose data when a pull hits a conflict.` };
   }
-  if (needProfile) {
-    const auth = await runPac(file, ["auth", "list"], 30000);
-    if (!pacUtils.activeProfileCovers(auth.stdout, envUrl)) {
-      return { ok: false, reason: "pac has no active auth profile for this environment. Create one with: pac auth create --deviceCode --environment <environment id>" };
-    }
+  if (profile) {
+    // The outputs are only parsed for the active row and the tenant id, never logged.
+    const authList = (await runPac(file, ["auth", "list"], 30000)).stdout;
+    const who = (await runPac(file, ["auth", "who"], 30000)).stdout;
+    const fit = pacUtils.profileFits({ authList, who, tenantId: profile.tenantId, envUrl: profile.envUrl });
+    if (!fit.ok) return { ok: false, reason: fit.reason };
   }
   return { ok: true, file, version };
 }
@@ -1814,8 +1835,13 @@ async function probePac(envUrl, needProfile) {
 async function pickPac(args) {
   if (args.backend === "lsp") return null;
   const conn = args.workspace ? loadConnJson(findAgentDir(args.workspace)) : null;
-  const envUrl = args.environmentUrl || (conn && conn.DataverseEndpoint) || null;
-  const probe = await probePac(envUrl, args.backend === "auto");
+  const profile = args.backend === "auto"
+    ? {
+        envUrl: (conn && conn.DataverseEndpoint) || args.environmentUrl || null,
+        tenantId: (conn && conn.AccountInfo && conn.AccountInfo.TenantId) || args.tenantId || null,
+      }
+    : null;
+  const probe = await probePac(profile);
   const choice = pacUtils.chooseBackend(args.backend, probe);
   if (choice.error) die(choice.error);
   if (choice.note) log(`Using the LSP backend: ${choice.note}`);
@@ -1898,19 +1924,26 @@ async function pacPush(args, pac) {
   const refusal = localPushGuardError(agentDir);
   if (refusal) return emit({ ...refusal, backend: "pac" }, 1);
 
+  // --force means one thing on both backends: push without a passing validation.
+  // That covers validation errors and a validation that cannot run (no extension,
+  // no vscode-jsonrpc). Either way the result says "validation":"skipped".
   let validation = "skipped";
-  let note = "--force: LSP validation skipped.";
+  let note = "--force: the push went out without a passing LSP validation.";
   if (!args.force) {
     const result = await pacValidate(args);
     if (result === null) {
-      note = "The Copilot Studio VS Code extension (or its vscode-jsonrpc dependency) was not found, so the push was not validated by the LSP. Only conflict markers and YAML syntax were checked.";
-      log(`[push] ${note}`);
-    } else if (!result.valid) {
-      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, 1);
-    } else {
-      validation = "passed";
-      note = null;
+      return emit({
+        status: "error",
+        backend: "pac",
+        validation: "unavailable",
+        error: "Push refused: the LSP validation cannot run (the Copilot Studio VS Code extension or its vscode-jsonrpc dependency was not found). Conflict markers and YAML syntax were checked, nothing more. Install the extension, or add --force to push without LSP validation.",
+      }, 1);
     }
+    if (!result.valid) {
+      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, 1);
+    }
+    validation = "passed";
+    note = null;
   }
 
   const r = await runPac(pac.file, ["copilot", "push", "--project-dir", agentDir], args.timeout);
@@ -1929,10 +1962,19 @@ async function pacPush(args, pac) {
 async function pacPublish(args, pac) {
   const agentDir = pacAgentDir(args);
   const conn = loadConnJson(agentDir);
-  const botId = args.agentId || (conn && conn.AgentId);
-  const envId = args.environmentId || (conn && conn.EnvironmentId);
-  if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
-  if (!envId) die("Cannot determine environment ID. Provide --environment-id or ensure .mcs/conn.json exists.");
+  if (!conn || !conn.AgentId || !conn.EnvironmentId) die("Cannot read the agent and environment from .mcs/conn.json. Run publish in a cloned agent workspace.");
+  // The pulls read the workspace's environment, so the publish must go to the
+  // same one. The bot id is the same in every environment the agent was imported to.
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  if ((args.environmentId && !same(args.environmentId, conn.EnvironmentId)) || (args.agentId && !same(args.agentId, conn.AgentId))) {
+    return emit({
+      status: "error",
+      backend: "pac",
+      error: `Publish refused: the environment or agent given by --environment-id, --agent-id, --url or CPS_ENVIRONMENT_ID is not the one in this workspace's .mcs/conn.json (environment ${conn.EnvironmentId}, agent ${conn.AgentId}). Nothing was published. Unset the variable or run publish in the matching workspace.`,
+    }, 1);
+  }
+  const botId = conn.AgentId;
+  const envId = conn.EnvironmentId;
   const settingsFile = path.join(agentDir, "settings.mcs.yml");
   const readStamp = () => {
     try { return pacUtils.readPublishedOn(fs.readFileSync(settingsFile, "utf8")); } catch { return null; }
@@ -1950,10 +1992,19 @@ async function pacPublish(args, pac) {
   const r = await runPac(pac.file, ["copilot", "publish", "--bot", botId, "--environment", envId], args.timeout);
   const after = await pacPullStep(agentDir, pac, args.timeout);
   const publishedOn = readStamp();
+  const changed = Boolean(publishedOn && publishedOn !== previousPublishedOn);
+
+  // The pull after the publish can bring in server changes that collide with local edits.
+  if (!after.error && after.conflicts.length > 0) {
+    const result = { status: "conflict", backend: "pac", conflicts: after.conflicts };
+    if (changed) Object.assign(result, { botId, publishedOn, previousPublishedOn });
+    result.message = `${changed ? "The agent was published, but the" : "The"} pull after the publish wrote merge conflict markers into: ${formatConflicts(after.conflicts)}. Pick the right version, delete the marker lines, run validate, then push.`;
+    return emit(result, 1);
+  }
 
   // Success is a changed publishedOn, whatever pac's exit code was: publish
   // can exit 1 with an ArgumentException and still go through.
-  if (publishedOn && publishedOn !== previousPublishedOn) {
+  if (changed) {
     return emit({ status: "ok", backend: "pac", botId, publishedOn, previousPublishedOn, durationMs: Date.now() - started });
   }
   let error;

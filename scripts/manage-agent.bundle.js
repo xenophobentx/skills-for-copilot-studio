@@ -3066,17 +3066,30 @@ var require_pac_utils = __commonJS({
           throw new Error("Quotes and percent signs in arguments are not supported with pac.cmd");
         }
         const line = [file, ...args].map((a) => `"${a}"`).join(" ");
-        return { cmd: comspec, args: ["/d", "/s", "/c", `"${line}"`], options: { windowsVerbatimArguments: true } };
+        return { cmd: comspec, args: ["/d", "/s", "/v:off", "/c", `"${line}"`], options: { windowsVerbatimArguments: true } };
       }
       return { cmd: file, args, options: {} };
     }
-    function activeProfileCovers(authListText, envUrl) {
-      const line = String(authListText || "").split(/\r?\n/).find((l) => /^\s*\[\d+\]\s+\*/.test(l));
-      if (!line) return false;
-      if (/\bUNIVERSAL\b/.test(line)) return true;
-      if (!envUrl) return false;
-      const host = envUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
-      return host !== "" && line.toLowerCase().includes(host);
+    function hostOf(url) {
+      return String(url || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
+    }
+    function parseWhoTenant(whoText) {
+      const m = /^Tenant Id:[ \t]*(\S+)/im.exec(String(whoText || ""));
+      return m ? m[1].toLowerCase() : null;
+    }
+    function profileFits({ authList, who, tenantId, envUrl }) {
+      const line = String(authList || "").split(/\r?\n/).find((l) => /^\s*\[\d+\]\s+\*/.test(l));
+      if (!line) return { ok: false, reason: "pac has no active auth profile. Create one with: pac auth create --deviceCode --environment <environment id>" };
+      if (!/\bUNIVERSAL\b/.test(line)) {
+        const host = hostOf(envUrl);
+        if (host && line.toLowerCase().includes(host)) return { ok: true };
+        return { ok: false, reason: "the active pac profile is bound to another environment than the workspace" };
+      }
+      const profileTenant = parseWhoTenant(who);
+      if (!profileTenant) return { ok: false, reason: "pac does not show the tenant of the active profile, so it cannot be matched to the workspace" };
+      if (!tenantId) return { ok: false, reason: "the tenant of the workspace is unknown, so the pac profile cannot be matched to it" };
+      if (profileTenant !== String(tenantId).toLowerCase()) return { ok: false, reason: "the active pac profile belongs to a different tenant than the workspace" };
+      return { ok: true };
     }
     function lines(text) {
       return String(text || "").split(/\r?\n/);
@@ -3145,7 +3158,8 @@ var require_pac_utils = __commonJS({
       versionAtLeast,
       resolvePac,
       buildPacCommand,
-      activeProfileCovers,
+      parseWhoTenant,
+      profileFits,
       parsePull,
       parsePush,
       parseClone,
@@ -20079,6 +20093,20 @@ async function cmdClone(args) {
     await client.stop();
   }
 }
+function killTree(child) {
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } else {
+      process.kill(-child.pid, "SIGKILL");
+    }
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+    }
+  }
+}
 function runPac(file, argv, timeoutMs = 3e5) {
   return new Promise((resolve) => {
     let cmd, cmdArgs, options;
@@ -20089,11 +20117,18 @@ function runPac(file, argv, timeoutMs = 3e5) {
       return;
     }
     log(`pac ${argv.join(" ")}`);
-    let stdout = "", stderr = "", timedOut = false;
-    const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...options });
+    let stdout = "", stderr = "", finished = false;
+    const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32", ...options });
+    const finish = (code, extra = "") => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr: stderr + extra });
+    };
     const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
+      killTree(child);
+      finish(-1, `
+Error: pac did not finish within ${timeoutMs / 1e3}s and was stopped`);
     }, timeoutMs);
     child.stdout.on("data", (d) => {
       stdout += d;
@@ -20101,20 +20136,13 @@ function runPac(file, argv, timeoutMs = 3e5) {
     child.stderr.on("data", (d) => {
       stderr += d;
     });
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      resolve({ code: -1, stdout, stderr: `${stderr}
-Error: ${e.message}` });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) stderr += `
-Error: pac did not finish within ${timeoutMs / 1e3}s`;
-      resolve({ code: code === null ? -1 : code, stdout, stderr });
-    });
+    child.on("error", (e) => finish(-1, `
+Error: ${e.message}`));
+    child.on("close", (code) => finish(code === null ? -1 : code));
+    child.on("exit", (code) => setTimeout(() => finish(code === null ? -1 : code), 1e3));
   });
 }
-async function probePac(envUrl, needProfile) {
+async function probePac(profile) {
   const file = pacUtils.resolvePac();
   if (!file) {
     return { ok: false, reason: "pac was not found on PATH (or at CPS_PAC_PATH). Install it with: dotnet tool install --global Microsoft.PowerApps.CLI.Tool" };
@@ -20125,19 +20153,22 @@ async function probePac(envUrl, needProfile) {
   if (!pacUtils.versionAtLeast(version2)) {
     return { ok: false, reason: `pac ${version2} is too old. Version ${pacUtils.MIN_PAC_VERSION} or newer is needed, older ones lose data when a pull hits a conflict.` };
   }
-  if (needProfile) {
-    const auth = await runPac(file, ["auth", "list"], 3e4);
-    if (!pacUtils.activeProfileCovers(auth.stdout, envUrl)) {
-      return { ok: false, reason: "pac has no active auth profile for this environment. Create one with: pac auth create --deviceCode --environment <environment id>" };
-    }
+  if (profile) {
+    const authList = (await runPac(file, ["auth", "list"], 3e4)).stdout;
+    const who = (await runPac(file, ["auth", "who"], 3e4)).stdout;
+    const fit = pacUtils.profileFits({ authList, who, tenantId: profile.tenantId, envUrl: profile.envUrl });
+    if (!fit.ok) return { ok: false, reason: fit.reason };
   }
   return { ok: true, file, version: version2 };
 }
 async function pickPac(args) {
   if (args.backend === "lsp") return null;
   const conn = args.workspace ? loadConnJson(findAgentDir(args.workspace)) : null;
-  const envUrl = args.environmentUrl || conn && conn.DataverseEndpoint || null;
-  const probe = await probePac(envUrl, args.backend === "auto");
+  const profile = args.backend === "auto" ? {
+    envUrl: conn && conn.DataverseEndpoint || args.environmentUrl || null,
+    tenantId: conn && conn.AccountInfo && conn.AccountInfo.TenantId || args.tenantId || null
+  } : null;
+  const probe = await probePac(profile);
   const choice = pacUtils.chooseBackend(args.backend, probe);
   if (choice.error) die(choice.error);
   if (choice.note) log(`Using the LSP backend: ${choice.note}`);
@@ -20204,18 +20235,22 @@ async function pacPush(args, pac) {
   const refusal = localPushGuardError(agentDir2);
   if (refusal) return emit({ ...refusal, backend: "pac" }, 1);
   let validation = "skipped";
-  let note = "--force: LSP validation skipped.";
+  let note = "--force: the push went out without a passing LSP validation.";
   if (!args.force) {
     const result = await pacValidate(args);
     if (result === null) {
-      note = "The Copilot Studio VS Code extension (or its vscode-jsonrpc dependency) was not found, so the push was not validated by the LSP. Only conflict markers and YAML syntax were checked.";
-      log(`[push] ${note}`);
-    } else if (!result.valid) {
-      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, 1);
-    } else {
-      validation = "passed";
-      note = null;
+      return emit({
+        status: "error",
+        backend: "pac",
+        validation: "unavailable",
+        error: "Push refused: the LSP validation cannot run (the Copilot Studio VS Code extension or its vscode-jsonrpc dependency was not found). Conflict markers and YAML syntax were checked, nothing more. Install the extension, or add --force to push without LSP validation."
+      }, 1);
     }
+    if (!result.valid) {
+      return emit({ status: "error", backend: "pac", error: pushBlockedError(result), validation: result }, 1);
+    }
+    validation = "passed";
+    note = null;
   }
   const r = await runPac(pac.file, ["copilot", "push", "--project-dir", agentDir2], args.timeout);
   const text = `${r.stdout}
@@ -20231,10 +20266,17 @@ ${r.stderr}`;
 async function pacPublish(args, pac) {
   const agentDir2 = pacAgentDir(args);
   const conn = loadConnJson(agentDir2);
-  const botId = args.agentId || conn && conn.AgentId;
-  const envId = args.environmentId || conn && conn.EnvironmentId;
-  if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
-  if (!envId) die("Cannot determine environment ID. Provide --environment-id or ensure .mcs/conn.json exists.");
+  if (!conn || !conn.AgentId || !conn.EnvironmentId) die("Cannot read the agent and environment from .mcs/conn.json. Run publish in a cloned agent workspace.");
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  if (args.environmentId && !same(args.environmentId, conn.EnvironmentId) || args.agentId && !same(args.agentId, conn.AgentId)) {
+    return emit({
+      status: "error",
+      backend: "pac",
+      error: `Publish refused: the environment or agent given by --environment-id, --agent-id, --url or CPS_ENVIRONMENT_ID is not the one in this workspace's .mcs/conn.json (environment ${conn.EnvironmentId}, agent ${conn.AgentId}). Nothing was published. Unset the variable or run publish in the matching workspace.`
+    }, 1);
+  }
+  const botId = conn.AgentId;
+  const envId = conn.EnvironmentId;
   const settingsFile = path2.join(agentDir2, "settings.mcs.yml");
   const readStamp = () => {
     try {
@@ -20253,7 +20295,14 @@ async function pacPublish(args, pac) {
   const r = await runPac(pac.file, ["copilot", "publish", "--bot", botId, "--environment", envId], args.timeout);
   const after = await pacPullStep(agentDir2, pac, args.timeout);
   const publishedOn = readStamp();
-  if (publishedOn && publishedOn !== previousPublishedOn) {
+  const changed = Boolean(publishedOn && publishedOn !== previousPublishedOn);
+  if (!after.error && after.conflicts.length > 0) {
+    const result = { status: "conflict", backend: "pac", conflicts: after.conflicts };
+    if (changed) Object.assign(result, { botId, publishedOn, previousPublishedOn });
+    result.message = `${changed ? "The agent was published, but the" : "The"} pull after the publish wrote merge conflict markers into: ${formatConflicts(after.conflicts)}. Pick the right version, delete the marker lines, run validate, then push.`;
+    return emit(result, 1);
+  }
+  if (changed) {
     return emit({ status: "ok", backend: "pac", botId, publishedOn, previousPublishedOn, durationMs: Date.now() - started });
   }
   let error;

@@ -48,6 +48,7 @@ const CLONE_OK = "Cloning agent to '/x/'...\nClone complete. Agent cloned to 'zz
 const PUBLISH_OK = "Connected to... kornel_sand\n...Published successfully! 4a16bc71 Succeeded [10/9/2026 10:18:36 PM].\n";
 const PUBLISH_HU = ".....Published successfully! 4a16bc71 Succeeded [2026. 10. 09. 22:20:22].\r\n";
 
+(async () => {
 try {
   // -------------------------------------------------------------------------
   // Version gate
@@ -71,13 +72,23 @@ try {
   // -------------------------------------------------------------------------
 
   const url = "https://orgf3e07203.crm4.dynamics.com/";
-  assertEqual(u.activeProfileCovers(AUTH_UNIVERSAL, url), true, "active UNIVERSAL profile covers any environment");
-  assertEqual(u.activeProfileCovers(AUTH_UNIVERSAL, null), true, "active UNIVERSAL profile, environment unknown");
-  assertEqual(u.activeProfileCovers(AUTH_BOUND, url), true, "active profile bound to this environment");
-  assertEqual(u.activeProfileCovers(AUTH_BOUND, "https://other.crm4.dynamics.com"), false, "active profile bound to another environment");
-  assertEqual(u.activeProfileCovers(AUTH_BOUND, null), false, "bound profile, environment unknown");
-  assertEqual(u.activeProfileCovers(AUTH_INACTIVE, url), false, "no active profile");
-  assertEqual(u.activeProfileCovers("", url), false, "empty auth list");
+  const WHO = "Connected as me@example.com\n\nType:                       User\nCloud:                      Public\nTenant Id:                  8DA7352D-9308-4B9F-80AF-119D78F5A973\nUser:                       me@example.com\nToken Expires:              10/9/2026 11:36:44 PM +00:00\n";
+  const tenant = "8da7352d-9308-4b9f-80af-119d78f5a973";
+  assertEqual(u.parseWhoTenant(WHO), tenant, "tenant id from pac auth who, lower cased");
+  assertEqual(u.parseWhoTenant("Connected as me@example.com\n"), null, "no tenant line");
+  assertEqual(u.parseWhoTenant(WHO.replace(/\n/g, "\r\n")), tenant, "tenant id, CRLF");
+  const fit = (o) => u.profileFits({ authList: AUTH_UNIVERSAL, who: WHO, tenantId: tenant, envUrl: url, ...o });
+  assertEqual(fit({}).ok, true, "universal profile, same tenant");
+  assertEqual(fit({ tenantId: "11111111-2222-3333-4444-555555555555" }).ok, false, "universal profile, other tenant");
+  assertEqual(fit({ who: "Connected as me@example.com\n" }).ok, false, "universal profile, pac shows no tenant");
+  assertEqual(fit({ tenantId: null }).ok, false, "universal profile, workspace tenant unknown");
+  assertEqual(fit({ authList: AUTH_BOUND, who: "", tenantId: null }).ok, true, "bound profile, same environment, no tenant needed");
+  assertEqual(fit({ authList: AUTH_BOUND, envUrl: "https://other.crm4.dynamics.com" }).ok, false, "bound profile, other environment");
+  assertEqual(fit({ authList: AUTH_BOUND, envUrl: null }).ok, false, "bound profile, environment unknown");
+  assertEqual(fit({ authList: AUTH_INACTIVE }).ok, false, "no active profile");
+  assertEqual(fit({ authList: "" }).ok, false, "empty auth list");
+  assertEqual(/different tenant/.test(fit({ tenantId: "x" }).reason), true, "reason names the tenant");
+  assertEqual(JSON.stringify(fit({ tenantId: "x" })).includes("example.com"), false, "reason carries no account data");
 
   // -------------------------------------------------------------------------
   // Backend selection
@@ -146,7 +157,7 @@ try {
     u.buildPacCommand("C:\\Program Files\\pac.cmd", ["copilot", "push", "--project-dir", "C:\\my ws\\agent"], "win32", "cmd.exe"),
     {
       cmd: "cmd.exe",
-      args: ["/d", "/s", "/c", "\"\"C:\\Program Files\\pac.cmd\" \"copilot\" \"push\" \"--project-dir\" \"C:\\my ws\\agent\"\""],
+      args: ["/d", "/s", "/v:off", "/c", "\"\"C:\\Program Files\\pac.cmd\" \"copilot\" \"push\" \"--project-dir\" \"C:\\my ws\\agent\"\""],
       options: { windowsVerbatimArguments: true },
     },
     "windows pac.cmd: run through cmd.exe, every part quoted"
@@ -187,7 +198,8 @@ fs.appendFileSync(path.join(dir, "argv.log"), JSON.stringify(a) + "\\n");
 const val = (n) => a[a.indexOf(n) + 1];
 const out = (s, code) => { process.stdout.write(s); process.exit(code || 0); };
 if (a[0] === "help") out("Microsoft PowerPlatform CLI\\nVersion: " + (process.env.FAKE_VERSION || "2.13.1+gabc") + " (.NET 10)\\n");
-if (a[0] === "auth") out("Index Active Kind Name User\\n[1] * UNIVERSAL me@example.com\\n");
+if (a[0] === "auth" && a[1] === "who") out("Connected as me@example.com\\n\\nType: User\\n" + (process.env.FAKE_TENANT === "" ? "" : "Tenant Id:                  " + (process.env.FAKE_TENANT || "tenant-1") + "\\n") + "User: me@example.com\\n");
+if (a[0] === "auth") out("Index Active Kind Name User Cloud Type Environment Environment Url\\n[1] * " + (process.env.FAKE_KIND || "UNIVERSAL") + " me@example.com Public User sand " + (process.env.FAKE_ENVURL || "https://o.crm4.dynamics.com/") + "\\n");
 if (a[1] === "clone") {
   const d = path.join(val("--output-dir"), "Fake Agent", ".mcs");
   fs.mkdirSync(d, { recursive: true });
@@ -205,6 +217,16 @@ if (a[1] === "pull") {
     fs.mkdirSync(path.join(pd, "topics"), { recursive: true });
     fs.writeFileSync(path.join(pd, "topics", "A.mcs.yml"), "<<<<<<< \\nb: 2\\n=======\\nb: 3\\n>>>>>>> \\n");
     out("Pull complete. 1 change(s) applied.\\n");
+  }
+  if (mode === "hang") {
+    const gc = require("child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "inherit" });
+    fs.writeFileSync(path.join(dir, "gchild.pid"), String(gc.pid));
+    setInterval(() => {}, 1000);
+    return;
+  }
+  if (mode === "publish-conflict" && fs.existsSync(path.join(dir, "published"))) {
+    fs.mkdirSync(path.join(pd, "topics"), { recursive: true });
+    fs.writeFileSync(path.join(pd, "topics", "A.mcs.yml"), "a: 1\\n<<<<<<< \\nb: 2\\n=======\\nb: 3\\n>>>>>>> \\n");
   }
   if (mode === "pull-fails") out("Error: Workspace at '" + pd + "' is not a valid agent workspace.\\n", 1);
   if (mode.startsWith("publish")) {
@@ -243,7 +265,7 @@ out("unexpected: " + a.join(" ") + "\\n", 9);
   function makeWorkspace() {
     const ws = path.join(root, `work space ${wsN++}`, "Fake Agent");
     fs.mkdirSync(path.join(ws, ".mcs"), { recursive: true });
-    fs.writeFileSync(path.join(ws, ".mcs", "conn.json"), JSON.stringify({ AgentId: "bot-1", EnvironmentId: "env-1", DataverseEndpoint: "https://o.crm4.dynamics.com/" }));
+    fs.writeFileSync(path.join(ws, ".mcs", "conn.json"), JSON.stringify({ AgentId: "bot-1", EnvironmentId: "env-1", DataverseEndpoint: "https://o.crm4.dynamics.com/", AccountInfo: { TenantId: "tenant-1" } }));
     fs.writeFileSync(path.join(ws, ".mcs", "botdefinition.json"), "{}");
     return ws;
   }
@@ -252,6 +274,7 @@ out("unexpected: " + a.join(" ") + "\\n", 9);
     fs.rmSync(path.join(fakeDir, "published"), { force: true });
     const r = spawnSync(process.execPath, [cli, ...argv], {
       encoding: "utf8",
+      timeout: 90000,
       env: { ...process.env, CPS_PAC_PATH: pacFile, FAKE_DIR: fakeDir, FAKE_MODE: mode, CPS_BACKEND: "", ...env },
     });
     let json = null;
@@ -344,6 +367,62 @@ out("unexpected: " + a.join(" ") + "\\n", 9);
   r = run(["pull", "--workspace", ws, "--backend", "auto"], { env: { FAKE_VERSION: "2.12.2+gold" } });
   assertEqual(r.json && /tenant-id/.test(r.json.error), true, "auto with an old pac falls back to the LSP path");
 
+
+  // push without a usable LSP: refused unless --force (HOME points at an empty folder, so no extension)
+  const emptyHome = path.join(root, "empty home");
+  fs.mkdirSync(emptyHome, { recursive: true });
+  const noLsp = { HOME: emptyHome, USERPROFILE: emptyHome, CPS_LSP_BINARY: "" };
+  ws = makeWorkspace();
+  r = run(["push", "--backend", "pac", "--workspace", ws], { env: noLsp });
+  assertEqual([r.code, r.json && r.json.status, r.json && r.json.validation, pacCalls(r)], [1, "error", "unavailable", []], "push without LSP validation is refused, nothing sent");
+  assertEqual(r.json && /--force/.test(r.json.error), true, "the refusal names --force");
+  r = run(["push", "--backend", "pac", "--workspace", ws, "--force"], { env: noLsp });
+  assertEqual([r.code, r.json && r.json.status, r.json && r.json.validation, pacCalls(r)], [0, "ok", "skipped", ["copilot push"]], "--force pushes without LSP validation and says skipped");
+  r = run(["push", "--backend", "pac", "--workspace", ws], { env: { ...noLsp, CPS_LSP_BINARY: path.join(root, "missing", "LanguageServerHost") } });
+  assertEqual([r.code, r.json && r.json.validation], [1, "unavailable"], "a wrong CPS_LSP_BINARY does not turn into a plain ok");
+
+  // publish: environment must be the workspace's
+  ws = makeWorkspace();
+  r = run(["publish", "--backend", "pac", "--workspace", ws], { mode: "publish", env: { CPS_ENVIRONMENT_ID: "env-OTHER" } });
+  assertEqual([r.code, r.json && r.json.status, r.json && /Nothing was published/.test(r.json.error), pacCalls(r)], [1, "error", true, []], "publish refused when CPS_ENVIRONMENT_ID differs from conn.json, no pac call");
+  r = run(["publish", "--backend", "pac", "--workspace", ws, "--agent-id", "bot-OTHER"], { mode: "publish" });
+  assertEqual([r.code, r.json && r.json.status, pacCalls(r)], [1, "error", []], "publish refused when --agent-id differs");
+  r = run(["publish", "--backend", "pac", "--workspace", ws, "--environment-id", "ENV-1"], { mode: "publish" });
+  assertEqual([r.code, r.json && r.json.status, r.calls.find((c) => c[1] === "publish")], [0, "ok", ["copilot", "publish", "--bot", "bot-1", "--environment", "env-1"]], "same environment in another case is accepted, conn.json values are used");
+
+  // publish: markers from the pull after the publish
+  ws = makeWorkspace();
+  r = run(["publish", "--backend", "pac", "--workspace", ws], { mode: "publish-conflict" });
+  assertEqual(
+    [r.code, r.json && r.json.status, r.json && r.json.publishedOn, r.json && r.json.conflicts && r.json.conflicts.length],
+    [1, "conflict", "2026-10-09T22:20:00.0000000Z", 1],
+    "publish: markers after the second pull are reported as conflict, publishedOn still shown"
+  );
+
+  // auto: the profile must fit the workspace
+  ws = makeWorkspace();
+  const toLsp = (o) => { const x = run(["pull", "--workspace", ws, "--backend", "auto"], o); return [x.json && x.json.backend === "pac", x.json && /tenant-id/.test(x.json.error || "")]; };
+  assertEqual(toLsp({ env: { FAKE_TENANT: "tenant-other" } }), [false, true], "auto: profile of another tenant, falls back to the LSP");
+  assertEqual(toLsp({ env: { FAKE_TENANT: "" } }), [false, true], "auto: pac shows no tenant, falls back to the LSP");
+  assertEqual(toLsp({ env: { FAKE_KIND: "DATAVERSE", FAKE_ENVURL: "https://other.crm4.dynamics.com/" } }), [false, true], "auto: profile bound to another environment, falls back");
+  assertEqual(toLsp({ env: { FAKE_KIND: "DATAVERSE", FAKE_TENANT: "" } })[0], true, "auto: profile bound to the workspace environment, tenant not needed");
+  r = run(["pull", "--workspace", ws, "--backend", "auto"], { env: { FAKE_TENANT: "tenant-other" } });
+  assertEqual(r.stderr.includes("different tenant"), true, "auto: the reason is logged");
+  assertEqual(r.stderr.includes("me@example.com"), false, "auto: no account data in the log");
+
+  // timeout: pac and its child are stopped, and the call returns
+  ws = makeWorkspace();
+  fs.rmSync(path.join(fakeDir, "gchild.pid"), { force: true });
+  const t0 = Date.now();
+  r = run(["pull", "--backend", "pac", "--workspace", ws, "--timeout", "2000"], { mode: "hang" });
+  assertEqual([r.code, r.json && r.json.status, r.json && /did not finish within 2s/.test(r.json.error), Date.now() - t0 < 12000], [1, "error", true, true], "timeout returns an error without waiting for the child");
+  let gone = false;
+  const gpid = parseInt(fs.readFileSync(path.join(fakeDir, "gchild.pid"), "utf8"), 10);
+  for (let i = 0; i < 30 && !gone; i++) {
+    try { process.kill(gpid, 0); await new Promise((res) => setTimeout(res, 200)); } catch { gone = true; }
+  }
+  assertEqual(gone, true, "timeout: the child process of pac is gone too");
+
   fs.rmSync(root, { recursive: true, force: true });
 } catch (e) {
   failed++;
@@ -352,3 +431,4 @@ out("unexpected: " + a.join(" ") + "\\n", 9);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
+})();

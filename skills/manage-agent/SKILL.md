@@ -33,17 +33,18 @@ This is a new capability under active development. The manage-agent scripts (`ma
 
 - Needs pac 2.13.1 or newer. Older versions can lose data when a pull hits a conflict, so they are refused. Install with `dotnet tool install --global Microsoft.PowerApps.CLI.Tool` (or `pac install latest` for the MSI build). If pac is not on PATH, set `CPS_PAC_PATH` to the file or its folder.
 - Needs a pac auth profile. Create one once with `pac auth create --deviceCode --environment <environmentId>` and check it with `pac auth list`.
-- Opt in with `--backend pac` or `CPS_BACKEND=pac`. `--backend auto` uses pac when it is 2.13.1 or newer and has an active auth profile, otherwise the LSP. The default is `lsp`. The flag wins over the variable.
+- Opt in with `--backend pac` or `CPS_BACKEND=pac`. `--backend auto` uses pac only when it is 2.13.1 or newer and the active profile fits the workspace: a UNIVERSAL profile of the same tenant as `.mcs/conn.json`, or a profile bound to the workspace's environment. If the tenant cannot be matched (pac does not show it, or the workspace has none), auto uses the LSP and logs why. The default is `lsp`. The flag wins over the variable.
 - Every result of these commands has `"backend":"pac"` or `"backend":"lsp"`.
 - `validate` and `changes` always use the LSP. `list-agents`, `chat-with-agent` and the eval commands keep their own sign-in.
 - The workspace files are the same on both backends, so you can switch back and forth without a new clone.
 
 What changes with pac:
 
-- `push` first runs the same local checks (conflict markers, YAML syntax, neither skipped by `--force`). Then it runs the LSP validation if the extension is installed, with no sign-in needed. If the extension or its `vscode-jsonrpc` package is missing, the push goes ahead without LSP validation and the result says `"validation":"skipped"`. Tell the user that in that case. pac itself accepts unknown node kinds.
+- `push` first runs the same local checks (conflict markers, YAML syntax, neither skipped by `--force`). Then it runs the LSP validation if the extension is installed, with no sign-in needed. If the extension or its `vscode-jsonrpc` package is missing, the push is refused (`"validation":"unavailable"`), because pac itself accepts unknown node kinds. `--force` has one meaning on both backends: push without a passing validation, whether it failed or could not run. With it the push goes out and the result says `"validation":"skipped"`. Use it only when the user agrees, and tell them the files were not checked by the LSP.
 - If the server changed since the last pull, `push` stops with an error: run `pull` first.
 - `pull` with conflicts gives the same `"status":"conflict"` result as before.
-- `publish` pulls, publishes, pulls again and checks that `publishedOn` changed. It takes `--workspace` (and optionally `--agent-id`, `--environment-id`, `--timeout`), not `--tenant-id`. Because it pulls, resolve conflict markers first.
+- `publish` pulls, publishes, pulls again and checks that `publishedOn` changed. It takes `--workspace` (and optionally `--agent-id`, `--environment-id`, `--timeout`), not `--tenant-id`. It always uses the agent and environment from `.mcs/conn.json`; if `--agent-id`, `--environment-id`, `--url` or `CPS_ENVIRONMENT_ID` name another one, it refuses and publishes nothing. Because it pulls, resolve conflict markers first. If the pull after the publish writes markers, the result is `"status":"conflict"` (with `publishedOn` if the publish went through).
+- `--timeout` (default 5 minutes) limits each pac call. On a timeout pac and the processes it started are stopped.
 - `clone` takes `--workspace`, `--agent-id` and `--environment-id` (or `--url`), no tenant needed.
 
 ## Phase 0: Resolve Configuration

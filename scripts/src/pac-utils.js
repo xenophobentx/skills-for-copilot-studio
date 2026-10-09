@@ -60,21 +60,42 @@ function buildPacCommand(file, args, platform = process.platform, comspec = "cmd
       throw new Error("Quotes and percent signs in arguments are not supported with pac.cmd");
     }
     const line = [file, ...args].map((a) => `"${a}"`).join(" ");
-    return { cmd: comspec, args: ["/d", "/s", "/c", `"${line}"`], options: { windowsVerbatimArguments: true } };
+    return { cmd: comspec, args: ["/d", "/s", "/v:off", "/c", `"${line}"`], options: { windowsVerbatimArguments: true } };
   }
   return { cmd: file, args, options: {} };
 }
 
-// The active row of `pac auth list` (marked with *). A UNIVERSAL profile works for
-// every environment of the tenant; another kind only for the environment it is
-// bound to, which the table shows as a URL.
-function activeProfileCovers(authListText, envUrl) {
-  const line = String(authListText || "").split(/\r?\n/).find((l) => /^\s*\[\d+\]\s+\*/.test(l));
-  if (!line) return false;
-  if (/\bUNIVERSAL\b/.test(line)) return true;
-  if (!envUrl) return false;
-  const host = envUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
-  return host !== "" && line.toLowerCase().includes(host);
+function hostOf(url) {
+  return String(url || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase();
+}
+
+// Tenant id from `pac auth who`. Only this one field is read, nothing else of
+// the output is kept or logged.
+function parseWhoTenant(whoText) {
+  const m = /^Tenant Id:[ \t]*(\S+)/im.exec(String(whoText || ""));
+  return m ? m[1].toLowerCase() : null;
+}
+
+// Does the active pac profile fit this workspace? Reads the active row of
+// `pac auth list` (marked with *) and the tenant from `pac auth who`.
+// - A profile of another kind is bound to the environment shown in its row and
+//   fits only when that is the workspace's environment.
+// - A UNIVERSAL profile fits when its tenant is the workspace tenant. If pac
+//   does not show the tenant, or the workspace tenant is unknown, it does not fit.
+// Returns { ok, reason }.
+function profileFits({ authList, who, tenantId, envUrl }) {
+  const line = String(authList || "").split(/\r?\n/).find((l) => /^\s*\[\d+\]\s+\*/.test(l));
+  if (!line) return { ok: false, reason: "pac has no active auth profile. Create one with: pac auth create --deviceCode --environment <environment id>" };
+  if (!/\bUNIVERSAL\b/.test(line)) {
+    const host = hostOf(envUrl);
+    if (host && line.toLowerCase().includes(host)) return { ok: true };
+    return { ok: false, reason: "the active pac profile is bound to another environment than the workspace" };
+  }
+  const profileTenant = parseWhoTenant(who);
+  if (!profileTenant) return { ok: false, reason: "pac does not show the tenant of the active profile, so it cannot be matched to the workspace" };
+  if (!tenantId) return { ok: false, reason: "the tenant of the workspace is unknown, so the pac profile cannot be matched to it" };
+  if (profileTenant !== String(tenantId).toLowerCase()) return { ok: false, reason: "the active pac profile belongs to a different tenant than the workspace" };
+  return { ok: true };
 }
 
 function lines(text) {
@@ -162,7 +183,8 @@ module.exports = {
   versionAtLeast,
   resolvePac,
   buildPacCommand,
-  activeProfileCovers,
+  parseWhoTenant,
+  profileFits,
   parsePull,
   parsePush,
   parseClone,

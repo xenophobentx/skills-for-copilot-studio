@@ -56,7 +56,7 @@ Tokens are cached. After the first sign-in they refresh silently for ~90 days.
 
 ## pac backend (optional)
 
-`clone`, `pull`, `push`, `publish` and `list-envs` can use the Power Platform CLI instead of the VS Code extension: add `--backend pac` (or `--backend auto`), or set `CPS_BACKEND`. The default stays the LSP. It needs pac 2.13.1 or newer and a profile made once with `pac auth create --deviceCode --environment <environmentId>`. `validate` and `changes` stay on the LSP. If a pac push result says `"validation":"skipped"`, the LSP did not check the files, so tell the user. Details are in the manage-agent skill.
+`clone`, `pull`, `push`, `publish` and `list-envs` can use the Power Platform CLI instead of the VS Code extension: add `--backend pac` (or `--backend auto`), or set `CPS_BACKEND`. The default stays the LSP. It needs pac 2.13.1 or newer and a profile made once with `pac auth create --deviceCode --environment <environmentId>`. `validate` and `changes` stay on the LSP. A pac push without a working LSP validation is refused; `--force` pushes anyway and the result says `"validation":"skipped"`, so only use it when the user agrees and tell them the LSP did not check the files. Details are in the manage-agent skill.
 
 ## Agent Discovery
 
