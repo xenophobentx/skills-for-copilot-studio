@@ -478,10 +478,11 @@ class LspClient {
   async stop() {
     if (!this.running) return;
 
-    // Race shutdown+exit against a 2s timeout
+    // Race shutdown+exit against a 2s timeout. LSP defines no params for either
+    // (not even null); the server rejects shutdown if it receives some.
     const graceful = (async () => {
-      await this._connection.sendRequest("shutdown", null);
-      this._connection.sendNotification("exit", null);
+      await this._connection.sendRequest("shutdown");
+      this._connection.sendNotification("exit");
     })();
     const timeout = new Promise((resolve) => setTimeout(resolve, 2000));
 

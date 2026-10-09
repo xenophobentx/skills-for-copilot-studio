@@ -15592,8 +15592,8 @@ var LspClient = class {
   async stop() {
     if (!this.running) return;
     const graceful = (async () => {
-      await this._connection.sendRequest("shutdown", null);
-      this._connection.sendNotification("exit", null);
+      await this._connection.sendRequest("shutdown");
+      this._connection.sendNotification("exit");
     })();
     const timeout = new Promise((resolve) => setTimeout(resolve, 2e3));
     try {
