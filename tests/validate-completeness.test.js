@@ -10,6 +10,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { fileURLToPath } = require("url");
 
 const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "src", "manage-agent.js"), "utf8");
 
@@ -109,6 +110,26 @@ assertEqual([withErr.valid, withErr.incomplete], [false, true], "errors + incomp
 
 const onlyErr = formatValidationOutput(new Map([[uriOf(files[0]), [err]]]), agentDir);
 assertEqual([onlyErr.status, onlyErr.valid, "incomplete" in onlyErr], ["error", false, false], "errors, complete -> unchanged contract");
+
+// Errors found locally (merge markers, YAML syntax) are merged into the output
+const localErr = (file, source) => ({ file, line: 3, column: 5, source, message: `${source} problem` });
+const merged = formatValidationOutput(
+  new Map([[uriOf(files[0]), [err]]]),
+  agentDir,
+  null,
+  [localErr("agent.mcs.yml", "yaml-syntax"), localErr("topics/New.mcs.yml", "conflict-markers")]
+);
+assertEqual([merged.status, merged.valid, merged.summary.errors], ["error", false, 3], "local errors make the result invalid and are counted");
+assertEqual(merged.files.map((f) => [f.file, f.diagnostics.length]), [["agent.mcs.yml", 2], [path.join("topics", "New.mcs.yml"), 1]], "local error joins the LSP entry of the same file, other files get their own");
+assertEqual(
+  merged.files[1].diagnostics[0],
+  { severity: "error", message: "conflict-markers problem", source: "conflict-markers", range: { start: { line: 2, character: 4 }, end: { line: 2, character: 4 } } },
+  "local error becomes a zero-based error diagnostic"
+);
+const mergedClean = formatValidationOutput(new Map(), agentDir, null, []);
+assertEqual([mergedClean.valid, mergedClean.summary.errors], [true, 0], "no local errors leaves the result unchanged");
+const mergedIncomplete = formatValidationOutput(new Map(), agentDir, incomplete, [localErr("agent.mcs.yml", "yaml-syntax")]);
+assertEqual([mergedIncomplete.status, mergedIncomplete.incomplete], ["error", true], "local errors with an incomplete run stay flagged incomplete");
 
 // ---------------------------------------------------------------------------
 // Unreadable files are reported separately and are not waited for

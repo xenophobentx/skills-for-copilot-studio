@@ -31,6 +31,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { fileURLToPath } = require("url");
+const yaml = require("js-yaml");
 const { log, die, sleep } = require("./shared-utils");
 const {
   VSCODE_CLIENT_ID,
@@ -559,16 +560,21 @@ function findMcsYmlFiles(dir, results = []) {
 // on the server, and still reports success.
 const CONFLICT_MARKER_RE = /^(<{7}|={7}|>{7})( |$)/;
 
+function conflictMarkerLines(text) {
+  const lines = [];
+  text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((line, i) => {
+    if (CONFLICT_MARKER_RE.test(line)) lines.push(i + 1);
+  });
+  return lines;
+}
+
 function findConflictMarkers(agentDir) {
   const conflicts = [];
   for (const file of findMcsYmlFiles(agentDir).sort()) {
     let text;
     try { text = fs.readFileSync(file, "utf8"); }
     catch { continue; }
-    const lines = [];
-    text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((line, i) => {
-      if (CONFLICT_MARKER_RE.test(line)) lines.push(i + 1);
-    });
+    const lines = conflictMarkerLines(text);
     if (lines.length > 0) {
       conflicts.push({ file: path.relative(agentDir, file).split(path.sep).join("/"), lines });
     }
@@ -578,6 +584,55 @@ function findConflictMarkers(agentDir) {
 
 function formatConflicts(conflicts) {
   return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
+}
+
+// The LSP accepts files that do not parse as YAML (an unclosed quote still
+// comes back as "valid"), so parse every file here. Returns one entry per file
+// that fails: [{ file, line, column, message }], line and column 1-based.
+function findYamlSyntaxErrors(agentDir) {
+  const errors = [];
+  for (const file of findMcsYmlFiles(agentDir).sort()) {
+    let text;
+    try { text = fs.readFileSync(file, "utf8"); }
+    catch { continue; }
+    // A file with merge markers is reported as that, not as a parse error.
+    if (conflictMarkerLines(text).length > 0) continue;
+    try {
+      // json: true lets a repeated key through; the LSP already reports those.
+      yaml.load(text, { json: true });
+    } catch (e) {
+      errors.push({
+        file: path.relative(agentDir, file).split(path.sep).join("/"),
+        line: e.mark ? e.mark.line + 1 : 1,
+        column: e.mark ? e.mark.column + 1 : 1,
+        message: e.reason || e.message,
+      });
+    }
+  }
+  return errors;
+}
+
+function formatYamlSyntaxErrors(errors) {
+  return errors.map((e) => `${e.file} (line ${e.line}, column ${e.column}: ${e.message})`).join("; ");
+}
+
+// What validate adds to the LSP diagnostics: one merge marker error per file,
+// then YAML syntax errors (files with markers are not parsed).
+function findLocalErrors(agentDir) {
+  const errors = [];
+  for (const c of findConflictMarkers(agentDir)) {
+    errors.push({
+      file: c.file, line: c.lines[0], column: 1, source: "conflict-markers",
+      message: `Unresolved merge conflict markers at line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")}. Keep the right version between the markers and delete the marker lines.`,
+    });
+  }
+  for (const e of findYamlSyntaxErrors(agentDir)) {
+    errors.push({
+      file: e.file, line: e.line, column: e.column, source: "yaml-syntax",
+      message: `YAML syntax error (line ${e.line}, column ${e.column}): ${e.message}`,
+    });
+  }
+  return errors;
 }
 
 // Returns the files that could not be read (and so were not opened): [{ filePath, error }]
@@ -671,7 +726,7 @@ function waitForDiagnostics(client, filePaths, settleMs = 500, timeoutMs = 15000
 
 const SEVERITY_NAMES = { 1: "error", 2: "warning", 3: "information", 4: "hint" };
 
-function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null) {
+function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, localErrors = []) {
   let errorCount = 0, warningCount = 0, infoCount = 0;
   const files = [];
 
@@ -702,6 +757,25 @@ function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null) {
       };
     });
     files.push({ file: filePath, diagnostics: mapped });
+  }
+
+  // Errors found locally (merge markers, YAML syntax); the LSP does not report them.
+  for (const e of localErrors) {
+    errorCount++;
+    const diagnostic = {
+      severity: "error",
+      message: e.message,
+      source: e.source,
+      range: {
+        start: { line: e.line - 1, character: e.column - 1 },
+        end: { line: e.line - 1, character: e.column - 1 },
+      },
+    };
+    // e.file uses forward slashes; the LSP entries use the native separator
+    const native = e.file.split("/").join(path.sep);
+    const entry = files.find((f) => f.file === native);
+    if (entry) entry.diagnostics.push(diagnostic);
+    else files.push({ file: native, diagnostics: [diagnostic] });
   }
 
   const output = {
@@ -783,7 +857,7 @@ async function runValidation(client, args, tokens) {
     log(`[validate] ${incomplete.message}`);
   }
 
-  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete);
+  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete, findLocalErrors(agentDir));
   output.fileCount = filePaths.length;
   return output;
 }
@@ -1032,14 +1106,34 @@ async function cmdWithLsp(args, method) {
   // Never upload unresolved merge markers. Checked before any network call and
   // deliberately not bypassed by --force (which is meant for validation
   // false positives).
+  const agentDir = findAgentDir(args.workspace);
   if (method === "powerplatformls/syncPush") {
-    const conflicts = findConflictMarkers(findAgentDir(args.workspace));
+    const conflicts = findConflictMarkers(agentDir);
     if (conflicts.length > 0) {
       process.stdout.write(
         JSON.stringify({
           status: "error",
           error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
           conflicts,
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  // Same for files that do not parse as YAML. validate calls such a file valid
+  // (measured with an unclosed quote), and pushing it with pac emptied the
+  // topic on the server. --force is for validation false positives, not for
+  // broken syntax.
+  if (method === "powerplatformls/syncPush") {
+    const syntaxErrors = findYamlSyntaxErrors(agentDir);
+    if (syntaxErrors.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "error",
+          error: `Push refused: YAML syntax errors in ${formatYamlSyntaxErrors(syntaxErrors)}. The real mistake can be above the reported line, for example an unclosed quote. Fix the syntax, run validate, then push. --force does not bypass this check.`,
+          syntaxErrors,
         }, null, 2) + "\n"
       );
       process.exitCode = 1;
@@ -1086,7 +1180,7 @@ async function cmdWithLsp(args, method) {
 
     // syncPull reports success even when it wrote merge markers into a file.
     const conflicts = method === "powerplatformls/syncPull"
-      ? findConflictMarkers(findAgentDir(args.workspace))
+      ? findConflictMarkers(agentDir)
       : [];
     if (conflicts.length > 0) {
       process.stdout.write(
