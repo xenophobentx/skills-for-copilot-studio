@@ -1,4 +1,4 @@
-var _d=process.env.CLAUDE_PLUGIN_DATA;if(!_d){try{_d=JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.copilot-studio-cli','plugin-paths.json'),'utf8')).pluginData}catch{}}if(_d){var _p=require('path');process.env.NODE_PATH=[_p.join(_d,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_p.delimiter);require('module')._initPaths()}
+var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{return JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
