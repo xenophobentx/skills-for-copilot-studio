@@ -84,6 +84,11 @@ check("foreign CLAUDE_PLUGIN_DATA falls through to the legacy file", resolve(
 check("legacy plugin-paths.json with our install is used", resolve({}, home, { "plugin-paths.json": own }) === nm(own));
 check("legacy plugin-paths.json of another plugin is ignored", resolve({}, home, { "plugin-paths.json": foreign }) === "");
 check("legacy plugin-paths.json to a missing folder is ignored", resolve({}, home, { "plugin-paths.json": path.join(root, "gone") }) === "");
+check("stale sfcs-plugin-paths.json (folder gone) falls through to CLAUDE_PLUGIN_DATA", resolve(
+  { CLAUDE_PLUGIN_DATA: own }, home, { "sfcs-plugin-paths.json": path.join(root, "gone") }) === nm(own));
+check("pluginData that is not a string does not crash", resolve({}, home, { "sfcs-plugin-paths.json": 123, "plugin-paths.json": { a: 1 } }) === "");
+check("pluginData that is not a string falls through", resolve(
+  { CLAUDE_PLUGIN_DATA: own }, home, { "sfcs-plugin-paths.json": ["x"] }) === nm(own));
 check("broken sfcs-plugin-paths.json falls through", (() => {
   resolve({}, home);
   fs.writeFileSync(path.join(home, ".copilot-studio-cli", "sfcs-plugin-paths.json"), "{nope");

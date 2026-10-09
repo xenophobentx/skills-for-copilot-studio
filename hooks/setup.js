@@ -6,8 +6,9 @@ const os = require('os');
 // __dirname is the hooks/ directory; the plugin root is one level up
 const r = p.resolve(__dirname, '..');
 // CLAUDE_PLUGIN_DATA is what the harness hands to this hook, so it is this plugin's
-// own folder here. Other plugins use the same name, so the scripts never read it
-// from the session environment: they get SFCS_PLUGIN_DATA and sfcs-plugin-paths.json.
+// own folder here. Other plugins use the same name in the session, so the scripts
+// get SFCS_PLUGIN_DATA and sfcs-plugin-paths.json, and read CLAUDE_PLUGIN_DATA
+// only when that folder holds our native-deps.json.
 const d = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA;
 const e = process.env.CLAUDE_ENV_FILE;
 
