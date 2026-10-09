@@ -548,6 +548,32 @@ function findMcsYmlFiles(dir, results = []) {
   return results;
 }
 
+// Raw git-style merge markers (7 chars at line start, then a space or EOL).
+// syncPull writes these into a topic when the same line changed locally and
+// on the server, and still reports success.
+const CONFLICT_MARKER_RE = /^(<{7}|={7}|>{7})( |$)/;
+
+function findConflictMarkers(agentDir) {
+  const conflicts = [];
+  for (const file of findMcsYmlFiles(agentDir).sort()) {
+    let text;
+    try { text = fs.readFileSync(file, "utf8"); }
+    catch { continue; }
+    const lines = [];
+    text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((line, i) => {
+      if (CONFLICT_MARKER_RE.test(line)) lines.push(i + 1);
+    });
+    if (lines.length > 0) {
+      conflicts.push({ file: path.relative(agentDir, file).split(path.sep).join("/"), lines });
+    }
+  }
+  return conflicts;
+}
+
+function formatConflicts(conflicts) {
+  return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
+}
+
 function openFilesForDiagnostics(client, filePaths) {
   // Notify the server about all files via workspace/didChangeWatchedFiles first.
   // This mirrors the VS Code extension's file watcher behavior and triggers
@@ -915,6 +941,24 @@ async function cmdWithLsp(args, method) {
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
   requireBotDefinition(args);
 
+  // Never upload unresolved merge markers. Checked before any network call and
+  // deliberately not bypassed by --force (which is meant for validation
+  // false positives).
+  if (method === "powerplatformls/syncPush") {
+    const conflicts = findConflictMarkers(findAgentDir(args.workspace));
+    if (conflicts.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "error",
+          error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
+          conflicts,
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -955,9 +999,26 @@ async function cmdWithLsp(args, method) {
     log(`Calling ${method}...`);
     const result = await sendCustomRequestWithRetries(client, method, request);
 
-    process.stdout.write(
-      JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
-    );
+    // syncPull reports success even when it wrote merge markers into a file.
+    const conflicts = method === "powerplatformls/syncPull"
+      ? findConflictMarkers(findAgentDir(args.workspace))
+      : [];
+    if (conflicts.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "conflict",
+          method,
+          result,
+          conflicts,
+          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`,
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+    } else {
+      process.stdout.write(
+        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
+      );
+    }
   } finally {
     await client.stop();
   }
@@ -1505,7 +1566,7 @@ async function main() {
 
   // Ensure Node exits even if stale event-loop handles linger (e.g. from
   // the LSP binary's pipe server or unresolved timers).
-  process.exit(0);
+  process.exit(process.exitCode || 0);
 }
 
 // Expose helpers for testing when loaded as a module
