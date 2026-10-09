@@ -220,6 +220,8 @@ var require_shared_utils = __commonJS({
 // src/msal-cache.js
 var require_msal_cache = __commonJS({
   "src/msal-cache.js"(exports2, module2) {
+    var crypto4 = require("crypto");
+    var fs7 = require("fs");
     var path3 = require("path");
     var os2 = require("os");
     function stubMissingKeytarOnWindows() {
@@ -251,18 +253,260 @@ var require_msal_cache = __commonJS({
     var { PersistenceCreator, PersistenceCachePlugin, DataProtectionScope } = require("@azure/msal-node-extensions");
     var CACHE_DIR = path3.join(os2.homedir(), ".copilot-studio-cli");
     var SERVICE_NAME = "copilot-studio-cli";
-    async function createCachePlugin(accountName) {
-      const cachePath = path3.join(CACHE_DIR, `${accountName}.cache.json`);
-      const persistence = await PersistenceCreator.createPersistence({
-        cachePath,
-        dataProtectionScope: DataProtectionScope.CurrentUser,
-        serviceName: SERVICE_NAME,
-        accountName,
-        usePlaintextFileOnLinux: true
-      });
-      return new PersistenceCachePlugin(persistence);
+    var LOCK_STALE_MS = 3e4;
+    var LOCK_WAIT_MS = 1e4;
+    var LOCK_POLL_MS = 50;
+    var LINUX_SECRET_SERVICE_UNAVAILABLE_PATTERNS = [
+      /org\.freedesktop\.secrets was not provided/i,
+      /cannot autolaunch d-bus/i,
+      /no such interface[\s\S]*secret/i
+    ];
+    function isSecretServiceUnavailableError(e) {
+      const message = e && e.message ? String(e.message) : "";
+      return LINUX_SECRET_SERVICE_UNAVAILABLE_PATTERNS.some((re) => re.test(message));
     }
-    module2.exports = { createCachePlugin };
+    var TRANSIENT_PERSISTENCE_ERROR_PATTERNS = [
+      /\b(?:ENOENT|EPERM|EBUSY|EACCES)\b/,
+      /could not be read/i,
+      /is different\s+from data read/i,
+      /already exists in the keychain/i,
+      /could not be found in the keychain/i,
+      /may have been deleted from the keychain/i
+    ];
+    function isTransientPersistenceError(e) {
+      const message = e && e.message ? String(e.message) : "";
+      return TRANSIENT_PERSISTENCE_ERROR_PATTERNS.some((re) => re.test(message));
+    }
+    function isPidDead(pid) {
+      if (!Number.isInteger(pid) || pid <= 0) return false;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (e) {
+        return e.code === "ESRCH";
+      }
+    }
+    function restoreStolenLock(takeoverPath, lockPath, contents) {
+      try {
+        fs7.linkSync(takeoverPath, lockPath);
+      } catch (linkErr) {
+        if (linkErr.code === "EEXIST") return;
+        try {
+          fs7.writeFileSync(lockPath, contents, { flag: "wx", mode: 384 });
+        } catch {
+        }
+      }
+    }
+    async function withPersistenceLock(lockPath, fn, {
+      waitMs = LOCK_WAIT_MS,
+      staleMs = LOCK_STALE_MS,
+      pollMs = LOCK_POLL_MS,
+      platform: platform2 = process.platform,
+      warn,
+      sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = {}) {
+      const deadline = Date.now() + waitMs;
+      const token = `${process.pid}:${crypto4.randomBytes(8).toString("hex")}`;
+      const isContention = (e) => {
+        if (e.code === "EEXIST") return e.syscall === "open";
+        if (platform2 === "win32" && e.code === "EBUSY") return true;
+        if (platform2 === "win32" && (e.code === "EPERM" || e.code === "EACCES")) {
+          try {
+            fs7.statSync(lockPath);
+            return true;
+          } catch (statErr) {
+            return statErr.code === "EPERM";
+          }
+        }
+        return false;
+      };
+      let fd;
+      let holdingLock = false;
+      for (; ; ) {
+        try {
+          fs7.mkdirSync(path3.dirname(lockPath), { recursive: true, mode: 448 });
+          fd = fs7.openSync(lockPath, "wx", 384);
+          try {
+            fs7.writeSync(fd, token);
+          } catch (writeErr) {
+            try {
+              fs7.closeSync(fd);
+            } catch {
+            }
+            fd = void 0;
+            try {
+              fs7.unlinkSync(lockPath);
+            } catch {
+            }
+            throw writeErr;
+          }
+          holdingLock = true;
+          break;
+        } catch (e) {
+          if (!isContention(e)) {
+            if (typeof warn === "function") {
+              warn(
+                `Could not acquire the persistence lock at ${lockPath} (${e.code || e.message}); continuing without it.`
+              );
+            }
+            fd = void 0;
+            break;
+          }
+          try {
+            const lockContents = fs7.readFileSync(lockPath, "utf-8");
+            const holderPid = Number((/^(\d+):/.exec(lockContents) || [])[1]);
+            const stale = isPidDead(holderPid) || Date.now() - fs7.statSync(lockPath).mtimeMs > staleMs;
+            if (stale) {
+              const takeoverPath = `${lockPath}.stale-${process.pid}-${crypto4.randomBytes(4).toString("hex")}`;
+              try {
+                fs7.renameSync(lockPath, takeoverPath);
+                try {
+                  let movedContents;
+                  try {
+                    movedContents = fs7.readFileSync(takeoverPath, "utf-8");
+                  } catch {
+                    movedContents = void 0;
+                  }
+                  if (movedContents !== void 0 && movedContents !== lockContents) {
+                    restoreStolenLock(takeoverPath, lockPath, movedContents);
+                  }
+                } finally {
+                  try {
+                    fs7.unlinkSync(takeoverPath);
+                  } catch {
+                  }
+                }
+              } catch {
+              }
+            }
+          } catch {
+          }
+        }
+        if (Date.now() >= deadline) {
+          fd = void 0;
+          if (typeof warn === "function") {
+            warn(`Waited ${waitMs} ms for the persistence lock at ${lockPath}; continuing without it.`);
+          }
+          break;
+        }
+        await sleep(pollMs + Math.random() * pollMs);
+      }
+      const heartbeat = holdingLock ? setInterval(
+        () => {
+          try {
+            const now = /* @__PURE__ */ new Date();
+            fs7.utimesSync(lockPath, now, now);
+          } catch {
+          }
+        },
+        Math.max(50, Math.floor(staleMs / 3))
+      ) : null;
+      if (heartbeat && heartbeat.unref) heartbeat.unref();
+      try {
+        return await fn();
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        if (holdingLock && fd !== void 0) {
+          try {
+            fs7.closeSync(fd);
+          } catch {
+          }
+          try {
+            if (fs7.readFileSync(lockPath, "utf-8") === token) fs7.unlinkSync(lockPath);
+          } catch {
+          }
+        }
+      }
+    }
+    async function createPersistenceWithRetry(creator, options, {
+      attempts = 4,
+      plaintextAttempts = 3,
+      delayMs = 100,
+      platform: platform2 = process.platform,
+      sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = {}) {
+      const allowPlaintext = platform2 === "linux" && Boolean(options.usePlaintextFileOnLinux);
+      const total = attempts + (allowPlaintext ? plaintextAttempts : 0);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await creator.createPersistence({
+            ...options,
+            usePlaintextFileOnLinux: allowPlaintext && attempt > attempts
+          });
+        } catch (e) {
+          if (!e || e.errorCode !== "CachePersistenceError" || attempt >= total) throw e;
+          const transient = isTransientPersistenceError(e);
+          const encryptedStageOnLinux = platform2 === "linux" && attempt <= attempts;
+          if (encryptedStageOnLinux && (!transient || isSecretServiceUnavailableError(e))) {
+            if (!allowPlaintext) throw e;
+            attempt = attempts;
+            continue;
+          }
+          if (!transient) throw e;
+          const step = attempt >= attempts ? attempt - attempts + 1 : attempt;
+          await sleep(delayMs * step + Math.random() * delayMs);
+        }
+      }
+    }
+    async function createCachePlugin(accountName, {
+      extensions,
+      warn = (msg) => process.stderr.write(msg + "\n"),
+      lockPath,
+      cachePath,
+      ...retry
+    } = {}) {
+      const extensionsModule = extensions || {
+        PersistenceCreator,
+        PersistenceCachePlugin,
+        DataProtectionScope,
+        // Only needed to detect the Linux fallback below.
+        FilePersistence: require("@azure/msal-node-extensions").FilePersistence
+      };
+      if (!cachePath) cachePath = path3.join(CACHE_DIR, `${accountName}.cache.json`);
+      if (!lockPath) lockPath = path3.join(path3.dirname(cachePath), ".persistence.lock");
+      const persistence = await withPersistenceLock(
+        lockPath,
+        () => createPersistenceWithRetry(
+          extensionsModule.PersistenceCreator,
+          {
+            cachePath,
+            dataProtectionScope: extensionsModule.DataProtectionScope.CurrentUser,
+            serviceName: SERVICE_NAME,
+            accountName,
+            usePlaintextFileOnLinux: true
+          },
+          retry
+        ),
+        { ...retry, warn }
+      );
+      const isPlaintextFallback = extensionsModule.FilePersistence ? persistence instanceof extensionsModule.FilePersistence : Boolean(
+        persistence && persistence.constructor && persistence.constructor.name === "FilePersistence"
+      );
+      if (isPlaintextFallback) {
+        tightenPlaintextPermissions(cachePath);
+        warn(
+          `Encrypted token storage is unavailable on this machine (no usable keyring/libsecret). Falling back to a plaintext token cache at ${cachePath}; tokens are stored unencrypted.`
+        );
+      }
+      return new extensionsModule.PersistenceCachePlugin(persistence);
+    }
+    function tightenPlaintextPermissions(cachePath) {
+      try {
+        fs7.chmodSync(path3.dirname(cachePath), 448);
+      } catch {
+      }
+      try {
+        if (fs7.existsSync(cachePath)) fs7.chmodSync(cachePath, 384);
+      } catch {
+      }
+    }
+    module2.exports = {
+      createCachePlugin,
+      createPersistenceWithRetry,
+      isTransientPersistenceError,
+      withPersistenceLock,
+      tightenPlaintextPermissions
+    };
   }
 });
 
@@ -4549,7 +4793,8 @@ var require_msal_node = __commonJS({
             refresh_on: atEntity.refreshOn,
             key_id: atEntity.keyId,
             token_type: atEntity.tokenType,
-            userAssertionHash: atEntity.userAssertionHash
+            userAssertionHash: atEntity.userAssertionHash,
+            resource: atEntity.resource
           };
         });
         return accessTokens;
@@ -4824,6 +5069,8 @@ var require_msal_node = __commonJS({
     var BROKER_CLIENT_ID = "brk_client_id";
     var BROKER_REDIRECT_URI = "brk_redirect_uri";
     var INSTANCE_AWARE = "instance_aware";
+    var RESOURCE = "resource";
+    var CLI_DATA = "clidata";
     function getDefaultErrorMessage(code) {
       return `See https://aka.ms/msal.js.errors#${code} for details`;
     }
@@ -5018,6 +5265,8 @@ var require_msal_node = __commonJS({
     var methodNotImplemented = "method_not_implemented";
     var nestedAppAuthBridgeDisabled = "nested_app_auth_bridge_disabled";
     var platformBrokerError = "platform_broker_error";
+    var resourceParameterRequired = "resource_parameter_required";
+    var misplacedResourceParam = "misplaced_resource_parameter";
     var ClientAuthErrorCodes = /* @__PURE__ */ Object.freeze({
       __proto__: null,
       authTimeNotFound,
@@ -5037,6 +5286,7 @@ var require_msal_node = __commonJS({
       keyIdMissing,
       maxAgeTranspired,
       methodNotImplemented,
+      misplacedResourceParam,
       multipleMatchingAppMetadata,
       multipleMatchingTokens,
       nestedAppAuthBridgeDisabled,
@@ -5050,6 +5300,7 @@ var require_msal_node = __commonJS({
       openIdConfigError,
       platformBrokerError,
       requestCannotBeMade,
+      resourceParameterRequired,
       stateMismatch,
       stateNotFound,
       tokenClaimsCnfRequiredForSignedJwt,
@@ -5278,14 +5529,17 @@ var require_msal_node = __commonJS({
     function addSid(parameters, sid) {
       parameters.set(SID, sid);
     }
-    function addClaims(parameters, claims, clientCapabilities) {
-      const mergedClaims = addClientCapabilitiesToClaims(claims, clientCapabilities);
-      try {
-        JSON.parse(mergedClaims);
-      } catch (e) {
-        throw createClientConfigurationError(invalidClaims);
+    function addClaims(parameters, claims, clientCapabilities, skipBrokerClaims) {
+      const configClaims = skipBrokerClaims && parameters.has(BROKER_CLIENT_ID) ? void 0 : clientCapabilities;
+      if (!StringUtils.isEmptyObj(claims) || configClaims && configClaims.length > 0) {
+        const mergedClaims = addClientCapabilitiesToClaims(claims, configClaims);
+        try {
+          JSON.parse(mergedClaims);
+        } catch (e) {
+          throw createClientConfigurationError(invalidClaims);
+        }
+        parameters.set(CLAIMS, mergedClaims);
       }
-      parameters.set(CLAIMS, mergedClaims);
     }
     function addCorrelationId(parameters, correlationId) {
       parameters.set(CLIENT_REQUEST_ID, correlationId);
@@ -5364,6 +5618,9 @@ var require_msal_node = __commonJS({
     function addClientInfo(parameters) {
       parameters.set(CLIENT_INFO, "1");
     }
+    function addCliData(parameters) {
+      parameters.set(CLI_DATA, "1");
+    }
     function addInstanceAware(parameters) {
       if (!parameters.has(INSTANCE_AWARE)) {
         parameters.set(INSTANCE_AWARE, "true");
@@ -5431,6 +5688,11 @@ var require_msal_node = __commonJS({
       }
       if (!parameters.has(BROKER_REDIRECT_URI)) {
         parameters.set(BROKER_REDIRECT_URI, brokerRedirectUri);
+      }
+    }
+    function addResource(parameters, resource) {
+      if (resource) {
+        parameters.set(RESOURCE, resource);
       }
     }
     function stripLeadingHashOrQuery(responseString) {
@@ -5717,7 +5979,7 @@ var require_msal_node = __commonJS({
       }
     };
     var name$1 = "@azure/msal-common";
-    var version$1 = "16.2.0";
+    var version$1 = "16.5.1";
     var AzureCloudInstance = {
       // AzureCloudInstance is not specified.
       None: "none",
@@ -5745,7 +6007,8 @@ var require_msal_node = __commonJS({
           name: name2,
           username: preferred_username || upn || "",
           loginHint: login_hint,
-          isHomeTenant: tenantIdMatchesHomeTenant(tenantId2, homeAccountId)
+          isHomeTenant: tenantIdMatchesHomeTenant(tenantId2, homeAccountId),
+          upn
         };
       } else {
         return {
@@ -6244,6 +6507,10 @@ var require_msal_node = __commonJS({
        * Gets first tenanted AccountInfo object found based on provided filters
        */
       getAccountInfoFilteredBy(accountFilter, correlationId) {
+        if (Object.keys(accountFilter).length === 0 || Object.values(accountFilter).every((value) => value === null || value === void 0 || value === "")) {
+          this.commonLogger.warning("getAccountInfoFilteredBy: Account filter is empty or invalid, returning null", correlationId);
+          return null;
+        }
         const allAccounts = this.getAllAccounts(accountFilter, correlationId);
         if (allAccounts.length > 1) {
           const sortedAccounts = allAccounts.sort((account) => {
@@ -6332,6 +6599,15 @@ var require_msal_node = __commonJS({
         if (tenantProfileFilter.isHomeTenant !== void 0 && !(tenantProfile.isHomeTenant === tenantProfileFilter.isHomeTenant)) {
           return false;
         }
+        if (!!tenantProfileFilter.username && !(this.matchUsername(tenantProfile.username, tenantProfileFilter.username) || !this.matchUsername(tenantProfile.upn, tenantProfileFilter.username))) {
+          return false;
+        }
+        if (!!tenantProfileFilter.loginHint && !this.matchLoginHintWithTenantProfile(tenantProfile, tenantProfileFilter.loginHint)) {
+          return false;
+        }
+        if (!!tenantProfileFilter.upn && !(tenantProfile.upn === tenantProfileFilter.upn)) {
+          return false;
+        }
         return true;
       }
       idTokenClaimsMatchTenantProfileFilter(idTokenClaims, tenantProfileFilter) {
@@ -6342,7 +6618,7 @@ var require_msal_node = __commonJS({
           if (!!tenantProfileFilter.loginHint && !this.matchLoginHintFromTokenClaims(idTokenClaims, tenantProfileFilter.loginHint)) {
             return false;
           }
-          if (!!tenantProfileFilter.username && !this.matchUsername(idTokenClaims.preferred_username, tenantProfileFilter.username)) {
+          if (!!tenantProfileFilter.username && !this.matchUsername(idTokenClaims.preferred_username, tenantProfileFilter.username) && !this.matchUsername(idTokenClaims.upn, tenantProfileFilter.username)) {
             return false;
           }
           if (!!tenantProfileFilter.name && !this.matchName(idTokenClaims, tenantProfileFilter.name)) {
@@ -6434,9 +6710,6 @@ var require_msal_node = __commonJS({
           if (!!accountFilter.homeAccountId && !this.matchHomeAccountId(entity, accountFilter.homeAccountId)) {
             return;
           }
-          if (!!accountFilter.username && !this.matchUsername(entity.username, accountFilter.username)) {
-            return;
-          }
           if (!!accountFilter.environment && !this.matchEnvironment(entity, accountFilter.environment, correlationId)) {
             return;
           }
@@ -6451,7 +6724,10 @@ var require_msal_node = __commonJS({
           }
           const tenantProfileFilter = {
             localAccountId: accountFilter?.localAccountId,
-            name: accountFilter?.name
+            name: accountFilter?.name,
+            username: accountFilter?.username,
+            loginHint: accountFilter?.loginHint,
+            upn: accountFilter?.upn
           };
           const matchingTenantProfiles = entity.tenantProfiles?.filter((tenantProfile) => {
             return this.tenantProfileMatchesFilter(tenantProfile, tenantProfileFilter);
@@ -6670,10 +6946,10 @@ var require_msal_node = __commonJS({
             const numHomeIdTokens = homeIdTokenMap.size;
             if (numHomeIdTokens < 1) {
               this.commonLogger.info("CacheManager:getIdToken - Multiple ID tokens found for account but none match account entity tenant id, returning first result", correlationId);
-              return idTokenMap.values().next().value;
+              return idTokenMap.values().next().value ?? null;
             } else if (numHomeIdTokens === 1) {
               this.commonLogger.info("CacheManager:getIdToken - Multiple ID tokens found for account, defaulting to home tenant profile", correlationId);
-              return homeIdTokenMap.values().next().value;
+              return homeIdTokenMap.values().next().value ?? null;
             } else {
               tokensToBeRemoved = homeIdTokenMap;
             }
@@ -6686,7 +6962,7 @@ var require_msal_node = __commonJS({
           return null;
         }
         this.commonLogger.info("CacheManager:getIdToken - Returning ID token", correlationId);
-        return idTokenMap.values().next().value;
+        return idTokenMap.values().next().value ?? null;
       }
       /**
        * Gets all idTokens matching the given filter
@@ -6961,6 +7237,15 @@ var require_msal_node = __commonJS({
         return !!(cachedUsername && typeof cachedUsername === "string" && filterUsername?.toLowerCase() === cachedUsername.toLowerCase());
       }
       /**
+       * helper to match loginhints
+       * @param entity
+       * @param loginHint
+       * @returns
+       */
+      matchLoginHintWithTenantProfile(tenantProfile, loginHintFilter) {
+        return tenantProfile.loginHint === loginHintFilter || tenantProfile.username === loginHintFilter || tenantProfile.upn === loginHintFilter;
+      }
+      /**
        * helper to match assertion
        * @param value
        * @param oboAssertion
@@ -7044,6 +7329,9 @@ var require_msal_node = __commonJS({
           return true;
         }
         if (tokenClaims.upn === loginHint) {
+          return true;
+        }
+        if (tokenClaims.emails && tokenClaims.emails.includes(loginHint)) {
           return true;
         }
         return false;
@@ -7310,104 +7598,31 @@ var require_msal_node = __commonJS({
         clientCapabilities: [],
         azureCloudOptions: DEFAULT_AZURE_CLOUD_OPTIONS,
         instanceAware: false,
+        isMcp: false,
         ...authOptions
       };
     }
     function isOidcProtocolMode(config) {
       return config.authOptions.authority.options.protocolMode === ProtocolMode.OIDC;
     }
-    var ServerError = class _ServerError extends AuthError {
-      constructor(errorCode, errorMessage, subError, errorNo, status) {
-        super(errorCode, errorMessage, subError);
-        this.name = "ServerError";
-        this.errorNo = errorNo;
-        this.status = status;
-        Object.setPrototypeOf(this, _ServerError.prototype);
+    var TokenCacheContext = class {
+      constructor(tokenCache, hasChanged) {
+        this.cache = tokenCache;
+        this.hasChanged = hasChanged;
+      }
+      /**
+       * boolean which indicates the changes in cache
+       */
+      get cacheHasChanged() {
+        return this.hasChanged;
+      }
+      /**
+       * function to retrieve the token cache
+       */
+      get tokenCache() {
+        return this.cache;
       }
     };
-    var noTokensFound = "no_tokens_found";
-    var nativeAccountUnavailable = "native_account_unavailable";
-    var refreshTokenExpired = "refresh_token_expired";
-    var uxNotAllowed = "ux_not_allowed";
-    var interactionRequired = "interaction_required";
-    var consentRequired = "consent_required";
-    var loginRequired = "login_required";
-    var badToken = "bad_token";
-    var interruptedUser = "interrupted_user";
-    var InteractionRequiredAuthErrorCodes = /* @__PURE__ */ Object.freeze({
-      __proto__: null,
-      badToken,
-      consentRequired,
-      interactionRequired,
-      interruptedUser,
-      loginRequired,
-      nativeAccountUnavailable,
-      noTokensFound,
-      refreshTokenExpired,
-      uxNotAllowed
-    });
-    var InteractionRequiredServerErrorMessage = [
-      interactionRequired,
-      consentRequired,
-      loginRequired,
-      badToken,
-      uxNotAllowed,
-      interruptedUser
-    ];
-    var InteractionRequiredAuthSubErrorMessage = [
-      "message_only",
-      "additional_action",
-      "basic_action",
-      "user_password_expired",
-      "consent_required",
-      "bad_token",
-      "ux_not_allowed",
-      "interrupted_user"
-    ];
-    var InteractionRequiredAuthError = class _InteractionRequiredAuthError extends AuthError {
-      constructor(errorCode, errorMessage, subError, timestamp, traceId, correlationId, claims, errorNo) {
-        super(errorCode, errorMessage, subError);
-        Object.setPrototypeOf(this, _InteractionRequiredAuthError.prototype);
-        this.timestamp = timestamp || "";
-        this.traceId = traceId || "";
-        this.correlationId = correlationId || "";
-        this.claims = claims || "";
-        this.name = "InteractionRequiredAuthError";
-        this.errorNo = errorNo;
-      }
-    };
-    function isInteractionRequiredError(errorCode, errorString, subError) {
-      const isInteractionRequiredErrorCode = !!errorCode && InteractionRequiredServerErrorMessage.indexOf(errorCode) > -1;
-      const isInteractionRequiredSubError = !!subError && InteractionRequiredAuthSubErrorMessage.indexOf(subError) > -1;
-      const isInteractionRequiredErrorDesc = !!errorString && InteractionRequiredServerErrorMessage.some((irErrorCode) => {
-        return errorString.indexOf(irErrorCode) > -1;
-      });
-      return isInteractionRequiredErrorCode || isInteractionRequiredErrorDesc || isInteractionRequiredSubError;
-    }
-    function createInteractionRequiredAuthError(errorCode, errorMessage) {
-      return new InteractionRequiredAuthError(errorCode, errorMessage);
-    }
-    function parseRequestState(base64Decode, state) {
-      if (!base64Decode) {
-        throw createClientAuthError(noCryptoObject);
-      }
-      if (!state) {
-        throw createClientAuthError(invalidState);
-      }
-      try {
-        const splitState = state.split(RESOURCE_DELIM);
-        const libraryState = splitState[0];
-        const userState = splitState.length > 1 ? splitState.slice(1).join(RESOURCE_DELIM) : "";
-        const libraryStateString = base64Decode(libraryState);
-        const libraryStateObj = JSON.parse(libraryStateString);
-        return {
-          userRequestState: userState || "",
-          libraryState: libraryStateObj
-        };
-      } catch (e) {
-        throw createClientAuthError(invalidState);
-      }
-    }
     function nowSeconds() {
       return Math.round((/* @__PURE__ */ new Date()).getTime() / 1e3);
     }
@@ -7429,170 +7644,6 @@ var require_msal_node = __commonJS({
     function delay(t, value) {
       return new Promise((resolve) => setTimeout(() => resolve(value), t));
     }
-    var NetworkClientSendPostRequestAsync = "networkClientSendPostRequestAsync";
-    var RefreshTokenClientExecutePostToTokenEndpoint = "refreshTokenClientExecutePostToTokenEndpoint";
-    var AuthorizationCodeClientExecutePostToTokenEndpoint = "authorizationCodeClientExecutePostToTokenEndpoint";
-    var RefreshTokenClientExecuteTokenRequest = "refreshTokenClientExecuteTokenRequest";
-    var RefreshTokenClientAcquireToken = "refreshTokenClientAcquireToken";
-    var RefreshTokenClientAcquireTokenWithCachedRefreshToken = "refreshTokenClientAcquireTokenWithCachedRefreshToken";
-    var RefreshTokenClientCreateTokenRequestBody = "refreshTokenClientCreateTokenRequestBody";
-    var SilentFlowClientGenerateResultFromCacheRecord = "silentFlowClientGenerateResultFromCacheRecord";
-    var AuthClientExecuteTokenRequest = "authClientExecuteTokenRequest";
-    var AuthClientCreateTokenRequestBody = "authClientCreateTokenRequestBody";
-    var UpdateTokenEndpointAuthority = "updateTokenEndpointAuthority";
-    var PopTokenGenerateCnf = "popTokenGenerateCnf";
-    var HandleServerTokenResponse = "handleServerTokenResponse";
-    var AuthorityResolveEndpointsAsync = "authorityResolveEndpointsAsync";
-    var AuthorityGetCloudDiscoveryMetadataFromNetwork = "authorityGetCloudDiscoveryMetadataFromNetwork";
-    var AuthorityUpdateCloudDiscoveryMetadata = "authorityUpdateCloudDiscoveryMetadata";
-    var AuthorityGetEndpointMetadataFromNetwork = "authorityGetEndpointMetadataFromNetwork";
-    var AuthorityUpdateEndpointMetadata = "authorityUpdateEndpointMetadata";
-    var AuthorityUpdateMetadataWithRegionalInformation = "authorityUpdateMetadataWithRegionalInformation";
-    var RegionDiscoveryDetectRegion = "regionDiscoveryDetectRegion";
-    var RegionDiscoveryGetRegionFromIMDS = "regionDiscoveryGetRegionFromIMDS";
-    var RegionDiscoveryGetCurrentVersion = "regionDiscoveryGetCurrentVersion";
-    var CacheManagerGetRefreshToken = "cacheManagerGetRefreshToken";
-    var invoke = (callback, eventName, logger, telemetryClient, correlationId) => {
-      return (...args) => {
-        logger.trace(`Executing function '${eventName}'`, correlationId);
-        const inProgressEvent = telemetryClient.startMeasurement(eventName, correlationId);
-        if (correlationId) {
-          telemetryClient.incrementFields({ [`ext.${eventName}CallCount`]: 1 }, correlationId);
-        }
-        try {
-          const result = callback(...args);
-          inProgressEvent.end({
-            success: true
-          });
-          logger.trace(`Returning result from '${eventName}'`, correlationId);
-          return result;
-        } catch (e) {
-          logger.trace(`Error occurred in '${eventName}'`, correlationId);
-          try {
-            logger.trace(JSON.stringify(e), correlationId);
-          } catch (e2) {
-            logger.trace("Unable to print error message.", correlationId);
-          }
-          inProgressEvent.end({
-            success: false
-          }, e);
-          throw e;
-        }
-      };
-    };
-    var invokeAsync = (callback, eventName, logger, telemetryClient, correlationId) => {
-      return (...args) => {
-        logger.trace(`Executing function '${eventName}'`, correlationId);
-        const inProgressEvent = telemetryClient.startMeasurement(eventName, correlationId);
-        if (correlationId) {
-          telemetryClient.incrementFields({ [`ext.${eventName}CallCount`]: 1 }, correlationId);
-        }
-        return callback(...args).then((response) => {
-          logger.trace(`Returning result from '${eventName}'`, correlationId);
-          inProgressEvent.end({
-            success: true
-          });
-          return response;
-        }).catch((e) => {
-          logger.trace(`Error occurred in '${eventName}'`, correlationId);
-          try {
-            logger.trace(JSON.stringify(e), correlationId);
-          } catch (e2) {
-            logger.trace("Unable to print error message.", correlationId);
-          }
-          inProgressEvent.end({
-            success: false
-          }, e);
-          throw e;
-        });
-      };
-    };
-    var KeyLocation = {
-      SW: "sw"
-    };
-    var PopTokenGenerator = class {
-      constructor(cryptoUtils, performanceClient) {
-        this.cryptoUtils = cryptoUtils;
-        this.performanceClient = performanceClient;
-      }
-      /**
-       * Generates the req_cnf validated at the RP in the POP protocol for SHR parameters
-       * and returns an object containing the keyid, the full req_cnf string and the req_cnf string hash
-       * @param request
-       * @returns
-       */
-      async generateCnf(request, logger) {
-        const reqCnf = await invokeAsync(this.generateKid.bind(this), PopTokenGenerateCnf, logger, this.performanceClient, request.correlationId)(request);
-        const reqCnfString = this.cryptoUtils.base64UrlEncode(JSON.stringify(reqCnf));
-        return {
-          kid: reqCnf.kid,
-          reqCnfString
-        };
-      }
-      /**
-       * Generates key_id for a SHR token request
-       * @param request
-       * @returns
-       */
-      async generateKid(request) {
-        const kidThumbprint = await this.cryptoUtils.getPublicKeyThumbprint(request);
-        return {
-          kid: kidThumbprint,
-          xms_ksl: KeyLocation.SW
-        };
-      }
-      /**
-       * Signs the POP access_token with the local generated key-pair
-       * @param accessToken
-       * @param request
-       * @returns
-       */
-      async signPopToken(accessToken, keyId, request) {
-        return this.signPayload(accessToken, keyId, request);
-      }
-      /**
-       * Utility function to generate the signed JWT for an access_token
-       * @param payload
-       * @param kid
-       * @param request
-       * @param claims
-       * @returns
-       */
-      async signPayload(payload, keyId, request, claims) {
-        const { resourceRequestMethod, resourceRequestUri, shrClaims, shrNonce, shrOptions } = request;
-        const resourceUrlString = resourceRequestUri ? new UrlString(resourceRequestUri) : void 0;
-        const resourceUrlComponents = resourceUrlString?.getUrlComponents();
-        return this.cryptoUtils.signJwt({
-          at: payload,
-          ts: nowSeconds(),
-          m: resourceRequestMethod?.toUpperCase(),
-          u: resourceUrlComponents?.HostNameAndPort,
-          nonce: shrNonce || this.cryptoUtils.createNewGuid(),
-          p: resourceUrlComponents?.AbsolutePath,
-          q: resourceUrlComponents?.QueryString ? [[], resourceUrlComponents.QueryString] : void 0,
-          client_claims: shrClaims || void 0,
-          ...claims
-        }, keyId, shrOptions, request.correlationId);
-      }
-    };
-    var TokenCacheContext = class {
-      constructor(tokenCache, hasChanged) {
-        this.cache = tokenCache;
-        this.hasChanged = hasChanged;
-      }
-      /**
-       * boolean which indicates the changes in cache
-       */
-      get cacheHasChanged() {
-        return this.hasChanged;
-      }
-      /**
-       * function to retrieve the token cache
-       */
-      get tokenCache() {
-        return this.cache;
-      }
-    };
     function createIdTokenEntity(homeAccountId, environment, idToken, clientId, tenantId) {
       const idTokenEntity = {
         credentialType: CredentialType.ID_TOKEN,
@@ -7744,6 +7795,244 @@ var require_msal_node = __commonJS({
     function isAuthorityMetadataExpired(metadata) {
       return metadata.expiresAt <= nowSeconds();
     }
+    var NetworkClientSendPostRequestAsync = "networkClientSendPostRequestAsync";
+    var RefreshTokenClientExecutePostToTokenEndpoint = "refreshTokenClientExecutePostToTokenEndpoint";
+    var AuthorizationCodeClientExecutePostToTokenEndpoint = "authorizationCodeClientExecutePostToTokenEndpoint";
+    var RefreshTokenClientExecuteTokenRequest = "refreshTokenClientExecuteTokenRequest";
+    var RefreshTokenClientAcquireToken = "refreshTokenClientAcquireToken";
+    var RefreshTokenClientAcquireTokenWithCachedRefreshToken = "refreshTokenClientAcquireTokenWithCachedRefreshToken";
+    var RefreshTokenClientCreateTokenRequestBody = "refreshTokenClientCreateTokenRequestBody";
+    var SilentFlowClientGenerateResultFromCacheRecord = "silentFlowClientGenerateResultFromCacheRecord";
+    var AuthClientExecuteTokenRequest = "authClientExecuteTokenRequest";
+    var AuthClientCreateTokenRequestBody = "authClientCreateTokenRequestBody";
+    var UpdateTokenEndpointAuthority = "updateTokenEndpointAuthority";
+    var PopTokenGenerateCnf = "popTokenGenerateCnf";
+    var HandleServerTokenResponse = "handleServerTokenResponse";
+    var AuthorityResolveEndpointsAsync = "authorityResolveEndpointsAsync";
+    var AuthorityGetCloudDiscoveryMetadataFromNetwork = "authorityGetCloudDiscoveryMetadataFromNetwork";
+    var AuthorityUpdateCloudDiscoveryMetadata = "authorityUpdateCloudDiscoveryMetadata";
+    var AuthorityGetEndpointMetadataFromNetwork = "authorityGetEndpointMetadataFromNetwork";
+    var AuthorityUpdateEndpointMetadata = "authorityUpdateEndpointMetadata";
+    var AuthorityUpdateMetadataWithRegionalInformation = "authorityUpdateMetadataWithRegionalInformation";
+    var RegionDiscoveryDetectRegion = "regionDiscoveryDetectRegion";
+    var RegionDiscoveryGetRegionFromIMDS = "regionDiscoveryGetRegionFromIMDS";
+    var RegionDiscoveryGetCurrentVersion = "regionDiscoveryGetCurrentVersion";
+    var CacheManagerGetRefreshToken = "cacheManagerGetRefreshToken";
+    var invoke = (callback, eventName, logger, telemetryClient, correlationId) => {
+      return (...args) => {
+        logger.trace(`Executing function '${eventName}'`, correlationId);
+        const inProgressEvent = telemetryClient.startMeasurement(eventName, correlationId);
+        if (correlationId) {
+          telemetryClient.incrementFields({ [`ext.${eventName}CallCount`]: 1 }, correlationId);
+        }
+        try {
+          const result = callback(...args);
+          inProgressEvent.end({
+            success: true
+          });
+          logger.trace(`Returning result from '${eventName}'`, correlationId);
+          return result;
+        } catch (e) {
+          logger.trace(`Error occurred in '${eventName}'`, correlationId);
+          try {
+            logger.trace(JSON.stringify(e), correlationId);
+          } catch (e2) {
+            logger.trace("Unable to print error message.", correlationId);
+          }
+          inProgressEvent.end({
+            success: false
+          }, e);
+          throw e;
+        }
+      };
+    };
+    var invokeAsync = (callback, eventName, logger, telemetryClient, correlationId) => {
+      return (...args) => {
+        logger.trace(`Executing function '${eventName}'`, correlationId);
+        const inProgressEvent = telemetryClient.startMeasurement(eventName, correlationId);
+        if (correlationId) {
+          telemetryClient.incrementFields({ [`ext.${eventName}CallCount`]: 1 }, correlationId);
+        }
+        return callback(...args).then((response) => {
+          logger.trace(`Returning result from '${eventName}'`, correlationId);
+          inProgressEvent.end({
+            success: true
+          });
+          return response;
+        }).catch((e) => {
+          logger.trace(`Error occurred in '${eventName}'`, correlationId);
+          try {
+            logger.trace(JSON.stringify(e), correlationId);
+          } catch (e2) {
+            logger.trace("Unable to print error message.", correlationId);
+          }
+          inProgressEvent.end({
+            success: false
+          }, e);
+          throw e;
+        });
+      };
+    };
+    var KeyLocation = {
+      SW: "sw"
+    };
+    var PopTokenGenerator = class {
+      constructor(cryptoUtils, performanceClient) {
+        this.cryptoUtils = cryptoUtils;
+        this.performanceClient = performanceClient;
+      }
+      /**
+       * Generates the req_cnf validated at the RP in the POP protocol for SHR parameters
+       * and returns an object containing the keyid, the full req_cnf string and the req_cnf string hash
+       * @param request
+       * @returns
+       */
+      async generateCnf(request, logger) {
+        const reqCnf = await invokeAsync(this.generateKid.bind(this), PopTokenGenerateCnf, logger, this.performanceClient, request.correlationId)(request);
+        const reqCnfString = this.cryptoUtils.base64UrlEncode(JSON.stringify(reqCnf));
+        return {
+          kid: reqCnf.kid,
+          reqCnfString
+        };
+      }
+      /**
+       * Generates key_id for a SHR token request
+       * @param request
+       * @returns
+       */
+      async generateKid(request) {
+        const kidThumbprint = await this.cryptoUtils.getPublicKeyThumbprint(request);
+        return {
+          kid: kidThumbprint,
+          xms_ksl: KeyLocation.SW
+        };
+      }
+      /**
+       * Signs the POP access_token with the local generated key-pair
+       * @param accessToken
+       * @param request
+       * @returns
+       */
+      async signPopToken(accessToken, keyId, request) {
+        return this.signPayload(accessToken, keyId, request);
+      }
+      /**
+       * Utility function to generate the signed JWT for an access_token
+       * @param payload
+       * @param kid
+       * @param request
+       * @param claims
+       * @returns
+       */
+      async signPayload(payload, keyId, request, claims) {
+        const { resourceRequestMethod, resourceRequestUri, shrClaims, shrNonce, shrOptions } = request;
+        const resourceUrlString = resourceRequestUri ? new UrlString(resourceRequestUri) : void 0;
+        const resourceUrlComponents = resourceUrlString?.getUrlComponents();
+        return this.cryptoUtils.signJwt({
+          at: payload,
+          ts: nowSeconds(),
+          m: resourceRequestMethod?.toUpperCase(),
+          u: resourceUrlComponents?.HostNameAndPort,
+          nonce: shrNonce || this.cryptoUtils.createNewGuid(),
+          p: resourceUrlComponents?.AbsolutePath,
+          q: resourceUrlComponents?.QueryString ? [[], resourceUrlComponents.QueryString] : void 0,
+          client_claims: shrClaims || void 0,
+          ...claims
+        }, keyId, shrOptions, request.correlationId);
+      }
+    };
+    var noTokensFound = "no_tokens_found";
+    var nativeAccountUnavailable = "native_account_unavailable";
+    var refreshTokenExpired = "refresh_token_expired";
+    var uxNotAllowed = "ux_not_allowed";
+    var interactionRequired = "interaction_required";
+    var consentRequired = "consent_required";
+    var loginRequired = "login_required";
+    var badToken = "bad_token";
+    var interruptedUser = "interrupted_user";
+    var InteractionRequiredAuthErrorCodes = /* @__PURE__ */ Object.freeze({
+      __proto__: null,
+      badToken,
+      consentRequired,
+      interactionRequired,
+      interruptedUser,
+      loginRequired,
+      nativeAccountUnavailable,
+      noTokensFound,
+      refreshTokenExpired,
+      uxNotAllowed
+    });
+    var InteractionRequiredServerErrorMessage = [
+      interactionRequired,
+      consentRequired,
+      loginRequired,
+      badToken,
+      uxNotAllowed,
+      interruptedUser
+    ];
+    var InteractionRequiredAuthSubErrorMessage = [
+      "message_only",
+      "additional_action",
+      "basic_action",
+      "user_password_expired",
+      "consent_required",
+      "bad_token",
+      "ux_not_allowed",
+      "interrupted_user"
+    ];
+    var InteractionRequiredAuthError = class _InteractionRequiredAuthError extends AuthError {
+      constructor(errorCode, errorMessage, subError, timestamp, traceId, correlationId, claims, errorNo) {
+        super(errorCode, errorMessage, subError);
+        Object.setPrototypeOf(this, _InteractionRequiredAuthError.prototype);
+        this.timestamp = timestamp || "";
+        this.traceId = traceId || "";
+        this.correlationId = correlationId || "";
+        this.claims = claims || "";
+        this.name = "InteractionRequiredAuthError";
+        this.errorNo = errorNo;
+      }
+    };
+    function isInteractionRequiredError(errorCode, errorString, subError) {
+      const isInteractionRequiredErrorCode = !!errorCode && InteractionRequiredServerErrorMessage.indexOf(errorCode) > -1;
+      const isInteractionRequiredSubError = !!subError && InteractionRequiredAuthSubErrorMessage.indexOf(subError) > -1;
+      const isInteractionRequiredErrorDesc = !!errorString && InteractionRequiredServerErrorMessage.some((irErrorCode) => {
+        return errorString.indexOf(irErrorCode) > -1;
+      });
+      return isInteractionRequiredErrorCode || isInteractionRequiredErrorDesc || isInteractionRequiredSubError;
+    }
+    function createInteractionRequiredAuthError(errorCode, errorMessage) {
+      return new InteractionRequiredAuthError(errorCode, errorMessage);
+    }
+    var ServerError = class _ServerError extends AuthError {
+      constructor(errorCode, errorMessage, subError, errorNo, status) {
+        super(errorCode, errorMessage, subError);
+        this.name = "ServerError";
+        this.errorNo = errorNo;
+        this.status = status;
+        Object.setPrototypeOf(this, _ServerError.prototype);
+      }
+    };
+    function parseRequestState(base64Decode, state) {
+      if (!base64Decode) {
+        throw createClientAuthError(noCryptoObject);
+      }
+      if (!state) {
+        throw createClientAuthError(invalidState);
+      }
+      try {
+        const splitState = state.split(RESOURCE_DELIM);
+        const libraryState = splitState[0];
+        const userState = splitState.length > 1 ? splitState.slice(1).join(RESOURCE_DELIM) : "";
+        const libraryStateString = base64Decode(libraryState);
+        const libraryStateObj = JSON.parse(libraryStateString);
+        return {
+          userRequestState: userState || "",
+          libraryState: libraryStateObj
+        };
+      } catch (e) {
+        throw createClientAuthError(invalidState);
+      }
+    }
     var ResponseHandler = class _ResponseHandler {
       constructor(clientId, cacheStorage, cryptoObj, logger, performanceClient, serializableCache, persistencePlugin) {
         this.clientId = clientId;
@@ -7867,7 +8156,8 @@ ${serverError}`, correlationId);
             authCodePayload,
             void 0,
             // nativeAccountId
-            this.logger
+            this.logger,
+            this.performanceClient
           );
         }
         let cachedAccessToken = null;
@@ -7880,6 +8170,10 @@ ${serverError}`, correlationId);
           const extendedTokenExpirationSeconds = tokenExpirationSeconds + extExpiresIn;
           const refreshOnSeconds = refreshIn && refreshIn > 0 ? reqTimestamp + refreshIn : void 0;
           cachedAccessToken = createAccessTokenEntity(this.homeAccountIdentifier, env, serverTokenResponse.access_token, this.clientId, claimsTenantId || authority.tenant || "", responseScopes.printScopes(), tokenExpirationSeconds, extendedTokenExpirationSeconds, this.cryptoObj.base64Decode, refreshOnSeconds, serverTokenResponse.token_type, userAssertionHash, serverTokenResponse.key_id);
+          const resource = request.resource || null;
+          if (resource) {
+            cachedAccessToken.resource = resource;
+          }
         }
         let cachedRefreshToken = null;
         if (serverTokenResponse.refresh_token) {
@@ -7982,16 +8276,15 @@ ${serverError}`, correlationId);
         };
       }
     };
-    function buildAccountToCache(cacheStorage, authority, homeAccountId, base64Decode, correlationId, idTokenClaims, clientInfo, environment, claimsTenantId, authCodePayload, nativeAccountId, logger) {
+    function buildAccountToCache(cacheStorage, authority, homeAccountId, base64Decode, correlationId, idTokenClaims, clientInfo, environment, claimsTenantId, authCodePayload, nativeAccountId, logger, performanceClient) {
       logger?.verbose("setCachedAccount called", correlationId);
-      const accountKeys = cacheStorage.getAccountKeys();
-      const baseAccountKey = accountKeys.find((accountKey) => {
-        return accountKey.startsWith(homeAccountId);
-      });
-      let cachedAccount = null;
-      if (baseAccountKey) {
-        cachedAccount = cacheStorage.getAccount(baseAccountKey, correlationId);
+      const accountEnvironment = environment || authority.getPreferredCache();
+      const matchedAccounts = cacheStorage.getAccountsFilteredBy({ homeAccountId, environment: accountEnvironment }, correlationId);
+      performanceClient?.addFields({ cacheMatchedAccounts: matchedAccounts.length }, correlationId);
+      if (matchedAccounts.length > 1) {
+        logger?.warning("Multiple base accounts matched homeAccountId. Ignoring cached account and creating a new base account.", correlationId);
       }
+      const cachedAccount = matchedAccounts.length === 1 ? matchedAccounts[0] : null;
       const baseAccount = cachedAccount || createAccountEntity({
         homeAccountId,
         idTokenClaims,
@@ -9085,6 +9378,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
           addRedirectUri(parameters, request.redirectUri);
         }
         addScopes(parameters, request.scopes, true, this.oidcDefaultScopes);
+        addResource(parameters, request.resource);
         addAuthorizationCode(parameters, request.code);
         addLibraryInfo(parameters, this.config.libraryInfo);
         addApplicationTelemetry(parameters, this.config.telemetry.application);
@@ -9121,9 +9415,6 @@ Error Description: '${typedError.message}'`, this.correlationId);
           } else {
             throw createClientConfigurationError(missingSshJwk);
           }
-        }
-        if (!StringUtils.isEmptyObj(request.claims) || this.config.authOptions.clientCapabilities && this.config.authOptions.clientCapabilities.length > 0) {
-          addClaims(parameters, request.claims, this.config.authOptions.clientCapabilities);
         }
         let ccsCred = void 0;
         if (request.clientInfo) {
@@ -9166,6 +9457,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
           });
         }
         instrumentBrokerParams(parameters, request.correlationId, this.performanceClient);
+        addClaims(parameters, request.claims, this.config.authOptions.clientCapabilities, request.skipBrokerClaims);
         return mapToQueryString(parameters);
       }
       /**
@@ -9354,9 +9646,6 @@ Error Description: '${typedError.message}'`, this.correlationId);
             throw createClientConfigurationError(missingSshJwk);
           }
         }
-        if (!StringUtils.isEmptyObj(request.claims) || this.config.authOptions.clientCapabilities && this.config.authOptions.clientCapabilities.length > 0) {
-          addClaims(parameters, request.claims, this.config.authOptions.clientCapabilities);
-        }
         if (this.config.systemOptions.preventCorsPreflight && request.ccsCredential) {
           switch (request.ccsCredential.type) {
             case CcsCredentialType.HOME_ACCOUNT_ID:
@@ -9381,6 +9670,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
           });
         }
         instrumentBrokerParams(parameters, request.correlationId, this.performanceClient);
+        addClaims(parameters, request.claims, this.config.authOptions.clientCapabilities, request.skipBrokerClaims);
         return mapToQueryString(parameters);
       }
     };
@@ -9417,6 +9707,11 @@ Error Description: '${typedError.message}'`, this.correlationId);
         } else if (wasClockTurnedBack(cachedAccessToken.cachedAt) || isTokenExpired(cachedAccessToken.expiresOn, this.config.systemOptions.tokenRenewalOffsetSeconds)) {
           this.setCacheOutcome(CacheOutcome.CACHED_ACCESS_TOKEN_EXPIRED, request.correlationId);
           throw createClientAuthError(tokenRefreshRequired);
+        } else if (request.resource) {
+          if (cachedAccessToken.resource !== request.resource) {
+            this.setCacheOutcome(CacheOutcome.NO_CACHED_ACCESS_TOKEN, request.correlationId);
+            throw createClientAuthError(tokenRefreshRequired);
+          }
         } else if (cachedAccessToken.refreshOn && isTokenExpired(cachedAccessToken.refreshOn, 0)) {
           lastCacheOutcome = CacheOutcome.PROACTIVELY_REFRESHED;
         }
@@ -9474,10 +9769,12 @@ Error Description: '${typedError.message}'`, this.correlationId);
         ...request.extraScopesToConsent || []
       ];
       addScopes(parameters, requestScopes, true, authOptions.authority.options.OIDCOptions?.defaultScopes);
+      addResource(parameters, request.resource);
       addRedirectUri(parameters, request.redirectUri);
       addCorrelationId(parameters, correlationId);
       addResponseMode(parameters, request.responseMode);
       addClientInfo(parameters);
+      addCliData(parameters);
       if (request.prompt) {
         addPrompt(parameters, request.prompt);
       }
@@ -9541,12 +9838,10 @@ Error Description: '${typedError.message}'`, this.correlationId);
       if (request.state) {
         addState(parameters, request.state);
       }
-      if (request.claims || authOptions.clientCapabilities && authOptions.clientCapabilities.length > 0) {
-        addClaims(parameters, request.claims, authOptions.clientCapabilities);
-      }
       if (request.embeddedClientId) {
         addBrokerParameters(parameters, authOptions.clientId, authOptions.redirectUri);
       }
+      addClaims(parameters, request.claims, authOptions.clientCapabilities, request.skipBrokerClaims);
       if (authOptions.instanceAware && (!request.extraQueryParameters || !Object.keys(request.extraQueryParameters).includes(INSTANCE_AWARE))) {
         addInstanceAware(parameters);
       }
@@ -9561,6 +9856,23 @@ Error Description: '${typedError.message}'`, this.correlationId);
     }
     function extractLoginHint(account) {
       return account.loginHint || account.idTokenClaims?.login_hint || null;
+    }
+    function enforceResourceParameter(isMcp, request) {
+      if (!isMcp) {
+        return;
+      }
+      if (request.resource && (containsResourceParam(request.extraParameters) || containsResourceParam(request.extraQueryParameters))) {
+        throw createClientAuthError(misplacedResourceParam);
+      }
+      if (!request.resource) {
+        throw createClientAuthError(resourceParameterRequired);
+      }
+    }
+    function containsResourceParam(params) {
+      if (!params) {
+        return false;
+      }
+      return Object.prototype.hasOwnProperty.call(params, "resource");
     }
     var unexpectedError = "unexpected_error";
     var postRequestFailed = "post_request_failed";
@@ -9881,6 +10193,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
               keyId: serializedAT.key_id,
               tokenType: serializedAT.token_type,
               userAssertionHash: serializedAT.userAssertionHash,
+              resource: serializedAT.resource,
               lastUpdatedAt: Date.now().toString()
             };
             atObjects[key] = accessToken;
@@ -10367,7 +10680,8 @@ Error Description: '${typedError.message}'`, this.correlationId);
       azureCloudOptions: {
         azureCloudInstance: AzureCloudInstance.None,
         tenant: ""
-      }
+      },
+      isMcp: false
     };
     var DEFAULT_LOGGER_OPTIONS = {
       loggerCallback: () => {
@@ -11390,7 +11704,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
       }
     };
     var name = "@azure/msal-node";
-    var version2 = "5.0.6";
+    var version2 = "5.1.4";
     var BaseClient = class {
       constructor(configuration) {
         this.config = buildClientConfiguration(configuration);
@@ -11773,7 +12087,8 @@ Error Description: '${typedError.message}'`, this.correlationId);
             clientId: this.config.auth.clientId,
             authority: discoveredAuthority,
             clientCapabilities: this.config.auth.clientCapabilities,
-            redirectUri
+            redirectUri,
+            isMcp: this.config.auth.isMcp
           },
           loggerOptions: {
             logLevel: this.config.system.loggerOptions.logLevel,
@@ -12162,6 +12477,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
        */
       async acquireTokenByDeviceCode(request) {
         this.logger.info("acquireTokenByDeviceCode called", request.correlationId || "");
+        enforceResourceParameter(this.config.auth.isMcp, request);
         const validRequest = Object.assign(request, await this.initializeBaseRequest(request));
         const serverTelemetryManager = this.initializeServerTelemetryManager(ApiId.acquireTokenByDeviceCode, validRequest.correlationId);
         try {
@@ -12184,6 +12500,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
       async acquireTokenInteractive(request) {
         const correlationId = request.correlationId || this.cryptoProvider.createNewGuid();
         this.logger.trace("acquireTokenInteractive called", correlationId);
+        enforceResourceParameter(this.config.auth.isMcp, request);
         const { openBrowser, successTemplate, errorTemplate, windowHandle, loopbackClient: customLoopbackClient, ...remainingProperties } = request;
         if (this.nativeBrokerPlugin) {
           const brokerRequest = {
@@ -12259,6 +12576,7 @@ Error Description: '${typedError.message}'`, this.correlationId);
       async acquireTokenSilent(request) {
         const correlationId = request.correlationId || this.cryptoProvider.createNewGuid();
         this.logger.trace("acquireTokenSilent called", correlationId);
+        enforceResourceParameter(this.config.auth.isMcp, request);
         if (this.nativeBrokerPlugin) {
           const brokerRequest = {
             ...request,
@@ -12284,6 +12602,22 @@ Error Description: '${typedError.message}'`, this.correlationId);
           request.redirectUri = "";
         }
         return super.acquireTokenSilent(request);
+      }
+      /**
+       * Acquires a token by exchanging the authorization code received from the first step of OAuth 2.0 Authorization Code Flow.
+       * In MCP mode, a resource parameter is required on the request.
+       */
+      async acquireTokenByCode(request, authCodePayLoad) {
+        enforceResourceParameter(this.config.auth.isMcp, request);
+        return super.acquireTokenByCode(request, authCodePayLoad);
+      }
+      /**
+       * Acquires a token by exchanging the refresh token provided for a new set of tokens.
+       * In MCP mode, a resource parameter is required on the request.
+       */
+      async acquireTokenByRefreshToken(request) {
+        enforceResourceParameter(this.config.auth.isMcp, request);
+        return super.acquireTokenByRefreshToken(request);
       }
       /**
        * Removes cache artifacts associated with the given account
@@ -15255,6 +15589,6 @@ safe-buffer/index.js:
   (*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> *)
 
 @azure/msal-node/lib/msal-node.cjs:
-  (*! @azure/msal-node v5.0.6 2026-03-02 *)
-  (*! @azure/msal-common v16.2.0 2026-03-02 *)
+  (*! @azure/msal-node v5.1.4 2026-04-21 *)
+  (*! @azure/msal-common v16.5.1 2026-04-21 *)
 */

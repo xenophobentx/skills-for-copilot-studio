@@ -220,6 +220,8 @@ var require_shared_utils = __commonJS({
 // src/msal-cache.js
 var require_msal_cache = __commonJS({
   "src/msal-cache.js"(exports2, module2) {
+    var crypto4 = require("crypto");
+    var fs7 = require("fs");
     var path3 = require("path");
     var os3 = require("os");
     function stubMissingKeytarOnWindows() {
@@ -251,18 +253,260 @@ var require_msal_cache = __commonJS({
     var { PersistenceCreator, PersistenceCachePlugin, DataProtectionScope } = require("@azure/msal-node-extensions");
     var CACHE_DIR = path3.join(os3.homedir(), ".copilot-studio-cli");
     var SERVICE_NAME = "copilot-studio-cli";
-    async function createCachePlugin(accountName) {
-      const cachePath = path3.join(CACHE_DIR, `${accountName}.cache.json`);
-      const persistence = await PersistenceCreator.createPersistence({
-        cachePath,
-        dataProtectionScope: DataProtectionScope.CurrentUser,
-        serviceName: SERVICE_NAME,
-        accountName,
-        usePlaintextFileOnLinux: true
-      });
-      return new PersistenceCachePlugin(persistence);
+    var LOCK_STALE_MS = 3e4;
+    var LOCK_WAIT_MS = 1e4;
+    var LOCK_POLL_MS = 50;
+    var LINUX_SECRET_SERVICE_UNAVAILABLE_PATTERNS = [
+      /org\.freedesktop\.secrets was not provided/i,
+      /cannot autolaunch d-bus/i,
+      /no such interface[\s\S]*secret/i
+    ];
+    function isSecretServiceUnavailableError(e) {
+      const message = e && e.message ? String(e.message) : "";
+      return LINUX_SECRET_SERVICE_UNAVAILABLE_PATTERNS.some((re) => re.test(message));
     }
-    module2.exports = { createCachePlugin };
+    var TRANSIENT_PERSISTENCE_ERROR_PATTERNS = [
+      /\b(?:ENOENT|EPERM|EBUSY|EACCES)\b/,
+      /could not be read/i,
+      /is different\s+from data read/i,
+      /already exists in the keychain/i,
+      /could not be found in the keychain/i,
+      /may have been deleted from the keychain/i
+    ];
+    function isTransientPersistenceError(e) {
+      const message = e && e.message ? String(e.message) : "";
+      return TRANSIENT_PERSISTENCE_ERROR_PATTERNS.some((re) => re.test(message));
+    }
+    function isPidDead(pid) {
+      if (!Number.isInteger(pid) || pid <= 0) return false;
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (e) {
+        return e.code === "ESRCH";
+      }
+    }
+    function restoreStolenLock(takeoverPath, lockPath, contents) {
+      try {
+        fs7.linkSync(takeoverPath, lockPath);
+      } catch (linkErr) {
+        if (linkErr.code === "EEXIST") return;
+        try {
+          fs7.writeFileSync(lockPath, contents, { flag: "wx", mode: 384 });
+        } catch {
+        }
+      }
+    }
+    async function withPersistenceLock(lockPath, fn, {
+      waitMs = LOCK_WAIT_MS,
+      staleMs = LOCK_STALE_MS,
+      pollMs = LOCK_POLL_MS,
+      platform: platform2 = process.platform,
+      warn: warn2,
+      sleep: sleep2 = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = {}) {
+      const deadline = Date.now() + waitMs;
+      const token = `${process.pid}:${crypto4.randomBytes(8).toString("hex")}`;
+      const isContention = (e) => {
+        if (e.code === "EEXIST") return e.syscall === "open";
+        if (platform2 === "win32" && e.code === "EBUSY") return true;
+        if (platform2 === "win32" && (e.code === "EPERM" || e.code === "EACCES")) {
+          try {
+            fs7.statSync(lockPath);
+            return true;
+          } catch (statErr) {
+            return statErr.code === "EPERM";
+          }
+        }
+        return false;
+      };
+      let fd;
+      let holdingLock = false;
+      for (; ; ) {
+        try {
+          fs7.mkdirSync(path3.dirname(lockPath), { recursive: true, mode: 448 });
+          fd = fs7.openSync(lockPath, "wx", 384);
+          try {
+            fs7.writeSync(fd, token);
+          } catch (writeErr) {
+            try {
+              fs7.closeSync(fd);
+            } catch {
+            }
+            fd = void 0;
+            try {
+              fs7.unlinkSync(lockPath);
+            } catch {
+            }
+            throw writeErr;
+          }
+          holdingLock = true;
+          break;
+        } catch (e) {
+          if (!isContention(e)) {
+            if (typeof warn2 === "function") {
+              warn2(
+                `Could not acquire the persistence lock at ${lockPath} (${e.code || e.message}); continuing without it.`
+              );
+            }
+            fd = void 0;
+            break;
+          }
+          try {
+            const lockContents = fs7.readFileSync(lockPath, "utf-8");
+            const holderPid = Number((/^(\d+):/.exec(lockContents) || [])[1]);
+            const stale = isPidDead(holderPid) || Date.now() - fs7.statSync(lockPath).mtimeMs > staleMs;
+            if (stale) {
+              const takeoverPath = `${lockPath}.stale-${process.pid}-${crypto4.randomBytes(4).toString("hex")}`;
+              try {
+                fs7.renameSync(lockPath, takeoverPath);
+                try {
+                  let movedContents;
+                  try {
+                    movedContents = fs7.readFileSync(takeoverPath, "utf-8");
+                  } catch {
+                    movedContents = void 0;
+                  }
+                  if (movedContents !== void 0 && movedContents !== lockContents) {
+                    restoreStolenLock(takeoverPath, lockPath, movedContents);
+                  }
+                } finally {
+                  try {
+                    fs7.unlinkSync(takeoverPath);
+                  } catch {
+                  }
+                }
+              } catch {
+              }
+            }
+          } catch {
+          }
+        }
+        if (Date.now() >= deadline) {
+          fd = void 0;
+          if (typeof warn2 === "function") {
+            warn2(`Waited ${waitMs} ms for the persistence lock at ${lockPath}; continuing without it.`);
+          }
+          break;
+        }
+        await sleep2(pollMs + Math.random() * pollMs);
+      }
+      const heartbeat = holdingLock ? setInterval(
+        () => {
+          try {
+            const now = /* @__PURE__ */ new Date();
+            fs7.utimesSync(lockPath, now, now);
+          } catch {
+          }
+        },
+        Math.max(50, Math.floor(staleMs / 3))
+      ) : null;
+      if (heartbeat && heartbeat.unref) heartbeat.unref();
+      try {
+        return await fn();
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        if (holdingLock && fd !== void 0) {
+          try {
+            fs7.closeSync(fd);
+          } catch {
+          }
+          try {
+            if (fs7.readFileSync(lockPath, "utf-8") === token) fs7.unlinkSync(lockPath);
+          } catch {
+          }
+        }
+      }
+    }
+    async function createPersistenceWithRetry(creator, options, {
+      attempts = 4,
+      plaintextAttempts = 3,
+      delayMs = 100,
+      platform: platform2 = process.platform,
+      sleep: sleep2 = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = {}) {
+      const allowPlaintext = platform2 === "linux" && Boolean(options.usePlaintextFileOnLinux);
+      const total = attempts + (allowPlaintext ? plaintextAttempts : 0);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await creator.createPersistence({
+            ...options,
+            usePlaintextFileOnLinux: allowPlaintext && attempt > attempts
+          });
+        } catch (e) {
+          if (!e || e.errorCode !== "CachePersistenceError" || attempt >= total) throw e;
+          const transient = isTransientPersistenceError(e);
+          const encryptedStageOnLinux = platform2 === "linux" && attempt <= attempts;
+          if (encryptedStageOnLinux && (!transient || isSecretServiceUnavailableError(e))) {
+            if (!allowPlaintext) throw e;
+            attempt = attempts;
+            continue;
+          }
+          if (!transient) throw e;
+          const step = attempt >= attempts ? attempt - attempts + 1 : attempt;
+          await sleep2(delayMs * step + Math.random() * delayMs);
+        }
+      }
+    }
+    async function createCachePlugin(accountName, {
+      extensions,
+      warn: warn2 = (msg) => process.stderr.write(msg + "\n"),
+      lockPath,
+      cachePath,
+      ...retry
+    } = {}) {
+      const extensionsModule = extensions || {
+        PersistenceCreator,
+        PersistenceCachePlugin,
+        DataProtectionScope,
+        // Only needed to detect the Linux fallback below.
+        FilePersistence: require("@azure/msal-node-extensions").FilePersistence
+      };
+      if (!cachePath) cachePath = path3.join(CACHE_DIR, `${accountName}.cache.json`);
+      if (!lockPath) lockPath = path3.join(path3.dirname(cachePath), ".persistence.lock");
+      const persistence = await withPersistenceLock(
+        lockPath,
+        () => createPersistenceWithRetry(
+          extensionsModule.PersistenceCreator,
+          {
+            cachePath,
+            dataProtectionScope: extensionsModule.DataProtectionScope.CurrentUser,
+            serviceName: SERVICE_NAME,
+            accountName,
+            usePlaintextFileOnLinux: true
+          },
+          retry
+        ),
+        { ...retry, warn: warn2 }
+      );
+      const isPlaintextFallback = extensionsModule.FilePersistence ? persistence instanceof extensionsModule.FilePersistence : Boolean(
+        persistence && persistence.constructor && persistence.constructor.name === "FilePersistence"
+      );
+      if (isPlaintextFallback) {
+        tightenPlaintextPermissions(cachePath);
+        warn2(
+          `Encrypted token storage is unavailable on this machine (no usable keyring/libsecret). Falling back to a plaintext token cache at ${cachePath}; tokens are stored unencrypted.`
+        );
+      }
+      return new extensionsModule.PersistenceCachePlugin(persistence);
+    }
+    function tightenPlaintextPermissions(cachePath) {
+      try {
+        fs7.chmodSync(path3.dirname(cachePath), 448);
+      } catch {
+      }
+      try {
+        if (fs7.existsSync(cachePath)) fs7.chmodSync(cachePath, 384);
+      } catch {
+      }
+    }
+    module2.exports = {
+      createCachePlugin,
+      createPersistenceWithRetry,
+      isTransientPersistenceError,
+      withPersistenceLock,
+      tightenPlaintextPermissions
+    };
   }
 });
 
@@ -15001,6 +15245,7 @@ var { randomUUID } = require("crypto");
 var path2 = require("path");
 var fs6 = require("fs");
 var os2 = require("os");
+var { fileURLToPath: fileURLToPath2 } = require("url");
 var { log, die, sleep } = require_shared_utils();
 var {
   VSCODE_CLIENT_ID,
@@ -15237,6 +15482,8 @@ var LspClient = class {
     this._pipeServer = null;
     this._diagnostics = /* @__PURE__ */ new Map();
     this._onDiagnosticsCallback = null;
+    this._onExitCallback = null;
+    this.exitInfo = null;
   }
   async start() {
     if (this.running) return;
@@ -15271,10 +15518,14 @@ var LspClient = class {
     this.process.on("exit", (code, signal) => {
       log(`LSP process exited: code=${code}, signal=${signal}`);
       this.running = false;
+      this.exitInfo = `exited (code=${code}, signal=${signal})`;
+      if (this._onExitCallback) this._onExitCallback();
     });
     this.process.on("error", (err) => {
       log(`LSP process error: ${err.message}`);
       this.running = false;
+      this.exitInfo = `failed (${err.message})`;
+      if (this._onExitCallback) this._onExitCallback();
     });
     this._pipeSocket = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -15400,6 +15651,29 @@ function findMcsYmlFiles(dir, results = []) {
   }
   return results;
 }
+var CONFLICT_MARKER_RE = /^(<{7}|={7}|>{7})( |$)/;
+function findConflictMarkers(agentDir) {
+  const conflicts = [];
+  for (const file of findMcsYmlFiles(agentDir).sort()) {
+    let text;
+    try {
+      text = fs6.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const lines = [];
+    text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((line, i) => {
+      if (CONFLICT_MARKER_RE.test(line)) lines.push(i + 1);
+    });
+    if (lines.length > 0) {
+      conflicts.push({ file: path2.relative(agentDir, file).split(path2.sep).join("/"), lines });
+    }
+  }
+  return conflicts;
+}
+function formatConflicts(conflicts) {
+  return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
+}
 function openFilesForDiagnostics(client, filePaths) {
   const fileEvents = filePaths.map((filePath) => ({
     uri: toFileUri(filePath),
@@ -15407,6 +15681,7 @@ function openFilesForDiagnostics(client, filePaths) {
     // FileChangeType.Created
   }));
   client.sendNotification("workspace/didChangeWatchedFiles", { changes: fileEvents });
+  const unreadable = [];
   for (const filePath of filePaths) {
     const uri = toFileUri(filePath);
     let text = "";
@@ -15414,46 +15689,72 @@ function openFilesForDiagnostics(client, filePaths) {
       text = fs6.readFileSync(filePath, "utf8");
     } catch (e) {
       log(`[validate] Could not read ${filePath}: ${e.message}`);
+      unreadable.push({ filePath, error: e.message });
       continue;
     }
     client.sendNotification("textDocument/didOpen", {
       textDocument: { uri, languageId: "yaml", version: 1, text }
     });
   }
+  return unreadable;
 }
-function waitForDiagnostics(client, settleMs = 500, timeoutMs = 15e3) {
+function diagnosticsKey(uri) {
+  let p = uri.replace(/^file:\/\//, "");
+  try {
+    p = decodeURIComponent(p);
+  } catch {
+  }
+  if (os2.platform() === "win32") {
+    p = p.replace(/^\/([A-Za-z]:)/, "$1").replace(/\\/g, "/").toLowerCase();
+  }
+  return p;
+}
+function findFilesWithoutDiagnostics(filePaths, diagnosticsMap) {
+  const received = /* @__PURE__ */ new Set();
+  for (const uri of diagnosticsMap.keys()) received.add(diagnosticsKey(uri));
+  return filePaths.filter((filePath) => !received.has(diagnosticsKey(toFileUri(filePath))));
+}
+function waitForDiagnostics(client, filePaths, settleMs = 500, timeoutMs = 15e3) {
   return new Promise((resolve) => {
     let settleTimer = null;
     let hardTimer = null;
     let resolved = false;
-    function done() {
+    function done(reason) {
       if (resolved) return;
       resolved = true;
       client._onDiagnosticsCallback = null;
+      client._onExitCallback = null;
       if (settleTimer) clearTimeout(settleTimer);
       if (hardTimer) clearTimeout(hardTimer);
-      resolve(new Map(client._diagnostics));
+      resolve({ diagnostics: new Map(client._diagnostics), reason });
     }
     function resetSettle() {
       if (settleTimer) clearTimeout(settleTimer);
-      settleTimer = setTimeout(done, settleMs);
+      settleTimer = setTimeout(() => {
+        if (findFilesWithoutDiagnostics(filePaths, client._diagnostics).length === 0) done(null);
+      }, settleMs);
     }
     hardTimer = setTimeout(() => {
-      log("[validate] Diagnostics wait timed out, using current results");
-      done();
+      log("[validate] Diagnostics wait timed out");
+      done("timeout");
     }, timeoutMs);
     client._onDiagnosticsCallback = () => resetSettle();
+    client._onExitCallback = () => done("lsp-exited");
+    if (!client.running) done("lsp-exited");
+    else if (filePaths.length === 0) done(null);
   });
 }
 var SEVERITY_NAMES = { 1: "error", 2: "warning", 3: "information", 4: "hint" };
-function formatValidationOutput(diagnosticsMap, agentDir) {
+function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null) {
   let errorCount = 0, warningCount = 0, infoCount = 0;
   const files = [];
   for (const [uri, diags] of diagnosticsMap) {
     if (!diags || diags.length === 0) continue;
     let filePath = uri;
     try {
-      filePath = path2.relative(agentDir, decodeURIComponent(uri.replace(/^file:\/\/\//, "")));
+      const unc = process.platform === "win32" && uri.match(/^file:\/\/\/\/(.*)$/);
+      const localPath = unc ? "\\\\" + unc[1].split("/").map(decodeURIComponent).join("\\") : fileURLToPath2(uri);
+      filePath = path2.relative(agentDir, localPath);
     } catch {
     }
     const mapped = diags.map((d) => {
@@ -15471,12 +15772,30 @@ function formatValidationOutput(diagnosticsMap, agentDir) {
     });
     files.push({ file: filePath, diagnostics: mapped });
   }
-  return {
-    status: errorCount === 0 ? "ok" : "error",
-    valid: errorCount === 0,
+  const output = {
+    status: errorCount > 0 ? "error" : incomplete ? "incomplete" : "ok",
+    valid: errorCount === 0 && !incomplete,
     summary: { errors: errorCount, warnings: warningCount, info: infoCount },
     files
   };
+  if (incomplete) {
+    output.incomplete = true;
+    output.reason = incomplete.reason;
+    output.message = incomplete.message;
+    output.missingFiles = incomplete.missingFiles;
+    output.unreadableFiles = incomplete.unreadableFiles || [];
+  }
+  return output;
+}
+function pushBlockedError(validation) {
+  const errors = validation.summary.errors;
+  if (validation.incomplete && errors === 0) {
+    return `Push blocked: ${validation.message} Re-run, or use --force to bypass.`;
+  }
+  if (validation.incomplete) {
+    return `Push blocked: ${errors} validation error(s). ${validation.message} Fix errors and re-run before pushing, or use --force to bypass.`;
+  }
+  return `Push blocked: ${errors} validation error(s). Fix errors before pushing, or use --force to bypass.`;
 }
 async function runValidation(client, args, tokens) {
   const agentDir = findAgentDir(args.workspace);
@@ -15497,10 +15816,29 @@ async function runValidation(client, args, tokens) {
     };
   }
   log(`[validate] Found ${filePaths.length} .mcs.yml file(s)`);
-  openFilesForDiagnostics(client, filePaths);
+  const unreadable = openFilesForDiagnostics(client, filePaths);
+  const unreadablePaths = new Set(unreadable.map((u) => u.filePath));
+  const expected = filePaths.filter((f) => !unreadablePaths.has(f));
   log("[validate] Waiting for diagnostics...");
-  const diagnosticsMap = await waitForDiagnostics(client);
-  const output = formatValidationOutput(diagnosticsMap, agentDir);
+  const { diagnostics: diagnosticsMap, reason } = await waitForDiagnostics(client, expected);
+  const missing = findFilesWithoutDiagnostics(expected, diagnosticsMap);
+  let incomplete = null;
+  if (missing.length > 0 || unreadable.length > 0) {
+    const problems = [];
+    if (missing.length > 0) {
+      const why = reason === "lsp-exited" ? `the LSP process ${client.exitInfo || "exited"}` : "the wait for diagnostics timed out";
+      problems.push(`${why}; no diagnostics received for ${missing.length} of ${filePaths.length} file(s)`);
+    }
+    if (unreadable.length > 0) problems.push(`${unreadable.length} file(s) could not be read`);
+    incomplete = {
+      reason: missing.length > 0 ? reason || "timeout" : "unreadable",
+      message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
+      missingFiles: missing.map((f) => path2.relative(agentDir, f)),
+      unreadableFiles: unreadable.map((u) => ({ file: path2.relative(agentDir, u.filePath), error: u.error }))
+    };
+    log(`[validate] ${incomplete.message}`);
+  }
+  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete);
   output.fileCount = filePaths.length;
   return output;
 }
@@ -15523,6 +15861,17 @@ function findAgentDir(workspace) {
   } catch {
   }
   return resolvedWs;
+}
+function getMissingBotDefinitionError(workspace) {
+  const agentDir = findAgentDir(workspace);
+  if (fs6.existsSync(path2.join(agentDir, ".mcs", "botdefinition.json"))) {
+    return null;
+  }
+  return `No .mcs/botdefinition.json found in ${agentDir}. clone creates this file, but it is not tracked in git because .mcs/.gitignore ignores everything, so a workspace that went through git or was copied without .mcs/ does not have it. Without it validate reports a misleading missing 'CdsBotId', and push and pull fail with 'Please resync'. To fix it, clone the agent again into a new folder, copy your edited YAML files over the new clone, then run validate and push.`;
+}
+function requireBotDefinition(args) {
+  const message = getMissingBotDefinitionError(args.workspace);
+  if (message) die(message);
 }
 function loadConnJson(agentDir) {
   try {
@@ -15677,6 +16026,21 @@ async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
+  if (method === "powerplatformls/syncPush") {
+    const conflicts = findConflictMarkers(findAgentDir(args.workspace));
+    if (conflicts.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "error",
+          error: `Push refused: unresolved merge conflict markers in ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push. --force does not bypass this check.`,
+          conflicts
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -15697,12 +16061,9 @@ async function cmdWithLsp(args, method) {
       const validation = await runValidation(client, args, tokens);
       if (!validation.valid) {
         process.stdout.write(
-          JSON.stringify({
-            status: "error",
-            error: `Push blocked: ${validation.summary.errors} validation error(s). Fix errors before pushing, or use --force to bypass.`,
-            validation
-          }, null, 2) + "\n"
+          JSON.stringify({ status: "error", error: pushBlockedError(validation), validation }, null, 2) + "\n"
         );
+        if (validation.incomplete) process.exitCode = 1;
         return;
       }
       log(`[push] Validation passed (${validation.summary.warnings} warning(s))`);
@@ -15710,9 +16071,23 @@ async function cmdWithLsp(args, method) {
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
     const result = await sendCustomRequestWithRetries(client, method, request);
-    process.stdout.write(
-      JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
-    );
+    const conflicts = method === "powerplatformls/syncPull" ? findConflictMarkers(findAgentDir(args.workspace)) : [];
+    if (conflicts.length > 0) {
+      process.stdout.write(
+        JSON.stringify({
+          status: "conflict",
+          method,
+          result,
+          conflicts,
+          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`
+        }, null, 2) + "\n"
+      );
+      process.exitCode = 1;
+    } else {
+      process.stdout.write(
+        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
+      );
+    }
   } finally {
     await client.stop();
   }
@@ -15721,6 +16096,7 @@ async function cmdValidate(args) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -15737,6 +16113,7 @@ async function cmdValidate(args) {
     await client.start();
     const output = await runValidation(client, args, tokens);
     process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+    if (output.incomplete) process.exitCode = 1;
   } finally {
     await client.stop();
   }
@@ -15939,6 +16316,7 @@ async function cmdChanges(args) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
     const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
@@ -16141,7 +16519,7 @@ async function main() {
   } catch (e) {
     die(`${args.command} failed: ${e.message}`);
   }
-  process.exit(0);
+  process.exit(process.exitCode || 0);
 }
 if (typeof module !== "undefined") {
   module.exports = { parseAgentUrl };
