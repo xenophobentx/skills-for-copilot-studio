@@ -185,6 +185,8 @@ Then push, publish, and test again to verify the agent now responds with grounde
 | Extension not found (clone/push/pull) | Copilot Studio VS Code Extension not installed | [Install from marketplace](https://github.com/microsoft/vscode-copilotstudio) |
 | ConcurrencyVersionMismatch on push | Stale row versions | Pull first, then push |
 
+If clone, push or pull fails and the cause is not clear, run `/copilot-studio:doctor`. It checks Node, the LanguageServerHost binary, the native modules, `pac` and your workspace, and prints one line each with what to do. It is read-only and makes no network calls.
+
 If something goes wrong, you can always re-clone the original agent with `@copilot-studio:copilot-studio-manage clone` or the VS Code Extension.
 
 ---

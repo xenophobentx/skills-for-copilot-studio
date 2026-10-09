@@ -26,6 +26,7 @@ You MUST use the appropriate skill for every task. **NEVER** edit YAML, run scri
 | List all topics | `/copilot-studio:list-topics` |
 | Run full test suite | `/copilot-studio:run-tests` |
 | Send a test message | `/copilot-studio:chat-with-agent` |
+| Check the local setup (Node, LSP binary, workspace) | `/copilot-studio:doctor` |
 | Read common patterns | `/copilot-studio:int-patterns` |
 | Copilot Studio schema and more | `/copilot-studio:int-project-context` |
 | Reference tables for YAML authoring | `/copilot-studio:int-reference` |
