@@ -121,7 +121,7 @@ If the same line of a file was changed both locally and on the server, pull writ
 
 **Important:** Always `pull` before `push` to get fresh row versions. If you push without pulling first, you'll get a `ConcurrencyVersionMismatch` error.
 
-Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors, or if validation is incomplete (the language server timed out or exited before reporting diagnostics for every file, or a file could not be read; the output then has `validation.status: "incomplete"` and the command exits non-zero). Add `--force` to bypass validation (not recommended).
+Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors, or if validation is incomplete (the language server timed out or exited before reporting diagnostics for every file, or a file could not be read; the output then has `validation.status: "incomplete"`). A blocked push prints `"status":"error"` and exits non-zero. Add `--force` to bypass validation (not recommended).
 
 Push also refuses (`"status":"error"`, non-zero exit, with a `conflicts` list) when any `.mcs.yml` file still contains conflict markers. This check runs before any sign-in or upload, and `--force` does not bypass it. Resolve the markers first (see Pull).
 

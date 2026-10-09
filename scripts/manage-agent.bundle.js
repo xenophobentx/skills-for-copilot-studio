@@ -16068,7 +16068,7 @@ async function cmdWithLsp(args, method) {
         process.stdout.write(
           JSON.stringify({ status: "error", error: pushBlockedError(validation), validation }, null, 2) + "\n"
         );
-        if (validation.incomplete) process.exitCode = 1;
+        process.exitCode = 1;
         return;
       }
       log(`[push] Validation passed (${validation.summary.warnings} warning(s))`);
