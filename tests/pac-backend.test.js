@@ -12,7 +12,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const u = require("../scripts/src/pac-utils");
 
 let passed = 0;
@@ -221,6 +221,7 @@ if (a[1] === "pull") {
   if (mode === "hang") {
     const gc = require("child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "inherit" });
     fs.writeFileSync(path.join(dir, "gchild.pid"), String(gc.pid));
+    fs.writeFileSync(path.join(dir, "pac.pid"), String(process.pid));
     setInterval(() => {}, 1000);
     return;
   }
@@ -422,6 +423,46 @@ out("unexpected: " + a.join(" ") + "\\n", 9);
     try { process.kill(gpid, 0); await new Promise((res) => setTimeout(res, 200)); } catch { gone = true; }
   }
   assertEqual(gone, true, "timeout: the child process of pac is gone too");
+
+
+  // Ctrl-C while pac runs: pac and its child are stopped, sfcs exits with the signal code.
+  // Not tested on Windows: Node cannot deliver SIGINT there without a console, process.kill() just ends the process.
+  if (!win) {
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
+      ws = makeWorkspace();
+      fs.rmSync(path.join(fakeDir, "gchild.pid"), { force: true });
+      fs.rmSync(path.join(fakeDir, "pac.pid"), { force: true });
+      const proc = spawn(process.execPath, [cli, "pull", "--backend", "pac", "--workspace", ws], {
+        stdio: "ignore",
+        env: { ...process.env, CPS_PAC_PATH: pacFile, FAKE_DIR: fakeDir, FAKE_MODE: "hang", CPS_BACKEND: "" },
+      });
+      const exited = new Promise((res) => proc.on("exit", (c, sg) => res(c === null ? 128 + (os.constants.signals[sg] || 0) : c)));
+      for (let i = 0; i < 100 && !fs.existsSync(path.join(fakeDir, "gchild.pid")); i++) await sleep(100);
+      await sleep(200);
+      const pids = [parseInt(fs.readFileSync(path.join(fakeDir, "pac.pid"), "utf8"), 10), parseInt(fs.readFileSync(path.join(fakeDir, "gchild.pid"), "utf8"), 10)];
+      assertEqual(pids.every(alive), true, `${sig}: pac and its child are running before the signal`);
+      proc.kill(sig);
+      const exitCode = await Promise.race([exited, sleep(10000).then(() => "no exit")]);
+      assertEqual(exitCode, code, `${sig}: sfcs exits with ${code}`);
+      for (let i = 0; i < 30 && pids.some(alive); i++) await sleep(100);
+      assertEqual(pids.some(alive), false, `${sig}: pac and its child are gone`);
+      if (pids.some(alive)) pids.forEach((p) => { try { process.kill(p, "SIGKILL"); } catch {} });
+    }
+  }
+
+  // An invalid backend value only matters for commands that use the backend.
+  r = run(["validate"], { env: { CPS_BACKEND: "bogus" } });
+  assertEqual(r.json && /Unknown backend/.test(r.json.error || ""), false, "CPS_BACKEND=bogus does not break validate");
+  r = run(["auth"], { env: { CPS_BACKEND: "bogus" } });
+  assertEqual(r.json && /Unknown backend/.test(r.json.error || ""), false, "CPS_BACKEND=bogus does not break auth");
+  r = run(["doctor"], { env: { CPS_BACKEND: "bogus" } });
+  assertEqual(/Unknown backend/.test(r.stdout || r.stderr || ""), false, "CPS_BACKEND=bogus does not break doctor");
+  for (const cmd of ["clone", "pull", "push", "publish", "list-envs"]) {
+    r = run([cmd, "--workspace", ws], { env: { CPS_BACKEND: "bogus" } });
+    assertEqual(r.json && /Unknown backend/.test(r.json.error || ""), true, `CPS_BACKEND=bogus is an error for ${cmd}`);
+  }
 
   fs.rmSync(root, { recursive: true, force: true });
 } catch (e) {

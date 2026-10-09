@@ -197,10 +197,6 @@ function parseArgs() {
     );
   }
 
-  const backend = pacUtils.parseBackend(parsed.backend);
-  if (!backend) die(`Unknown backend "${parsed.backend}". Use lsp, pac or auto.`);
-  parsed.backend = backend;
-
   // When --url is provided, extract environmentId and agentId from the URL
   if (parsed.url) {
     const urlInfo = parseAgentUrl(parsed.url);
@@ -1775,6 +1771,11 @@ function killTree(child) {
   }
 }
 
+// pac runs in its own process group, so Ctrl-C reaches sfcs but not pac. While a
+// pac call is running, these signals stop the pac tree first and then end sfcs
+// with the usual signal exit code (128 + signal number).
+const STOP_SIGNALS = process.platform === "win32" ? ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] : ["SIGINT", "SIGTERM", "SIGHUP"];
+
 function runPac(file, argv, timeoutMs = 300000) {
   return new Promise((resolve) => {
     let cmd, cmdArgs, options;
@@ -1788,10 +1789,16 @@ function runPac(file, argv, timeoutMs = 300000) {
     let stdout = "", stderr = "", finished = false;
     // Own process group on Unix so the whole tree can be killed.
     const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32", ...options });
+    const onSignal = (sig) => {
+      killTree(child);
+      process.exit(128 + (os.constants.signals[sig] || 0));
+    };
+    STOP_SIGNALS.forEach((sig) => process.on(sig, onSignal));
     const finish = (code, extra = "") => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      STOP_SIGNALS.forEach((sig) => process.removeListener(sig, onSignal));
       resolve({ code, stdout, stderr: stderr + extra });
     };
     // Do not wait for the pipes after the kill: a surviving grandchild holds them open.
@@ -1834,6 +1841,10 @@ async function probePac(profile) {
 
 // Returns the pac probe when this command should use pac, otherwise null (LSP).
 async function pickPac(args) {
+  // Checked here and not in parseArgs: validate, changes, doctor and auth do not use the backend.
+  const backend = pacUtils.parseBackend(args.backend);
+  if (!backend) die(`Unknown backend "${args.backend}". Use lsp, pac or auto.`);
+  args.backend = backend;
   if (args.backend === "lsp") return null;
   const conn = args.workspace ? loadConnJson(findAgentDir(args.workspace)) : null;
   const profile = args.backend === "auto"

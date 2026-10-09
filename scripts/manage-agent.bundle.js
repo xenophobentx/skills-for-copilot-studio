@@ -18859,9 +18859,6 @@ function parseArgs() {
       "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
     );
   }
-  const backend = pacUtils.parseBackend(parsed.backend);
-  if (!backend) die(`Unknown backend "${parsed.backend}". Use lsp, pac or auto.`);
-  parsed.backend = backend;
   if (parsed.url) {
     const urlInfo = parseAgentUrl(parsed.url);
     if (!urlInfo) {
@@ -20107,6 +20104,7 @@ function killTree(child) {
     }
   }
 }
+var STOP_SIGNALS = process.platform === "win32" ? ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] : ["SIGINT", "SIGTERM", "SIGHUP"];
 function runPac(file, argv, timeoutMs = 3e5) {
   return new Promise((resolve) => {
     let cmd, cmdArgs, options;
@@ -20119,10 +20117,16 @@ function runPac(file, argv, timeoutMs = 3e5) {
     log(`pac ${argv.join(" ")}`);
     let stdout = "", stderr = "", finished = false;
     const child = spawn(cmd, cmdArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32", ...options });
+    const onSignal = (sig) => {
+      killTree(child);
+      process.exit(128 + (os2.constants.signals[sig] || 0));
+    };
+    STOP_SIGNALS.forEach((sig) => process.on(sig, onSignal));
     const finish = (code, extra = "") => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      STOP_SIGNALS.forEach((sig) => process.removeListener(sig, onSignal));
       resolve({ code, stdout, stderr: stderr + extra });
     };
     const timer = setTimeout(() => {
@@ -20162,6 +20166,9 @@ async function probePac(profile) {
   return { ok: true, file, version: version2 };
 }
 async function pickPac(args) {
+  const backend = pacUtils.parseBackend(args.backend);
+  if (!backend) die(`Unknown backend "${args.backend}". Use lsp, pac or auto.`);
+  args.backend = backend;
   if (args.backend === "lsp") return null;
   const conn = args.workspace ? loadConnJson(findAgentDir(args.workspace)) : null;
   const profile = args.backend === "auto" ? {
