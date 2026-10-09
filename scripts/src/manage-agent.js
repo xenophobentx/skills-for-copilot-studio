@@ -44,6 +44,7 @@ const {
   acquireTokenDeviceCode,
   acquireTokenInteractive,
   acquireTokenSilent,
+  resolveAuthMode,
   setAuthModeOverride,
   getOrAcquireToken,
   getOrAcquireIslandToken,
@@ -898,7 +899,7 @@ async function runValidation(client, args, tokens) {
   return output;
 }
 
-function findAgentDir(workspace) {
+function findAgentDir(workspace, quiet = false) {
   // If workspace itself has .mcs/, use it directly
   const resolvedWs = path.resolve(workspace);
   if (fs.existsSync(path.join(resolvedWs, ".mcs", "conn.json"))) {
@@ -911,7 +912,7 @@ function findAgentDir(workspace) {
       if (entry.isDirectory() && !entry.name.startsWith(".")) {
         const sub = path.join(resolvedWs, entry.name);
         if (fs.existsSync(path.join(sub, ".mcs", "conn.json"))) {
-          log(`Found agent directory: ${sub}`);
+          if (!quiet) log(`Found agent directory: ${sub}`);
           return sub;
         }
       }
@@ -1746,7 +1747,8 @@ function cmdDoctor(args) {
     locateBinary,
     compareSemver,
     minExtensionVersion: MIN_EXTENSION_VERSION,
-    findAgentDir,
+    resolveAuthMode,
+    findAgentDir: (workspace) => findAgentDir(workspace, true),
     findConflictMarkers,
     formatConflicts,
   });

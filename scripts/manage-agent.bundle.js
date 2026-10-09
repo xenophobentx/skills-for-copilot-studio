@@ -17966,7 +17966,7 @@ var require_shared_auth = __commonJS({
     }
     var INTERACTIVE_TIMEOUT_SECONDS = 300;
     var MAX_INTERACTIVE_TIMEOUT_SECONDS = 3600;
-    function resolveAuthMode(env = process.env, platform2 = process.platform) {
+    function resolveAuthMode2(env = process.env, platform2 = process.platform) {
       const requested = String(env.CPS_AUTH_MODE || "").trim().toLowerCase();
       if (requested === "device" || requested === "device-code") {
         return { mode: "device", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
@@ -17988,7 +17988,7 @@ var require_shared_auth = __commonJS({
     function setAuthModeOverride2(value, env = process.env) {
       if (value === void 0 || value === "") die2("--auth-mode needs a value: device or interactive.");
       try {
-        resolveAuthMode({ CPS_AUTH_MODE: value }, "linux");
+        resolveAuthMode2({ CPS_AUTH_MODE: value }, "linux");
       } catch (e) {
         die2(e.message);
       }
@@ -18037,7 +18037,7 @@ var require_shared_auth = __commonJS({
       return buildTokenInfo2(result);
     }
     async function acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot) {
-      const { mode, reason } = resolveAuthMode();
+      const { mode, reason } = resolveAuthMode2();
       if (mode === "device") {
         log2(`Signing in with a device code (${reason}).`);
         try {
@@ -18100,7 +18100,7 @@ var require_shared_auth = __commonJS({
       acquireTokenDeviceCode: acquireTokenDeviceCode2,
       acquireTokenInteractive: acquireTokenInteractive2,
       acquireTokenSignIn,
-      resolveAuthMode,
+      resolveAuthMode: resolveAuthMode2,
       setAuthModeOverride: setAuthModeOverride2,
       interactiveTimeoutMs,
       withSignInTimeout,
@@ -18117,7 +18117,7 @@ var require_doctor = __commonJS({
     var path3 = require("path");
     var MIN_NODE_MAJOR = 18;
     var MIN_PAC_VERSION = "2.13.1";
-    var NATIVE_MODULES = ["keytar", "@azure/msal-node-extensions"];
+    var NATIVE_MODULES = ["keytar", "@azure/msal-node-extensions", "vscode-jsonrpc"];
     function firstLine(e) {
       return String(e && e.message || e).split(/\r?\n/)[0].slice(0, 200);
     }
@@ -18162,6 +18162,27 @@ var require_doctor = __commonJS({
       }
       return null;
     }
+    function ownRoot(ctx) {
+      return path3.resolve(path3.dirname(ctx.scriptPath), "..");
+    }
+    function samePath(ctx, a, b) {
+      const real = (p) => {
+        try {
+          return ctx.fs.realpathSync(p);
+        } catch {
+          return path3.resolve(p);
+        }
+      };
+      const x = real(a);
+      const y = real(b);
+      return ctx.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+    }
+    function foreignRoot(ctx) {
+      const r = readJson(ctx, path3.join(cliDir(ctx), "plugin-paths.json"));
+      const root = r.value && r.value.pluginRoot;
+      if (typeof root !== "string" || samePath(ctx, root, ownRoot(ctx))) return null;
+      return root;
+    }
     function checkNode(ctx, deps, add) {
       const major = parseInt(String(ctx.nodeVersion).split(".")[0], 10);
       if (major >= MIN_NODE_MAJOR) {
@@ -18174,10 +18195,12 @@ var require_doctor = __commonJS({
       const base = `${ctx.platform} ${ctx.arch} ${ctx.release || ""}`.trim();
       if (ctx.platform === "win32") {
         const mods = String(ctx.env.PSModulePath || "");
-        if (/[\\/]PowerShell[\\/]7/i.test(mods)) {
+        if (ctx.env.MSYSTEM) {
+          add("system", "OK", `${base}, Git Bash`);
+        } else if (/[\\/]PowerShell[\\/]7/i.test(mods)) {
           add("system", "OK", `${base}, PowerShell 7 (pwsh)`);
         } else if (/WindowsPowerShell/i.test(mods)) {
-          add("system", "OK", `${base}, Windows PowerShell 5.1`, "Chain commands with ';', this shell has no '&&'.");
+          add("system", "OK", `${base}, PowerShell 5.1 or cmd (guessed from PSModulePath)`, "In PowerShell 5.1 chain commands with ';', it has no '&&'.");
         } else {
           add("system", "OK", `${base}, shell not detected`);
         }
@@ -18186,24 +18209,23 @@ var require_doctor = __commonJS({
       }
     }
     function checkSession(ctx, deps, add) {
-      const env = ctx.env;
-      const ssh = Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY);
-      const noDisplay = ctx.platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY;
-      if (ssh || noDisplay) {
-        add(
-          "session",
-          "WARN",
-          ssh ? "SSH session" : "no display",
-          "Sign-in needs a browser on this machine. Use a desktop session or forward the port."
-        );
+      let auth;
+      try {
+        auth = deps.resolveAuthMode(ctx.env, ctx.platform);
+      } catch (e) {
+        add("session", "WARN", `sign-in mode: ${firstLine(e)}`, "Fix or unset CPS_AUTH_MODE.");
+        return;
+      }
+      if (auth.mode === "device") {
+        add("session", "OK", `sign-in will use the device code flow (${auth.reason})`);
       } else {
-        add("session", "OK", "local session");
+        add("session", "OK", "sign-in will open a browser");
       }
     }
     function checkLsp(ctx, deps, add) {
       const override = ctx.env.CPS_LSP_BINARY;
       if (override && !exists(ctx, override)) {
-        add("lsp", "FAIL", `CPS_LSP_BINARY points to a missing file: ${override}`, "Fix the path or unset it.");
+        add("lsp", "WARN", `CPS_LSP_BINARY points to a missing file: ${override}, the extension folder is used instead`, "Fix the path or unset it.");
       }
       const { info, searchDirs } = deps.locateBinary({ readOnly: true });
       if (!info) {
@@ -18217,7 +18239,7 @@ var require_doctor = __commonJS({
       }
       const where = `${info.binaryPath} (${info.version === "custom" ? "CPS_LSP_BINARY" : "v" + info.version})`;
       if (info.executable === false) {
-        add("lsp", "FAIL", `${where} is not executable`, `Run: chmod +x "${info.binaryPath}"`);
+        add("lsp", "WARN", `${where} is not executable, manage-agent tries chmod +x when it starts it`, `If that fails run: chmod +x "${info.binaryPath}"`);
       } else if (info.skipped && info.skipped.length > 0) {
         add(
           "lsp",
@@ -18236,19 +18258,28 @@ var require_doctor = __commonJS({
       const dirs = pd ? [path3.join(pd.dir, "node_modules")] : [];
       const log2 = pd ? path3.join(pd.dir, "install.log") : null;
       const logHint = log2 && exists(ctx, log2) ? ` See ${log2}.` : "";
+      const foreign = foreignRoot(ctx);
+      const session = "Start a new session with this plugin loaded." + (foreign ? " plugin-paths.json points to another plugin." : "");
       let allLoad = true;
       for (const name of NATIVE_MODULES) {
         try {
           ctx.tryRequire(name, dirs);
           add("native", "OK", `${name} loads`);
         } catch (e) {
-          allLoad = false;
-          const level = name === "keytar" && ctx.platform === "win32" ? "WARN" : "FAIL";
+          const winKeytar = name === "keytar" && ctx.platform === "win32";
+          if (winKeytar) {
+            try {
+              ctx.stubKeytar(dirs);
+            } catch {
+            }
+          } else {
+            allLoad = false;
+          }
           add(
             "native",
-            level,
-            `${name} does not load: ${firstLine(e)}`,
-            (pd ? "Start a new session so the setup hook runs again." : "No plugin data folder is known, start a session with the plugin loaded.") + logHint
+            winKeytar ? "WARN" : "FAIL",
+            `${name} does not load: ${firstLine(e)}${winKeytar ? " (Windows does not use it)" : ""}`,
+            winKeytar ? void 0 : (pd ? session : "No plugin data folder is known, start a session with the plugin loaded.") + logHint
           );
         }
       }
@@ -18265,9 +18296,9 @@ var require_doctor = __commonJS({
       } catch {
       }
       if (marker.missing) {
-        add("native-marker", "WARN", `native-deps.json is missing in ${pd.dir}`, "Setup has not finished. Start a new session." + logHint);
+        add("native-marker", "WARN", `native-deps.json is missing in ${pd.dir}`, "Setup has not finished. " + session + logHint);
       } else if (manifest !== null && current !== manifest) {
-        add("native-marker", "WARN", `native-deps.json in ${pd.dir} differs from the plugin's copy`, "Start a new session so setup runs again." + logHint);
+        add("native-marker", "WARN", `native-deps.json in ${pd.dir} differs from the plugin's copy`, "Setup has to run again. " + session + logHint);
       } else if (manifest === null) {
         add("native-marker", "WARN", "could not read the plugin's native-deps.json to compare", "Check that the plugin folder is complete.");
       } else {
@@ -18289,6 +18320,16 @@ var require_doctor = __commonJS({
         add("plugin-paths", "FAIL", `${file} is not valid JSON`, "Delete it and start a new session.");
         return;
       }
+      const foreign = foreignRoot(ctx);
+      if (foreign) {
+        add(
+          "plugin-paths",
+          "WARN",
+          `${file} points to another plugin (pluginRoot ${foreign}), this plugin is at ${ownRoot(ctx)}`,
+          "Scripts run outside a Claude Code session load the native modules from that plugin's data folder. Start a session with this plugin loaded to rewrite the file."
+        );
+        return;
+      }
       const bad = ["pluginData", "pluginRoot"].filter((k) => typeof r.value[k] !== "string" || !exists(ctx, r.value[k]));
       if (bad.length > 0) {
         add("plugin-paths", "WARN", `${bad.join(" and ")} in ${file} does not exist`, "Start a new session to rewrite it.");
@@ -18299,7 +18340,6 @@ var require_doctor = __commonJS({
     function checkSecretService(ctx, deps, add) {
       if (ctx.platform !== "linux") return;
       const bus = ctx.env.DBUS_SESSION_BUS_ADDRESS || ctx.env.XDG_RUNTIME_DIR && exists(ctx, path3.join(ctx.env.XDG_RUNTIME_DIR, "bus"));
-      const tool = findOnPath(ctx, ["secret-tool"]);
       if (!bus) {
         add(
           "secret-service",
@@ -18311,7 +18351,7 @@ var require_doctor = __commonJS({
         add(
           "secret-service",
           "OK",
-          `D-Bus session found, secret-tool ${tool ? "found" : "not found"}`,
+          "D-Bus session found",
           "A locked or missing keyring at sign-in falls back to a plaintext file."
         );
       }
@@ -18341,33 +18381,48 @@ var require_doctor = __commonJS({
       const more = names.length > shown.length ? `, and ${names.length - shown.length} more` : "";
       add("token-cache", "OK", `${names.length} cache file(s) in ${dir}: ${parts.join(", ")}${more}`);
     }
+    function pacVersion(ctx, pac) {
+      const dir = path3.dirname(pac);
+      const found = [];
+      const add = (folder, re) => {
+        try {
+          for (const n of ctx.fs.readdirSync(folder)) {
+            const m = re.exec(n);
+            if (m) found.push(m[1]);
+          }
+        } catch {
+        }
+      };
+      add(path3.join(dir, ".store", "microsoft.powerapps.cli.tool"), /^(\d+\.\d+\.\d+)$/);
+      add(dir, /^Microsoft\.PowerApps\.CLI\.(\d+\.\d+\.\d+)$/i);
+      return found.length > 0 ? found : null;
+    }
     function checkPac(ctx, deps, add) {
       const win = ctx.platform === "win32";
       const fromEnv = ctx.env.CPS_PAC_PATH;
-      const pac = fromEnv || findOnPath(ctx, win ? ["pac.exe", "pac.cmd", "pac"] : ["pac"]);
-      if (!pac || !exists(ctx, pac)) {
+      const envOk = fromEnv && exists(ctx, fromEnv);
+      const pac = envOk ? fromEnv : findOnPath(ctx, win ? ["pac.exe", "pac.cmd", "pac"] : ["pac"]);
+      const note = fromEnv && !envOk ? `CPS_PAC_PATH points to a missing file (${fromEnv}), PATH was searched instead. ` : "";
+      if (!pac) {
+        add("pac", "OK", `${note}pac not found, only the optional pac backend needs it`);
+        return;
+      }
+      const versions = pacVersion(ctx, pac);
+      if (!versions) {
+        add("pac", "OK", `${note}pac at ${pac}, version not read (pac is only used by the optional pac backend)`);
+        return;
+      }
+      versions.sort(deps.compareSemver);
+      const newest = versions[versions.length - 1];
+      if (deps.compareSemver(newest, MIN_PAC_VERSION) < 0) {
         add(
           "pac",
-          fromEnv ? "FAIL" : "OK",
-          fromEnv ? `CPS_PAC_PATH points to a missing file: ${fromEnv}` : "pac not found (optional)",
-          fromEnv ? "Fix the path or unset it." : void 0
+          "OK",
+          `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`,
+          `In our own tests ${newest} emptied a file on a conflicting pull, ${MIN_PAC_VERSION} kept both versions. Update before you use the pac backend.`
         );
-        return;
-      }
-      let out;
-      try {
-        out = ctx.run(pac, []);
-      } catch (e) {
-        add("pac", "WARN", `${pac} did not run: ${firstLine(e)}`, "Reinstall the Power Platform CLI.");
-        return;
-      }
-      const m = /Version:\s*(\d+\.\d+\.\d+)/i.exec(out) || /^(\d+\.\d+\.\d+)/.exec(String(out).trim());
-      if (!m) {
-        add("pac", "WARN", `${pac} gave no version`, "Reinstall the Power Platform CLI.");
-      } else if (deps.compareSemver(m[1], MIN_PAC_VERSION) < 0) {
-        add("pac", "WARN", `pac ${m[1]} at ${pac}`, `Update to ${MIN_PAC_VERSION} or newer, the copilot commands need it.`);
       } else {
-        add("pac", "OK", `pac ${m[1]} at ${pac}`);
+        add("pac", "OK", `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`);
       }
     }
     function looksLikeWorkspace(ctx, dir) {
@@ -18394,7 +18449,12 @@ var require_doctor = __commonJS({
       } else if (conn.error || !conn.value || typeof conn.value !== "object") {
         add("conn.json", "FAIL", ".mcs/conn.json is not valid JSON", "Clone the agent again into a new folder.");
       } else {
-        const missing = ["AgentId", "EnvironmentId", "TenantId"].filter((k) => !conn.value[k]);
+        const c = conn.value;
+        const missing = [
+          !c.AgentId && "AgentId",
+          !c.EnvironmentId && "EnvironmentId",
+          !(c.AccountInfo && c.AccountInfo.TenantId || c.TenantId) && "TenantId"
+        ].filter(Boolean);
         if (missing.length > 0) {
           add("conn.json", "WARN", `.mcs/conn.json has no ${missing.join(", ")}`, "Clone the agent again into a new folder.");
         } else {
@@ -18467,7 +18527,6 @@ var require_doctor = __commonJS({
     function makeContext(args) {
       const fs7 = require("fs");
       const os3 = require("os");
-      const { execFileSync: execFileSync2 } = require("child_process");
       return {
         fs: fs7,
         env: process.env,
@@ -18489,9 +18548,17 @@ var require_doctor = __commonJS({
           }
           return require(name);
         },
-        run(file, argv) {
-          const cmd = /\.(cmd|bat)$/i.test(file);
-          return execFileSync2(cmd ? `"${file}"` : file, argv, { encoding: "utf8", timeout: 15e3, windowsHide: true, shell: cmd, stdio: ["ignore", "pipe", "ignore"] });
+        // Same stub msal-cache.js registers on Windows: msal-node-extensions requires
+        // keytar at load time, but only macOS and Linux call it.
+        stubKeytar(dirs) {
+          const Module = require("module");
+          const keytarPath = require.resolve("keytar", { paths: dirs });
+          const unavailable = () => Promise.reject(new Error("keytar native binding is not available on this platform"));
+          const stub = new Module(keytarPath);
+          stub.filename = keytarPath;
+          stub.loaded = true;
+          stub.exports = { getPassword: unavailable, setPassword: unavailable, deletePassword: unavailable, findPassword: unavailable, findCredentials: unavailable };
+          require.cache[keytarPath] = stub;
         }
       };
     }
@@ -18515,6 +18582,7 @@ var {
   acquireTokenDeviceCode,
   acquireTokenInteractive,
   acquireTokenSilent,
+  resolveAuthMode,
   setAuthModeOverride,
   getOrAcquireToken,
   getOrAcquireIslandToken
@@ -19196,7 +19264,7 @@ async function runValidation(client, args, tokens) {
   output.fileCount = filePaths.length;
   return output;
 }
-function findAgentDir(workspace) {
+function findAgentDir(workspace, quiet = false) {
   const resolvedWs = path2.resolve(workspace);
   if (fs6.existsSync(path2.join(resolvedWs, ".mcs", "conn.json"))) {
     return resolvedWs;
@@ -19207,7 +19275,7 @@ function findAgentDir(workspace) {
       if (entry.isDirectory() && !entry.name.startsWith(".")) {
         const sub = path2.join(resolvedWs, entry.name);
         if (fs6.existsSync(path2.join(sub, ".mcs", "conn.json"))) {
-          log(`Found agent directory: ${sub}`);
+          if (!quiet) log(`Found agent directory: ${sub}`);
           return sub;
         }
       }
@@ -19856,7 +19924,8 @@ function cmdDoctor(args) {
     locateBinary,
     compareSemver,
     minExtensionVersion: MIN_EXTENSION_VERSION,
-    findAgentDir,
+    resolveAuthMode,
+    findAgentDir: (workspace) => findAgentDir(workspace, true),
     findConflictMarkers,
     formatConflicts
   });

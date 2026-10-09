@@ -6,6 +6,7 @@ skills:
   - int-project-context
   - manage-agent
   - clone-agent
+  - doctor
 ---
 
 You are an ALM (Application Lifecycle Management) specialist for Copilot Studio agents.

@@ -26,11 +26,11 @@ Show the user the WARN and FAIL lines as they are, and say what the line tells t
 
 ## What it checks
 
-- Node 18 or newer, the OS, PowerShell version on Windows, SSH or no display.
+- Node 18 or newer, the OS, a guess at the Windows shell, and how sign-in will run (browser or device code, same rule as the sign-in itself).
 - LanguageServerHost from the VS Code extension (path, version, executable bit, `CPS_LSP_BINARY`).
-- keytar and `@azure/msal-node-extensions` load, and the setup marker `native-deps.json` matches. The path of `install.log` is shown when it exists.
-- `~/.copilot-studio-cli/plugin-paths.json` points to folders that exist.
+- keytar, `@azure/msal-node-extensions` and `vscode-jsonrpc` load, and the setup marker `native-deps.json` matches. The path of `install.log` is shown when it exists.
+- `~/.copilot-studio-cli/plugin-paths.json` points to folders that exist and to this plugin. Another plugin can write the same file.
 - Linux: whether a D-Bus session is there. Without a keyring, tokens fall back to a plaintext file.
 - Cache files under `~/.copilot-studio-cli` (name, size, date).
-- `pac` on PATH or `CPS_PAC_PATH`, version 2.13.1 or newer.
+- `pac` on PATH or `CPS_PAC_PATH`, for information only (the optional pac backend uses it). The version comes from the install folder, pac is not started.
 - Workspace: `.mcs/conn.json`, `.mcs/botdefinition.json`, merge markers in `.mcs.yml` files, CLI agent or classic, UNC path on Windows.

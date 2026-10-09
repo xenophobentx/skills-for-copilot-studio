@@ -12,6 +12,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { runDoctor, formatLine } = require("../scripts/src/doctor.js");
+const { resolveAuthMode } = require("../scripts/src/shared-auth.js");
 
 const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "src", "manage-agent.js"), "utf8");
 
@@ -26,7 +27,7 @@ const log = () => {};
 const helpers = new Function(
   "fs", "path", "log",
   [src.match(/^const CONFLICT_MARKER_RE = .*;$/m)[0]].concat([
-    "findMcsYmlFiles", "findConflictMarkers", "formatConflicts", "findAgentDir", "parseSemver", "compareSemver",
+    "findMcsYmlFiles", "conflictMarkerLines", "findConflictMarkers", "formatConflicts", "findAgentDir", "parseSemver", "compareSemver",
   ].map(extract)).join("\n") +
     "\nreturn { findConflictMarkers, formatConflicts, findAgentDir, compareSemver };"
 )(fs, path, log);
@@ -61,6 +62,7 @@ function makeDeps(over = {}) {
       locateBinary: () => ({ info: EXT_BIN, searchDirs: ["/h/.vscode/extensions"] }),
       compareSemver: helpers.compareSemver,
       minExtensionVersion: "1.2.90",
+      resolveAuthMode,
       findAgentDir: helpers.findAgentDir,
       findConflictMarkers: helpers.findConflictMarkers,
       formatConflicts: helpers.formatConflicts,
@@ -87,7 +89,7 @@ function makeCtx(over = {}) {
       scriptPath: path.join(scripts, "manage-agent.bundle.js"),
       workspace: null,
       tryRequire: () => ({}),
-      run: () => "Version: 2.13.1+gabc (.NET 10)",
+      stubKeytar: () => {},
     },
     over
   );
@@ -108,9 +110,22 @@ function writeFile(file, text) {
   fs.writeFileSync(file, text);
 }
 
+// The key structure of a conn.json written by a real clone (values are made up).
+const REAL_CONN = JSON.stringify({
+  DataverseEndpoint: "https://org.crm.dynamics.com/",
+  EnvironmentId: "e",
+  EnvironmentDisplayName: "Dev",
+  AccountInfo: { AccountId: "a", TenantId: "t", AccountEmail: "x@example.com", clusterCategory: 3 },
+  AgentId: "b",
+  ComponentCollectionId: null,
+  SolutionVersions: { SolutionVersions: {}, CopilotStudioSolutionVersion: "1" },
+  AgentManagementEndpoint: "https://x/",
+  AuthoringShape: 0,
+});
+
 function makeWorkspace(opts = {}) {
   const ws = tmp("ws");
-  if (opts.conn !== false) writeFile(path.join(ws, ".mcs", "conn.json"), opts.conn || '{"AgentId":"a","EnvironmentId":"e","TenantId":"t"}');
+  if (opts.conn !== false) writeFile(path.join(ws, ".mcs", "conn.json"), opts.conn || REAL_CONN);
   if (opts.bot !== false) writeFile(path.join(ws, ".mcs", "botdefinition.json"), opts.bot || "{}");
   writeFile(path.join(ws, "settings.mcs.yml"), opts.settings || "displayName: Test\n");
   writeFile(path.join(ws, "agent.mcs.yml"), "kind: GptComponentMetadata\n");
@@ -131,25 +146,33 @@ try {
     assertEqual(/5\.1/.test(ps5.message) && /&&/.test(ps5.hint), true, "Windows PowerShell 5.1 is named, with the && hint");
     const ps7 = run(makeCtx({ platform: "win32", env: { PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules" } }), null, "system")[0];
     assertEqual(/pwsh/.test(ps7.message), true, "PowerShell 7 is named");
+    const gb = run(makeCtx({ platform: "win32", env: { MSYSTEM: "MINGW64", PSModulePath: "C:\\x\\WindowsPowerShell\\Modules" } }), null, "system")[0];
+    assertEqual(/Git Bash/.test(gb.message) && !gb.hint, true, "Git Bash is not reported as PowerShell");
     const unknown = run(makeCtx({ platform: "win32", env: {} }), null, "system")[0];
     assertEqual(unknown.level, "OK", "Windows without PSModulePath still reports");
     const lin = run(makeCtx({ env: { SHELL: "/bin/zsh" } }), null, "system")[0];
     assertEqual(/linux x64/.test(lin.message) && /zsh/.test(lin.message), true, "Linux line has os, arch and shell");
   }
 
-  // ---- ssh and headless
-  assertEqual(level(makeCtx({ env: { SSH_CONNECTION: "1 2 3 4", DISPLAY: ":0" } }), null, "session"), ["WARN"], "SSH session warns");
-  assertEqual(level(makeCtx({ env: {} }), null, "session"), ["WARN"], "Linux without display warns");
-  assertEqual(level(makeCtx({ env: { DISPLAY: ":0" } }), null, "session"), ["OK"], "Linux with display is fine");
-  assertEqual(level(makeCtx({ env: { WAYLAND_DISPLAY: "wayland-0" } }), null, "session"), ["OK"], "Wayland counts as a display");
-  assertEqual(level(makeCtx({ platform: "darwin", env: {} }), null, "session"), ["OK"], "macOS without DISPLAY is fine");
+  // ---- sign-in mode (same rule as the sign-in itself)
+  {
+    const msg = (env, platform) => run(makeCtx({ env, platform: platform || "linux" }), null, "session")[0];
+    assertEqual([msg({ SSH_CONNECTION: "1 2 3 4", DISPLAY: ":0" }).level, /device code.*SSH/.test(msg({ SSH_CONNECTION: "1" }).message)], ["OK", true], "SSH session: device code, no warning");
+    assertEqual(/device code.*no display/.test(msg({}).message), true, "Linux without display: device code");
+    assertEqual(/browser/.test(msg({ DISPLAY: ":0" }).message), true, "Linux with display: browser");
+    assertEqual(/browser/.test(msg({ WAYLAND_DISPLAY: "wayland-0" }).message), true, "Wayland counts as a display");
+    assertEqual(/browser/.test(msg({}, "darwin").message), true, "macOS without DISPLAY: browser");
+    assertEqual(/device code.*CPS_AUTH_MODE/.test(msg({ CPS_AUTH_MODE: "device", DISPLAY: ":0" }).message), true, "CPS_AUTH_MODE is honoured");
+    assertEqual(msg({ CPS_AUTH_MODE: "bogus" }).level, "WARN", "a bad CPS_AUTH_MODE warns");
+    assertEqual(level(makeCtx(), makeDeps({ resolveAuthMode: () => { throw new Error("x"); } }), "session"), ["WARN"], "a throwing rule warns");
+  }
 
   // ---- LanguageServerHost
   assertEqual(level(makeCtx(), null, "lsp"), ["OK"], "lsp found");
   assertEqual(level(makeCtx(), makeDeps({ locateBinary: () => ({ info: null, searchDirs: ["/a", "/b"] }) }), "lsp"), ["FAIL"], "lsp missing fails");
   assertEqual(
     level(makeCtx(), makeDeps({ locateBinary: () => ({ info: { ...EXT_BIN, executable: false }, searchDirs: [] }) }), "lsp"),
-    ["FAIL"], "lsp not executable fails"
+    ["WARN"], "lsp not executable warns, manage-agent chmods it"
   );
   {
     const r = run(makeCtx(), makeDeps({ locateBinary: () => ({ info: { ...EXT_BIN, version: "1.8.22", skipped: ["1.9.20"] }, searchDirs: [] }) }), "lsp");
@@ -166,7 +189,12 @@ try {
   );
   assertEqual(
     level(makeCtx({ env: { CPS_LSP_BINARY: path.join(root, "nope") } }), null, "lsp"),
-    ["FAIL", "OK"], "CPS_LSP_BINARY pointing nowhere fails"
+    ["WARN", "OK"], "CPS_LSP_BINARY pointing nowhere warns and falls back"
+  );
+
+  assertEqual(
+    level(makeCtx({ env: { CPS_LSP_BINARY: path.join(root, "nope") } }), makeDeps({ locateBinary: () => ({ info: null, searchDirs: [] }) }), "lsp"),
+    ["WARN", "FAIL"], "CPS_LSP_BINARY pointing nowhere and no extension fails"
   );
 
   // ---- native dependencies and the setup marker
@@ -179,25 +207,44 @@ try {
     assertEqual(level(ctx, null, "native-marker"), ["WARN"], "marker that differs warns");
     writeFile(path.join(data, "native-deps.json"), manifest);
     assertEqual(level(ctx, null, "native-marker"), ["OK"], "matching marker is fine");
-    assertEqual(level(ctx, null, "native"), ["OK", "OK"], "both modules load");
+    assertEqual(level(ctx, null, "native"), ["OK", "OK", "OK"], "all three modules load");
 
     writeFile(path.join(data, "install.log"), "boom");
     const bad = run(
       makeCtx({ env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "keytar") throw new Error("libsecret-1.so.0 missing\nstack"); return {}; } }),
       null, "native"
     );
-    assertEqual(bad.map((c) => c.level), ["FAIL", "OK"], "keytar failing to load fails on Linux");
+    assertEqual(bad.map((c) => c.level), ["FAIL", "OK", "OK"], "keytar failing to load fails on Linux");
     assertEqual(bad[0].hint.includes(path.join(data, "install.log")), true, "install.log is shown when it exists");
     assertEqual(bad[0].message.includes("stack"), false, "only the first error line is shown");
     const win = run(
       makeCtx({ platform: "win32", env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "keytar") throw new Error("no binding"); return {}; } }),
       null, "native"
     );
-    assertEqual(win.map((c) => c.level), ["WARN", "OK"], "keytar failing on Windows only warns");
+    assertEqual(win.map((c) => c.level), ["WARN", "OK", "OK"], "keytar failing on Windows only warns");
+    // msal-node-extensions needs the keytar stub on Windows, like msal-cache.js
+    let stubbed = false;
+    const winStub = run(
+      makeCtx({
+        platform: "win32",
+        env: { CLAUDE_PLUGIN_DATA: data },
+        stubKeytar: () => { stubbed = true; },
+        tryRequire: (n) => { if (n === "keytar" || (n === "@azure/msal-node-extensions" && !stubbed)) throw new Error("no binding"); return {}; },
+      }),
+      null, "native"
+    );
+    assertEqual(winStub.map((c) => c.level), ["WARN", "OK", "OK"], "on Windows msal-node-extensions loads after the keytar stub");
+    const winNoStub = run(
+      makeCtx({ platform: "win32", env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n !== "vscode-jsonrpc") throw new Error("no binding"); return {}; } }),
+      null, "native"
+    );
+    assertEqual(winNoStub.map((c) => c.level), ["WARN", "FAIL", "OK"], "on Windows a broken msal-node-extensions still fails");
+    const jsonrpc = run(makeCtx({ env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "vscode-jsonrpc") throw new Error("gone"); return {}; } }), null, "native");
+    assertEqual(jsonrpc.map((c) => c.level), ["OK", "OK", "FAIL"], "a missing vscode-jsonrpc fails");
   }
   {
     const r = run(makeCtx({ tryRequire: () => { throw new Error("Cannot find module"); } }), null, "native");
-    assertEqual(r.map((c) => c.level), ["FAIL", "FAIL"], "no plugin data and no modules fails");
+    assertEqual(r.map((c) => c.level), ["FAIL", "FAIL", "FAIL"], "no plugin data and no modules fails");
     assertEqual(/plugin/.test(r[0].hint), true, "hint explains the missing plugin data folder");
   }
   {
@@ -224,6 +271,12 @@ try {
     assertEqual([r[0].level, r[0].message.includes("pluginData")], ["WARN", true], "a path that does not exist warns and is named");
     writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: root }));
     assertEqual(level(ctx, null, "plugin-paths"), ["OK"], "existing paths are fine");
+    // another plugin owns the file
+    writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: tmp("other-plugin") }));
+    const foreign = run(ctx, null, "plugin-paths")[0];
+    assertEqual([foreign.level, /another plugin/.test(foreign.message), /outside a Claude Code session/.test(foreign.hint)], ["WARN", true, true], "pluginRoot of another plugin warns and explains");
+    const marker = run(ctx, null, "native-marker");
+    assertEqual(marker.every((c) => c.level !== "WARN" || !/Start a new session\.$/.test(c.hint || "")), true, "the marker hint does not just say start a new session");
     writeFile(file, "[]");
     assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "wrong shape warns");
   }
@@ -238,10 +291,6 @@ try {
     const runtime = tmp("run");
     writeFile(path.join(runtime, "bus"), "");
     assertEqual(level(makeCtx({ env: { XDG_RUNTIME_DIR: runtime } }), null, "secret-service"), ["OK"], "a bus socket in XDG_RUNTIME_DIR counts");
-    const tools = tmp("bin");
-    writeFile(path.join(tools, "secret-tool"), "");
-    const r = run(makeCtx({ env: { XDG_RUNTIME_DIR: runtime, PATH: tools } }), null, "secret-service")[0];
-    assertEqual(/secret-tool found/.test(r.message), true, "secret-tool on PATH is reported");
   }
   assertEqual(level(makeCtx({ platform: "darwin" }), null, "secret-service"), [], "no Secret Service line on macOS");
   assertEqual(level(makeCtx({ platform: "win32" }), null, "secret-service"), [], "no Secret Service line on Windows");
@@ -264,22 +313,31 @@ try {
     assertEqual(/and 4 more/.test(run(ctx, null, "token-cache")[0].message), true, "a long list is cut");
   }
 
-  // ---- pac
+  // ---- pac (information only, never started)
   assertEqual(level(makeCtx(), null, "pac"), ["OK"], "pac missing is fine, it is optional");
   {
     const bin = tmp("bin");
     const pac = path.join(bin, "pac");
     writeFile(pac, "");
     const env = { PATH: bin };
-    assertEqual(level(makeCtx({ env }), null, "pac"), ["OK"], "pac 2.13.1 is fine");
-    assertEqual(level(makeCtx({ env, run: () => "Version: 2.12.2+g1 (.NET 10)" }), null, "pac"), ["WARN"], "pac 2.12.2 warns");
-    assertEqual(level(makeCtx({ env, run: () => { throw new Error("boom"); } }), null, "pac"), ["WARN"], "pac that does not run warns");
-    assertEqual(level(makeCtx({ env, run: () => "hello" }), null, "pac"), ["WARN"], "pac without a version warns");
-    assertEqual(level(makeCtx({ env: { CPS_PAC_PATH: pac } }), null, "pac"), ["OK"], "CPS_PAC_PATH is used");
-    assertEqual(level(makeCtx({ env: { CPS_PAC_PATH: path.join(root, "nope") } }), null, "pac"), ["FAIL"], "CPS_PAC_PATH pointing nowhere fails");
-    let args = null;
-    makeCtx({ env, run: (f, a) => { args = a; return "Version: 2.13.1"; } }) && run(makeCtx({ env, run: (f, a) => { args = a; return "Version: 2.13.1"; } }), null, "pac");
-    assertEqual(args, [], "pac is started without arguments, never with auth");
+    const one = (store, e) => run(makeCtx({ env: e || env }), null, "pac")[0];
+    assertEqual(one().level, "OK", "pac without a readable version is OK");
+    assertEqual(/version not read/.test(one().message), true, "and says the version was not read");
+    fs.mkdirSync(path.join(bin, ".store", "microsoft.powerapps.cli.tool", "2.12.2"), { recursive: true });
+    const old = one();
+    assertEqual([old.level, /pac 2\.12\.2/.test(old.message), /our own tests/.test(old.hint)], ["OK", true, true], "2.12.2 from the dotnet tool store is OK and carries the note");
+    fs.mkdirSync(path.join(bin, ".store", "microsoft.powerapps.cli.tool", "2.13.1"), { recursive: true });
+    const cur = one();
+    assertEqual([cur.level, /pac 2\.13\.1/.test(cur.message), cur.hint], ["OK", true, undefined], "the newest folder wins, 2.13.1 has no note");
+    assertEqual(/only used by the optional pac backend/.test(cur.message), true, "the message says what pac is for");
+    const win = tmp("winbin");
+    writeFile(path.join(win, "pac.cmd"), "");
+    fs.mkdirSync(path.join(win, "Microsoft.PowerApps.CLI.2.11.2"));
+    fs.mkdirSync(path.join(win, "Microsoft.PowerApps.CLI.2.12.2"));
+    assertEqual(/pac 2\.12\.2/.test(run(makeCtx({ platform: "win32", env: { PATH: win } }), null, "pac")[0].message), true, "Windows installer folders are read");
+    assertEqual(one(null, { CPS_PAC_PATH: pac }).level, "OK", "CPS_PAC_PATH is used");
+    const missing = one(null, { CPS_PAC_PATH: path.join(root, "nope"), PATH: bin });
+    assertEqual([missing.level, /CPS_PAC_PATH points to a missing file/.test(missing.message)], ["OK", true], "a wrong CPS_PAC_PATH falls back to PATH, no FAIL");
   }
 
   // ---- workspace
@@ -305,6 +363,10 @@ try {
     assertEqual(level(makeCtx({ workspace: ws }), null, "conn.json"), ["FAIL"], "missing conn.json fails");
     const ws2 = makeWorkspace({ conn: "{oops" });
     assertEqual(level(makeCtx({ workspace: ws2 }), null, "conn.json"), ["FAIL"], "broken conn.json fails");
+    const ws5 = makeWorkspace({ conn: '{"AgentId":"a","EnvironmentId":"e","TenantId":"t"}' });
+    assertEqual(level(makeCtx({ workspace: ws5 }), null, "conn.json"), ["OK"], "the eval fixture shape (top level TenantId) is accepted too");
+    const ws6 = makeWorkspace({ conn: '{"AgentId":"a","EnvironmentId":"e","AccountInfo":{"AccountId":"x"}}' });
+    assertEqual(run(makeCtx({ workspace: ws6 }), null, "conn.json")[0].message.endsWith("no TenantId"), true, "AccountInfo without TenantId is named");
     const ws3 = makeWorkspace({ conn: '{"AgentId":"a"}' });
     const r = run(makeCtx({ workspace: ws3 }), null, "conn.json")[0];
     assertEqual([r.level, /EnvironmentId, TenantId/.test(r.message)], ["WARN", true], "conn.json without ids warns and names them");
@@ -334,7 +396,7 @@ try {
   {
     const boom = () => { throw new Error("broken"); };
     const brokenFs = new Proxy({}, { get: () => boom });
-    const ctx = makeCtx({ fs: brokenFs, workspace: root, tryRequire: boom, run: boom });
+    const ctx = makeCtx({ fs: brokenFs, workspace: root, tryRequire: boom, stubKeytar: boom });
     const deps = makeDeps({ locateBinary: boom, findAgentDir: boom, findConflictMarkers: boom });
     let r;
     let threw = false;
