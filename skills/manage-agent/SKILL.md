@@ -39,7 +39,7 @@ All commands that need a token sign in the same way. If there is no cached token
 
 Add `--auth-mode device` to force the device code flow or `--auth-mode interactive` to force the browser. The environment variable `CPS_AUTH_MODE` does the same, and the flag wins. `CPS_AUTH_TIMEOUT_SECONDS` (1 to 3600) changes the browser wait (default 300).
 
-A foreground Bash call returns its output only when the command ends, so run it with `run_in_background: true`, check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
+A foreground Bash call returns its output only when the command ends, so start it in the background (Claude Code: `run_in_background: true`; GitHub Copilot CLI: bash `mode: "async"`), check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
 
 Push, pull, clone, changes and list-agents use VS Code's first-party client ID with the Island API gateway. No separate auth step is needed before them. Just run the command directly (Phase 2). Tokens are cached in the OS credential store and silently refreshed for about 90 days, after which the sign-in runs again.
 
