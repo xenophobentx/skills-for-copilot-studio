@@ -24,7 +24,7 @@ You MUST use the appropriate skill for every task. **NEVER** edit YAML, run scri
 | Look up a schema definition | `/copilot-studio:lookup-schema` |
 | List valid kind values | `/copilot-studio:list-kinds` |
 | List all topics | `/copilot-studio:list-topics` |
-| Run full test suite | `/copilot-studio:run-tests` |
+| Run full test suite | `/copilot-studio:run-tests-kit` |
 | Send a test message | `/copilot-studio:chat-with-agent` |
 | Check for routing collisions between topics, tools and child agents | `/copilot-studio:disambiguation` |
 | Read common patterns | `/copilot-studio:int-patterns` |

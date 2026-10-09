@@ -265,7 +265,7 @@ Active surfaces: X topics, Y actions
 
 ### 7. Offer fixes
 
-For each HIGH issue, propose a specific edit (renamed file, rewritten description, added scope boundary, moved instruction). Ask the user if they want to apply the fixes.
+For each HIGH issue, propose a specific edit (renamed file, rewritten description, added scope boundary, moved instruction). You only report and propose. If the user wants a fix applied, hand it to the Author agent.
 
 For instruction ↔ tool collisions, recommend one of the three approaches (keep at top level / move to tool description / move to child agent) based on agent complexity. Explain the trade-off.
 
