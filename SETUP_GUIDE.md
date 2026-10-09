@@ -25,8 +25,8 @@ You also need access to a Power Platform environment with Copilot Studio and an 
 ### Option A: Install from marketplace (recommended)
 
 ```bash
-/plugin marketplace add microsoft/skills-for-copilot-studio
-/plugin install copilot-studio@skills-for-copilot-studio
+/plugin marketplace add xenophobentx/skills-for-copilot-studio
+/plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
 
 Once installed, the plugin is available globally.

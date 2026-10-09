@@ -1,16 +1,16 @@
 {
-  "name": "skills-for-copilot-studio",
+  "name": "xeno-skills-for-copilot-studio",
   "owner": {
-    "name": "Microsoft Copilot Studio CAT Team"
+    "name": "xenophobentx"
   },
   "metadata": {
-    "description": "Microsoft Copilot Studio plugins for AI coding agents"
+    "description": "Fork of microsoft/skills-for-copilot-studio with fixes merged in"
   },
   "plugins": [
     {
       "name": "copilot-studio",
       "description": "Microsoft Copilot Studio YAML authoring toolkit. Create, edit, validate, and test Copilot Studio agents using YAML files.",
-      "version": "1.0.11",
+      "version": "1.0.11-xeno.1",
       "source": "./"
     }
   ]

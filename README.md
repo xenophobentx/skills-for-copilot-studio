@@ -1,5 +1,16 @@
 # Skills for Copilot Studio
 
+> This is my fork of [microsoft/skills-for-copilot-studio](https://github.com/microsoft/skills-for-copilot-studio) with my fixes and a few open community PRs merged in. Some of the fixes are also open as PRs upstream. I merge upstream changes in from time to time. [FORK.md](FORK.md) lists what differs from upstream.
+>
+> To install from this fork:
+>
+> ```bash
+> /plugin marketplace add xenophobentx/skills-for-copilot-studio
+> /plugin install copilot-studio@xeno-skills-for-copilot-studio
+> ```
+>
+> Don't install it next to the upstream plugin. Both are called `copilot-studio` and have the same commands.
+
 A plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), and [VS Code](https://code.visualstudio.com/) that enables authoring, testing, and troubleshooting [Microsoft Copilot Studio](https://aka.ms/CopilotStudio) **STANDARD** agents through YAML files — directly from your terminal or editor.
 
 Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft Copilot Studio Plugin](https://github.com/microsoft/copilot-studio-plugin). If you open a CLI agent workspace here (`template: cliagent-*` or `authoringModel: CliCopilot` in its `settings.mcs.yml`), the plugin is instructed to detect it, only read and describe it (no edits, pull, push or publish), and point you to that plugin.
@@ -15,8 +26,8 @@ Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft
 ### From marketplace (Claude Code / GitHub Copilot CLI)
 
 ```bash
-/plugin marketplace add microsoft/skills-for-copilot-studio
-/plugin install copilot-studio@skills-for-copilot-studio
+/plugin marketplace add xenophobentx/skills-for-copilot-studio
+/plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
 ### From VS Code Extensions Store (GitHub Copilot)
 
@@ -27,7 +38,7 @@ Search for **Skills for Copilot Studio** in the VS Code Extensions using the **@
 ### From a local clone
 
 ```bash
-git clone https://github.com/microsoft/skills-for-copilot-studio.git
+git clone https://github.com/xenophobentx/skills-for-copilot-studio.git
 
 # Load for a single session
 claude --plugin-dir /path/to/skills-for-copilot-studio
@@ -46,7 +57,7 @@ The update process depends on how you installed the plugin:
 | Interface | Update Method | Details |
 |-----------|--------------|--------|
 | **Claude Code CLI** | Auto-update (recommended) | Marketplace plugins update automatically. No action needed. |
-| **GitHub Copilot CLI** | Manual | Run `/plugin update skills-for-copilot-studio` in an interactive session, or `copilot plugin update skills-for-copilot-studio` from the terminal. |
+| **GitHub Copilot CLI** | Manual | Run `/plugin update xeno-skills-for-copilot-studio` in an interactive session, or `copilot plugin update xeno-skills-for-copilot-studio` from the terminal. |
 | **VS Code** | Extension auto-update | VS Code handles updates automatically when extension auto-update is enabled in settings. |
 
 ## Usage
