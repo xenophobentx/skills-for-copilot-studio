@@ -42,6 +42,17 @@ function run(cwd, env, stdin) {
   });
 }
 
+// The folder comparison lives in the hook, which runs on load. Extract the real
+// function and evaluate it with the platform as an argument.
+const hookSrc = fs.readFileSync(HOOK, "utf8");
+const sfStart = hookSrc.indexOf("function sameFolder(");
+const sfEnd = hookSrc.indexOf("function hasCopilotStudioProject(");
+if (sfStart === -1 || sfEnd === -1 || sfEnd < sfStart) {
+  console.error("Could not locate sameFolder in hooks/print-prompt.js");
+  process.exit(1);
+}
+const sameFolder = eval("(" + hookSrc.slice(sfStart, sfEnd).trim().replace(/^function sameFolder/, "function") + ")");
+
 let passed = 0;
 let failed = 0;
 function check(name, ok) {
@@ -100,6 +111,18 @@ try {
   check("home folder: pointer", run(fakeHome, homeEnv) !== FULL);
   check("home folder given on stdin: pointer", run(plainDir, homeEnv, JSON.stringify({ cwd: fakeHome })) !== FULL);
   check("a project folder below home still gets the full prompt", run(path.join(fakeHome, "work"), homeEnv) === FULL);
+
+  // Windows folder names are case-insensitive, other systems are not.
+  check("sameFolder: drive letter case differs on win32", sameFolder("c:\\Users\\Me", "C:\\Users\\Me", "win32"));
+  check("sameFolder: folder name case differs on win32", sameFolder("C:\\users\\me", "C:\\Users\\Me", "win32"));
+  check("sameFolder: different folders on win32", !sameFolder("C:\\Users\\Me", "C:\\Users\\You", "win32"));
+  check("sameFolder: case matters on linux", !sameFolder("/home/Me", "/home/me", "linux"));
+  check("sameFolder: equal paths on linux", sameFolder("/home/me", "/home/me", "linux"));
+  if (process.platform === "win32") {
+    // End to end: the home folder given in a different case is still skipped.
+    const swapped = fakeHome.replace(/[a-z]/g, (c) => c.toUpperCase());
+    check("home folder in different case on Windows: pointer", run(plainDir, homeEnv, JSON.stringify({ cwd: swapped })) !== FULL);
+  }
 
   // Filesystem root: never scanned.
   const fsRoot = path.parse(process.cwd()).root;

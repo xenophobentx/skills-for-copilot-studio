@@ -38,9 +38,19 @@ function real(p) {
   }
 }
 
+// Windows paths are case-insensitive (drive letter and folder names).
+function sameFolder(a, b, platform) {
+  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 function hasCopilotStudioProject(cwd) {
   const resolved = real(cwd);
-  if (resolved === path.parse(resolved).root || resolved === real(os.homedir())) return false;
+  if (
+    sameFolder(resolved, path.parse(resolved).root, process.platform) ||
+    sameFolder(resolved, real(os.homedir()), process.platform)
+  ) {
+    return false;
+  }
   const top = entries(resolved);
   if (top.some(isMarker)) return true;
   const skip = new Set(['node_modules', '.git']);
