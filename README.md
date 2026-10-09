@@ -64,7 +64,7 @@ The plugin provides five sub-agents, each backed by a specialized agent:
 ## Quick Start
 
 ```bash
-# Clone an agent from the cloud (guided flow — opens browser for sign-in)
+# Clone an agent from the cloud (guided flow, signs in with a browser or a device code over SSH)
 /copilot-studio:copilot-studio-manage clone
 
 # Design and build topics

@@ -72,11 +72,11 @@ The script will parse the URL to extract the environment ID and agent ID, then r
 
 If no `conn.json` found (or user wants a different tenant) → ask for their **tenant ID** (required).
 
-No `--client-id` is needed — the script uses VS Code's first-party client ID with interactive browser login automatically.
+No `--client-id` is needed. The script uses VS Code's first-party client ID and signs in with a browser, or with a device code over SSH or without a display.
 
 ## Phase 1: Select Environment
 
-Tell the user: **"A browser window may open for Microsoft sign-in (tokens are cached after first login)."**
+Tell the user: **"A browser window may open for Microsoft sign-in (tokens are cached after first login)."** Over SSH or without a display the script prints a device code instead. A foreground Bash call returns its output only when the command ends, so start it in the background (Claude Code: `run_in_background: true`; GitHub Copilot CLI: bash `mode: "async"`), check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
 
 Run the list-envs command:
 
@@ -85,7 +85,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js list-envs \
   --tenant-id "<tenantId>"
 ```
 
-**Timeout: 300000ms (5 minutes)** — set this on the Bash tool call to allow time for browser auth.
+**Timeout: 300000ms (5 minutes)**, set on the Bash tool call to allow time for sign-in.
 
 Parse the JSON output. On success (`status: "ok"`), present the environments as a numbered list to the user:
 

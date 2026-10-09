@@ -35689,7 +35689,7 @@ var init_open = __esm({
 // src/shared-auth.js
 var require_shared_auth = __commonJS({
   "src/shared-auth.js"(exports2, module2) {
-    var { log: log2 } = require_shared_utils();
+    var { log: log2, die: die2 } = require_shared_utils();
     var { createCachePlugin } = require_msal_cache();
     var VSCODE_CLIENT_ID2 = "51f81489-12ee-4a9e-aaae-a2591f45987d";
     var ISLAND_RESOURCE_IDS = {
@@ -35776,21 +35776,93 @@ var require_shared_auth = __commonJS({
       if (!result) throw new Error("Device code flow returned no result");
       return buildTokenInfo(result);
     }
+    var INTERACTIVE_TIMEOUT_SECONDS = 300;
+    var MAX_INTERACTIVE_TIMEOUT_SECONDS = 3600;
+    function resolveAuthMode(env = process.env, platform2 = process.platform) {
+      const requested = String(env.CPS_AUTH_MODE || "").trim().toLowerCase();
+      if (requested === "device" || requested === "device-code") {
+        return { mode: "device", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
+      }
+      if (requested === "interactive") {
+        return { mode: "interactive", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
+      }
+      if (requested && requested !== "auto") {
+        throw new Error(`Unknown auth mode "${env.CPS_AUTH_MODE}". Use "device" or "interactive" (--auth-mode or CPS_AUTH_MODE).`);
+      }
+      if (env.SSH_CONNECTION || env.SSH_TTY) {
+        return { mode: "device", reason: "this is an SSH session" };
+      }
+      if (platform2 === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+        return { mode: "device", reason: "there is no display (DISPLAY and WAYLAND_DISPLAY are not set)" };
+      }
+      return { mode: "interactive", reason: null };
+    }
+    function setAuthModeOverride2(value, env = process.env) {
+      if (value === void 0 || value === "") die2("--auth-mode needs a value: device or interactive.");
+      try {
+        resolveAuthMode({ CPS_AUTH_MODE: value }, "linux");
+      } catch (e) {
+        die2(e.message);
+      }
+      env.CPS_AUTH_MODE = value;
+    }
+    function interactiveTimeoutMs(env = process.env) {
+      const raw = String(env.CPS_AUTH_TIMEOUT_SECONDS ?? "").trim();
+      if (!raw) return INTERACTIVE_TIMEOUT_SECONDS * 1e3;
+      const seconds = Number(raw);
+      if (!Number.isFinite(seconds) || seconds < 1 || seconds > MAX_INTERACTIVE_TIMEOUT_SECONDS) {
+        throw new Error(
+          `CPS_AUTH_TIMEOUT_SECONDS must be a number of seconds between 1 and ${MAX_INTERACTIVE_TIMEOUT_SECONDS}, got "${raw}".`
+        );
+      }
+      return seconds * 1e3;
+    }
+    function withSignInTimeout(promise, ms) {
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(
+            `Browser sign-in did not finish within ${Math.round(ms / 1e3)} seconds. Run the command again and pick the right account. If this machine has no usable browser, run it with --auth-mode device (or CPS_AUTH_MODE=device) to sign in with a device code.`
+          ));
+        }, ms);
+      });
+      return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    }
     async function acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
-      const result = await app.acquireTokenInteractive({
-        scopes,
-        openBrowser: async (url) => {
-          log2("");
-          log2(`  Open this URL to sign in: ${url}`);
-          log2("");
-          const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
-          await open2(url);
-        },
-        successTemplate: "<html><body><h1>Login successful. You can close this tab.</h1></body></html>"
-      });
+      const timeoutMs = interactiveTimeoutMs();
+      const result = await withSignInTimeout(
+        app.acquireTokenInteractive({
+          scopes,
+          openBrowser: async (url) => {
+            log2("");
+            log2(`  Open this URL to sign in: ${url}`);
+            log2("");
+            const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
+            await open2(url);
+          },
+          successTemplate: "<html><body><h1>Login successful. You can close this tab.</h1></body></html>"
+        }),
+        timeoutMs
+      );
       if (!result) throw new Error("Interactive flow returned no result");
       return buildTokenInfo(result);
+    }
+    async function acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot) {
+      const { mode, reason } = resolveAuthMode();
+      if (mode === "device") {
+        log2(`Signing in with a device code (${reason}).`);
+        try {
+          return await acquireTokenDeviceCode(tenantId, clientId, scopes, cacheSlot);
+        } catch (e) {
+          if (/AADSTS(53003|530036)\b/.test(e.message)) {
+            e.message += " Your tenant may block device code sign-in. On a machine with a browser, run again with --auth-mode interactive.";
+          }
+          throw e;
+        }
+      }
+      log2("Signing in with the browser...");
+      return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
     }
     async function acquireTokenSilent2(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
@@ -35819,8 +35891,8 @@ var require_shared_auth = __commonJS({
         log2(`${label}: using cached token (expires ${silent.expiresOn})`);
         return silent;
       }
-      log2(`${label}: starting interactive login...`);
-      return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
+      log2(`${label}: no cached token, signing in...`);
+      return acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot);
     }
     async function getOrAcquireIslandToken(tenantId, clusterCategory, label) {
       const resourceId = getIslandResourceId(clusterCategory);
@@ -35839,6 +35911,11 @@ var require_shared_auth = __commonJS({
       buildTokenInfo,
       acquireTokenDeviceCode,
       acquireTokenInteractive,
+      acquireTokenSignIn,
+      resolveAuthMode,
+      setAuthModeOverride: setAuthModeOverride2,
+      interactiveTimeoutMs,
+      withSignInTimeout,
       acquireTokenSilent: acquireTokenSilent2,
       getOrAcquireToken,
       getOrAcquireIslandToken
@@ -35866,12 +35943,32 @@ var {
 } = require_shared_utils();
 var {
   VSCODE_CLIENT_ID,
-  acquireTokenSilent
+  acquireTokenSilent,
+  setAuthModeOverride
 } = require_shared_auth();
-function parseArgs() {
-  const args = process.argv.slice(2);
+function splitMessageError(parts) {
+  const shown = parts.map((p) => JSON.stringify(p)).join(", ");
+  return `Got ${parts.length} separate message arguments (${shown}) but expected one. A message with double quotes is split like this by Windows PowerShell 5.1. Write the message to a UTF-8 file and pass --message-file <path> instead.`;
+}
+function messageArg(utterance, messageFile) {
+  return messageFile ? `--message-file "${messageFile}"` : `"${utterance}"`;
+}
+function readMessageFile(file) {
+  let text;
+  try {
+    text = fs6.readFileSync(file, "utf8");
+  } catch (e) {
+    die(`Cannot read --message-file ${file}: ${e.message}`);
+  }
+  text = text.replace(/^\uFEFF/, "").replace(/\r?\n$/, "");
+  if (!text.trim()) die(`--message-file ${file} is empty.`);
+  return text;
+}
+function parseArgs(args = process.argv.slice(2)) {
+  const positional = [];
   const parsed = {
     utterance: null,
+    messageFile: null,
     clientId: null,
     conversationId: null,
     agentDir: null,
@@ -35909,15 +36006,30 @@ function parseArgs() {
       case "--watermark":
         parsed.watermark = args[++i];
         break;
+      case "--message-file":
+        parsed.messageFile = args[++i];
+        break;
+      case "--auth-mode":
+        setAuthModeOverride(args[++i]);
+        break;
       case "--detect-only":
         parsed.detectOnly = true;
         break;
       default:
         if (!args[i].startsWith("--")) {
-          parsed.utterance = args[i];
+          positional.push(args[i]);
         }
         break;
     }
+  }
+  if (positional.length > 1) die(splitMessageError(positional));
+  if (parsed.messageFile !== null) {
+    if (!parsed.messageFile) die("--message-file needs a path.");
+    if (positional.length > 0) die("Give the message either as an argument or with --message-file, not both.");
+    parsed.utterance = readMessageFile(parsed.messageFile);
+    parsed.messageFile = path2.resolve(parsed.messageFile);
+  } else {
+    parsed.utterance = positional[0] || null;
   }
   if (!parsed.utterance && !parsed.detectOnly) die("Missing utterance argument.");
   return parsed;
@@ -36055,7 +36167,7 @@ async function chatDirectLine(utterance, conversationId, params) {
         activities: [],
         watermark,
         resume_command: `${connFlag} "<VALIDATION_CODE>" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${watermark}"`,
-        followup_command: `${connFlag} "${utterance}" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${watermark}"`
+        followup_command: `${connFlag} ${messageArg(utterance, params.messageFile)} --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${watermark}"`
       };
     }
     log(`Received ${startActivities.length} start activities.`);
@@ -36097,7 +36209,7 @@ async function chatDirectLine(utterance, conversationId, params) {
       activities: responseResult.activities,
       watermark: responseResult.watermark,
       resume_command: `${connFlag} "<VALIDATION_CODE>" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${responseResult.watermark}"`,
-      followup_command: `${connFlag} "${utterance}" --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${responseResult.watermark}"`
+      followup_command: `${connFlag} ${messageArg(utterance, params.messageFile)} --conversation-id "${conversationId}" --directline-token "${token}" --watermark "${responseResult.watermark}"`
     };
   }
   return {
@@ -36115,15 +36227,15 @@ function activityToDict(activity) {
   return JSON.parse(JSON.stringify(activity));
 }
 async function getSdkAccessToken(tenantId, clientId) {
-  const { acquireTokenSilent: sharedSilent, acquireTokenInteractive: sharedInteractive } = require_shared_auth();
+  const { acquireTokenSilent: sharedSilent, acquireTokenSignIn: sharedSignIn } = require_shared_auth();
   const scope = "https://api.powerplatform.com/.default";
   const silent = await sharedSilent(tenantId, clientId, [scope], "test-agent");
   if (silent) {
     log("Using cached token.");
     return silent.accessToken;
   }
-  log("No cached token \u2014 starting interactive login...");
-  const token = await sharedInteractive(tenantId, clientId, [scope], "test-agent");
+  log("No cached token, signing in...");
+  const token = await sharedSignIn(tenantId, clientId, [scope], "test-agent");
   return token.accessToken;
 }
 async function chatSdk(utterance, conversationId, config, token) {
@@ -36201,7 +36313,8 @@ async function main() {
       directlineSecret: args.directlineSecret,
       directlineDomain: args.directlineDomain,
       directlineToken: args.directlineToken,
-      watermark: args.watermark
+      watermark: args.watermark,
+      messageFile: args.messageFile
     };
     try {
       const result = await chatDirectLine(args.utterance, args.conversationId, params);
@@ -36237,7 +36350,8 @@ async function main() {
     const params = {
       tokenEndpoint: modeResult.tokenEndpoint,
       directlineToken: args.directlineToken,
-      watermark: args.watermark
+      watermark: args.watermark,
+      messageFile: args.messageFile
     };
     try {
       const result = await chatDirectLine(args.utterance, args.conversationId, params);
@@ -36266,7 +36380,7 @@ async function main() {
     }
   }
 }
-main();
+main().catch((e) => die(`Unexpected error: ${e.message}`));
 /*! Bundled license information:
 
 safe-buffer/index.js:

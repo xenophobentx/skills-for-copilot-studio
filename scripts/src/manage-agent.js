@@ -3,7 +3,7 @@
  * LanguageServerHost binary, using its custom LSP protocol.
  *
  * Subcommands:
- *   node manage-agent.bundle.js auth                          # Device code flow for both tokens
+ *   node manage-agent.bundle.js auth                          # Sign in for both tokens (browser, or device code over SSH)
  *   node manage-agent.bundle.js push --workspace <path>       # Push local changes
  *   node manage-agent.bundle.js pull --workspace <path>       # Pull remote changes
  *   node manage-agent.bundle.js clone --workspace <path>      # Clone agent to local
@@ -21,6 +21,9 @@
  *   CPS_ENVIRONMENT_URL     Dataverse environment URL (e.g. https://org123.crm.dynamics.com)
  *   CPS_AGENT_MGMT_URL      Agent management URL
  *   CPS_ENVIRONMENT_NAME    Display name for the environment
+ *   CPS_AUTH_MODE           device | interactive (default: device over SSH or without a display, else interactive);
+ *                           the --auth-mode flag does the same and wins
+ *   CPS_AUTH_TIMEOUT_SECONDS  How long the browser sign-in may take (default 300)
  *
  * Output: JSON on stdout, diagnostics on stderr.
  */
@@ -40,6 +43,7 @@ const {
   acquireTokenDeviceCode,
   acquireTokenInteractive,
   acquireTokenSilent,
+  setAuthModeOverride,
   getOrAcquireToken,
   getOrAcquireIslandToken,
 } = require("./shared-auth");
@@ -163,6 +167,9 @@ function parseArgs() {
         break;
       case "--url":
         parsed.url = args[++i];
+        break;
+      case "--auth-mode":
+        setAuthModeOverride(args[++i]);
         break;
       default:
         if (!args[i].startsWith("--") && !parsed.command) {
@@ -486,10 +493,11 @@ class LspClient {
   async stop() {
     if (!this.running) return;
 
-    // Race shutdown+exit against a 2s timeout
+    // Race shutdown+exit against a 2s timeout. LSP defines no params for either
+    // (not even null); the server rejects shutdown if it receives some.
     const graceful = (async () => {
-      await this._connection.sendRequest("shutdown", null);
-      this._connection.sendNotification("exit", null);
+      await this._connection.sendRequest("shutdown");
+      this._connection.sendNotification("exit");
     })();
     const timeout = new Promise((resolve) => setTimeout(resolve, 2000));
 

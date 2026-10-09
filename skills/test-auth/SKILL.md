@@ -62,11 +62,13 @@ If the user doesn't have one, guide them:
 
 ## Step 3: Authenticate
 
-Run the auth command (opens a browser — no device code needed):
+Run the auth command (opens a browser; over SSH or without a display it prints a device code instead, and `--auth-mode device|interactive` forces one flow):
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js auth --workspace <path> --client-id <id>
 ```
+
+A foreground Bash call returns its output only when the command ends, so start it in the background (Claude Code: `run_in_background: true`; GitHub Copilot CLI: bash `mode: "async"`), check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
 
 If successful, you'll see:
 ```json
