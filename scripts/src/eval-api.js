@@ -192,7 +192,7 @@ async function getToken(config) {
     return silent.accessToken;
   }
 
-  // No cached token — sign in (browser, or device code over SSH / without a display)
+  // No cached token: sign in (browser, or device code over SSH or without a display)
   log("No cached token, signing in...");
   const token = await acquireTokenSignIn(config.tenantId, clientId, [PP_API_SCOPE], cacheSlot);
   return token.accessToken;

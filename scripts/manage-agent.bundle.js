@@ -17942,7 +17942,7 @@ var require_shared_auth = __commonJS({
         } : void 0
       };
     }
-    async function acquireTokenDeviceCode2(tenantId, clientId, scopes, cacheSlot) {
+    async function acquireTokenDeviceCode(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
       const result = await app.acquireTokenByDeviceCode({
         scopes,
@@ -18016,7 +18016,7 @@ var require_shared_auth = __commonJS({
       });
       return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
     }
-    async function acquireTokenInteractive2(tenantId, clientId, scopes, cacheSlot) {
+    async function acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
       const timeoutMs = interactiveTimeoutMs();
       const result = await withSignInTimeout(
@@ -18041,7 +18041,7 @@ var require_shared_auth = __commonJS({
       if (mode === "device") {
         log2(`Signing in with a device code (${reason}).`);
         try {
-          return await acquireTokenDeviceCode2(tenantId, clientId, scopes, cacheSlot);
+          return await acquireTokenDeviceCode(tenantId, clientId, scopes, cacheSlot);
         } catch (e) {
           if (/AADSTS(53003|530036)\b/.test(e.message)) {
             e.message += " Your tenant may block device code sign-in. On a machine with a browser, run again with --auth-mode interactive.";
@@ -18050,7 +18050,7 @@ var require_shared_auth = __commonJS({
         }
       }
       log2("Signing in with the browser...");
-      return acquireTokenInteractive2(tenantId, clientId, scopes, cacheSlot);
+      return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
     }
     async function acquireTokenSilent2(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
@@ -18097,8 +18097,8 @@ var require_shared_auth = __commonJS({
       getIslandResourceId: getIslandResourceId2,
       createMsalApp,
       buildTokenInfo: buildTokenInfo2,
-      acquireTokenDeviceCode: acquireTokenDeviceCode2,
-      acquireTokenInteractive: acquireTokenInteractive2,
+      acquireTokenDeviceCode,
+      acquireTokenInteractive,
       acquireTokenSignIn,
       resolveAuthMode: resolveAuthMode2,
       setAuthModeOverride: setAuthModeOverride2,
@@ -18136,7 +18136,7 @@ var require_doctor = __commonJS({
         return e && e.code === "ENOENT" ? { missing: true } : { error: firstLine(e) };
       }
       try {
-        return { value: JSON.parse(text.replace(/^﻿/, "")) };
+        return { value: JSON.parse(text.replace(/^\uFEFF/, "")) };
       } catch (e) {
         return { error: firstLine(e) };
       }
@@ -18578,8 +18578,6 @@ var {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
   buildTokenInfo,
-  acquireTokenDeviceCode,
-  acquireTokenInteractive,
   acquireTokenSilent,
   resolveAuthMode,
   setAuthModeOverride,

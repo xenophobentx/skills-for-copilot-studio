@@ -34,7 +34,7 @@ Once installed, the plugin is available globally.
 ### Option B: Run locally from a clone
 
 ```bash
-git clone https://github.com/microsoft/skills-for-copilot-studio.git
+git clone https://github.com/xenophobentx/skills-for-copilot-studio.git
 
 # Load for a single session:
 claude --plugin-dir /path/to/skills-for-copilot-studio
@@ -43,7 +43,7 @@ claude --plugin-dir /path/to/skills-for-copilot-studio
 claude plugin install /path/to/skills-for-copilot-studio --scope user
 ```
 
-To verify, type `@` in the input — you should see `copilot-studio:copilot-studio-manage`, `copilot-studio:copilot-studio-author`, `copilot-studio:copilot-studio-test`, `copilot-studio:copilot-studio-advisor`, and `copilot-studio:copilot-studio-describer` in the autocomplete menu.
+To verify, type `@` in the input. You should see `copilot-studio:copilot-studio-manage`, `copilot-studio:copilot-studio-author`, `copilot-studio:copilot-studio-test`, `copilot-studio:copilot-studio-advisor`, and `copilot-studio:copilot-studio-describer` in the autocomplete menu.
 
 ---
 

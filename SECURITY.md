@@ -1,14 +1,6 @@
-<!-- BEGIN MICROSOFT SECURITY.MD V1.0.0 BLOCK -->
-
 ## Security
 
-Microsoft takes the security of our software products and services seriously, which
-includes all source code repositories in our GitHub organizations.
+This is a personal fork of [microsoft/skills-for-copilot-studio](https://github.com/microsoft/skills-for-copilot-studio). Please do not report security problems in public issues.
 
-**Please do not report security vulnerabilities through public GitHub issues.**
-
-For security reporting information, locations, contact information, and policies,
-please review the latest guidance for Microsoft repositories at
-[https://aka.ms/SECURITY.md](https://aka.ms/SECURITY.md).
-
-<!-- END MICROSOFT SECURITY.MD BLOCK -->
+- For a problem in code that this fork changed (see [FORK.md](FORK.md)), report it privately to me through this repository's GitHub security advisories ("Report a vulnerability" on the Security tab).
+- For a problem that also exists upstream, follow Microsoft's process at [https://aka.ms/SECURITY.md](https://aka.ms/SECURITY.md).

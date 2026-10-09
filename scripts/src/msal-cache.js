@@ -15,7 +15,7 @@ const os = require("os");
 
 /**
  * msal-node-extensions requires keytar at load time on every platform, but only
- * calls it on macOS and Linux — Windows uses DPAPI. If the native binding is
+ * calls it on macOS and Linux; Windows uses DPAPI. If the native binding is
  * missing after install (reported on win32-arm64), on Windows we register a
  * stub in its place instead of crashing. Any keytar load failure is tolerated
  * there, since nothing on Windows calls it.
@@ -29,7 +29,7 @@ function stubMissingKeytarOnWindows() {
     require(keytarPath);
     return; // native binding loads fine
   } catch {
-    if (!keytarPath) return; // keytar not installed at all — let the real error surface
+    if (!keytarPath) return; // keytar not installed at all, let the real error surface
   }
   const unavailable = () => Promise.reject(new Error("keytar native binding is not available on this platform"));
   const Module = require("module");

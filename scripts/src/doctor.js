@@ -37,7 +37,7 @@ function readJson(ctx, file) {
     return e && e.code === "ENOENT" ? { missing: true } : { error: firstLine(e) };
   }
   try {
-    return { value: JSON.parse(text.replace(/^﻿/, "")) };
+    return { value: JSON.parse(text.replace(/^\uFEFF/, "")) };
   } catch (e) {
     return { error: firstLine(e) };
   }

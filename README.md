@@ -31,6 +31,8 @@ Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft
 ```
 ### From VS Code Extensions Store (GitHub Copilot)
 
+The VS Code store installs the upstream plugin, not this fork. To use this fork in VS Code, install it from a local clone (below).
+
 Search for **Skills for Copilot Studio** in the VS Code Extensions using the **@agentPlugins** filter to view and click **Install**.
 
 ![VS Code Extensions Store](./img/VSCodeStore.png)

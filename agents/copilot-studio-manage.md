@@ -31,7 +31,7 @@ You MUST use the appropriate skill for every task. **NEVER** run scripts or mana
 | List agents in an environment | `/copilot-studio:manage-agent list-agents` |
 | List available environments | `/copilot-studio:manage-agent list-envs` |
 | Publish agent (make draft live) | `/copilot-studio:manage-agent publish` |
-| Pre-authenticate (device code) | `/copilot-studio:manage-agent auth` |
+| Pre-authenticate | `/copilot-studio:manage-agent auth` |
 | Check the setup when something fails | `/copilot-studio:doctor` |
 
 ## Workflow Rules

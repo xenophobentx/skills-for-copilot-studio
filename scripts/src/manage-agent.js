@@ -41,8 +41,6 @@ const {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
   buildTokenInfo,
-  acquireTokenDeviceCode,
-  acquireTokenInteractive,
   acquireTokenSilent,
   resolveAuthMode,
   setAuthModeOverride,

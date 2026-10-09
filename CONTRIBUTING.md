@@ -4,7 +4,7 @@
 
 ```bash
 # Clone the repo
-git clone https://github.com/microsoft/skills-for-copilot-studio.git
+git clone https://github.com/xenophobentx/skills-for-copilot-studio.git
 cd skills-for-copilot-studio
 
 # Load the plugin from your local clone (one-off session)
@@ -54,10 +54,10 @@ npm run build
 
 ```bash
 # Install (user-wide)
-/plugin install copilot-studio@microsoft/skills-for-copilot-studio --scope user
+/plugin install copilot-studio@xeno-skills-for-copilot-studio --scope user
 
 # Install for a specific project (shared via version control)
-/plugin install copilot-studio@microsoft/skills-for-copilot-studio --scope project
+/plugin install copilot-studio@xeno-skills-for-copilot-studio --scope project
 
 # Check installed plugins
 /plugin list

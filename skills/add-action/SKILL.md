@@ -12,7 +12,7 @@ agent: copilot-studio-author
 
 This skill guides users through adding a new connector action to their Copilot Studio agent. **It does NOT write action YAML directly** because connector actions require a connection reference that can only be created through the Copilot Studio UI.
 
-**Do not create or modify any file in this skill** — no `actions/*.mcs.yml`, no `connectionreferences.mcs.yml`, and no changes to the agent instructions or settings — even when the user asks for an MCP server or a connector by name and even if you know the endpoint. A hand-written action file has no real connection reference, so it would not work after a push. The answer to the user is the portal guidance below. Files are only touched after the user has added the action in the portal and pulled it, and then only through `/copilot-studio:edit-action`.
+**Do not create or modify any file in this skill** : no `actions/*.mcs.yml`, no `connectionreferences.mcs.yml`, and no changes to the agent instructions or settings, even when the user asks for an MCP server or a connector by name and even if you know the endpoint. A hand-written action file has no real connection reference, so it would not work after a push. The answer to the user is the portal guidance below. Files are only touched after the user has added the action in the portal and pulled it, and then only through `/copilot-studio:edit-action`.
 
 ## Why This Is a Guide, Not a Generator
 
@@ -113,4 +113,4 @@ Read: ${CLAUDE_SKILL_DIR}/../../templates/actions/connector-action.mcs.yml
 Read: ${CLAUDE_SKILL_DIR}/../../templates/actions/mcp-action.mcs.yml
 ```
 
-Use these alongside `connector-lookup operation` output to understand both the YAML structure and the full inputs/outputs for a specific operation. They are a reference for the user-facing guidance only — never use them as the base for a new action file.
+Use these alongside `connector-lookup operation` output to understand both the YAML structure and the full inputs/outputs for a specific operation. They are a reference for the user-facing guidance only. Never use them as the base for a new action file.
