@@ -58,13 +58,29 @@ function cliDir(ctx) {
   return path.join(ctx.home, ".copilot-studio-cli");
 }
 
-// Same lookup the bundles do at startup: CLAUDE_PLUGIN_DATA, else plugin-paths.json.
+// Path file entry: pluginData as a string, only if the folder exists (same as the bundle banner).
+function pathFileData(ctx, name) {
+  const r = readJson(ctx, path.join(cliDir(ctx), name));
+  const v = r.value && r.value.pluginData;
+  return typeof v === "string" && exists(ctx, v) ? v : null;
+}
+
+// Folder of a plugin install, recognized by the marker setup.js writes last.
+function ours(ctx, dir) {
+  return typeof dir === "string" && dir !== "" && exists(ctx, path.join(dir, "native-deps.json"));
+}
+
+// Same lookup, in the same order, as the banner in scripts/package.json. The shared
+// CLAUDE_PLUGIN_DATA and plugin-paths.json belong to whichever plugin wrote last, so they
+// count only when the folder holds this plugin's marker. tests/doctor.test.js runs the
+// banner and this function on the same fixtures.
 function pluginData(ctx) {
-  if (ctx.env.CLAUDE_PLUGIN_DATA) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
-  const r = readJson(ctx, path.join(cliDir(ctx), "plugin-paths.json"));
-  if (r.value && typeof r.value.pluginData === "string") {
-    return { dir: r.value.pluginData, source: "plugin-paths.json" };
-  }
+  if (ctx.env.SFCS_PLUGIN_DATA) return { dir: ctx.env.SFCS_PLUGIN_DATA, source: "SFCS_PLUGIN_DATA" };
+  const own = pathFileData(ctx, "sfcs-plugin-paths.json");
+  if (own) return { dir: own, source: "sfcs-plugin-paths.json" };
+  if (ours(ctx, ctx.env.CLAUDE_PLUGIN_DATA)) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
+  const old = pathFileData(ctx, "plugin-paths.json");
+  if (ours(ctx, old)) return { dir: old, source: "plugin-paths.json" };
   return null;
 }
 
@@ -84,14 +100,6 @@ function samePath(ctx, a, b) {
   const x = real(a);
   const y = real(b);
   return ctx.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
-}
-
-// The pluginRoot in plugin-paths.json when it is not this plugin, else null.
-function foreignRoot(ctx) {
-  const r = readJson(ctx, path.join(cliDir(ctx), "plugin-paths.json"));
-  const root = r.value && r.value.pluginRoot;
-  if (typeof root !== "string" || samePath(ctx, root, ownRoot(ctx))) return null;
-  return root;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,8 +185,7 @@ function checkNative(ctx, deps, add) {
   const dirs = pd ? [path.join(pd.dir, "node_modules")] : [];
   const log = pd ? path.join(pd.dir, "install.log") : null;
   const logHint = log && exists(ctx, log) ? ` See ${log}.` : "";
-  const foreign = foreignRoot(ctx);
-  const session = "Start a new session with this plugin loaded." + (foreign ? " plugin-paths.json points to another plugin." : "");
+  const session = "Start a new session with this plugin loaded.";
   let allLoad = true;
 
   for (const name of NATIVE_MODULES) {
@@ -226,35 +233,37 @@ function checkNative(ctx, deps, add) {
 }
 
 function checkPluginPaths(ctx, deps, add) {
-  const file = path.join(cliDir(ctx), "plugin-paths.json");
+  const file = path.join(cliDir(ctx), "sfcs-plugin-paths.json");
   const r = readJson(ctx, file);
   if (r.missing) {
-    if (ctx.env.CLAUDE_PLUGIN_DATA) {
-      add("plugin-paths", "OK", "no plugin-paths.json, CLAUDE_PLUGIN_DATA is set");
+    if (ctx.env.SFCS_PLUGIN_DATA) {
+      add("plugin-paths", "OK", "no sfcs-plugin-paths.json, SFCS_PLUGIN_DATA is set");
     } else {
       add("plugin-paths", "WARN", `${file} not found`, "Start a session with the plugin loaded, the setup hook writes it.");
     }
-    return;
-  }
-  if (r.error || !r.value || typeof r.value !== "object") {
-    add("plugin-paths", "FAIL", `${file} is not valid JSON`, "Delete it and start a new session.");
-    return;
-  }
-  const foreign = foreignRoot(ctx);
-  if (foreign) {
-    add(
-      "plugin-paths",
-      "WARN",
-      `${file} points to another plugin (pluginRoot ${foreign}), this plugin is at ${ownRoot(ctx)}`,
-      "Scripts run outside a Claude Code session load the native modules from that plugin's data folder. Start a session with this plugin loaded to rewrite the file."
-    );
-    return;
-  }
-  const bad = ["pluginData", "pluginRoot"].filter((k) => typeof r.value[k] !== "string" || !exists(ctx, r.value[k]));
-  if (bad.length > 0) {
-    add("plugin-paths", "WARN", `${bad.join(" and ")} in ${file} does not exist`, "Start a new session to rewrite it.");
+  } else if (r.error || !r.value || typeof r.value !== "object" || Array.isArray(r.value)) {
+    add("plugin-paths", "WARN", `${file} is not valid, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
+  } else if (typeof r.value.pluginData !== "string" || !exists(ctx, r.value.pluginData)) {
+    add("plugin-paths", "WARN", `pluginData in ${file} is missing or does not exist, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
   } else {
-    add("plugin-paths", "OK", `${file} points to existing folders`);
+    const pd = pluginData(ctx);
+    if (pd && pd.source === "SFCS_PLUGIN_DATA" && !samePath(ctx, pd.dir, r.value.pluginData)) {
+      add("plugin-paths", "OK", `${file} points to ${r.value.pluginData}; this session uses SFCS_PLUGIN_DATA (${pd.dir})`);
+    } else {
+      add("plugin-paths", "OK", `${file} points to an existing folder`);
+    }
+  }
+
+  // The shared file of the earlier versions: information only, another plugin may write it.
+  const old = path.join(cliDir(ctx), "plugin-paths.json");
+  const o = readJson(ctx, old);
+  if (o.missing) return;
+  const data = o.value && typeof o.value.pluginData === "string" ? o.value.pluginData : null;
+  if (data && ours(ctx, data)) {
+    add("plugin-paths-old", "OK", `${old} is an old file from an earlier version, still accepted`);
+  } else {
+    const who = o.value && typeof o.value.pluginRoot === "string" ? ` (pluginRoot ${o.value.pluginRoot})` : "";
+    add("plugin-paths-old", "OK", `${old} was written by another plugin${who} or is not readable, this plugin does not use it`);
   }
 }
 
@@ -503,4 +512,4 @@ function makeContext(args) {
   };
 }
 
-module.exports = { runDoctor, formatLine, makeContext };
+module.exports = { runDoctor, formatLine, makeContext, pluginData };
