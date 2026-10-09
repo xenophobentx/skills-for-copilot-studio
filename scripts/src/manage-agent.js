@@ -31,7 +31,7 @@
  * Output: JSON on stdout, diagnostics on stderr.
  */
 
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { randomUUID } = require("crypto");
 const path = require("path");
 const fs = require("fs");
@@ -1765,7 +1765,8 @@ async function cmdClone(args) {
 function killTree(child) {
   try {
     if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      // Synchronous, so it is done before this process can exit.
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 10000 });
     } else {
       process.kill(-child.pid, "SIGKILL");
     }

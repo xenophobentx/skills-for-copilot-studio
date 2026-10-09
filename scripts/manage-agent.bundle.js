@@ -18728,7 +18728,7 @@ var require_doctor = __commonJS({
 });
 
 // src/manage-agent.js
-var { spawn } = require("child_process");
+var { spawn, spawnSync } = require("child_process");
 var { randomUUID } = require("crypto");
 var path2 = require("path");
 var fs6 = require("fs");
@@ -20096,7 +20096,7 @@ async function cmdClone(args) {
 function killTree(child) {
   try {
     if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 1e4 });
     } else {
       process.kill(-child.pid, "SIGKILL");
     }
