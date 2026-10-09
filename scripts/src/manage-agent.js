@@ -519,7 +519,9 @@ class LspClient {
     // (not even null); the server rejects shutdown if it receives some.
     const graceful = (async () => {
       await this._connection.sendRequest("shutdown");
-      this._connection.sendNotification("exit");
+      // The server may close the socket first. Without the catch, a late write
+      // error crashes the process, which matters when work continues after stop().
+      this._connection.sendNotification("exit").catch(() => {});
     })();
     const timeout = new Promise((resolve) => setTimeout(resolve, 2000));
 
