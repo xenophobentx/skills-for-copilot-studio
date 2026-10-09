@@ -325,7 +325,7 @@ try {
     assertEqual(/version not read/.test(one().message), true, "and says the version was not read");
     fs.mkdirSync(path.join(bin, ".store", "microsoft.powerapps.cli.tool", "2.12.2"), { recursive: true });
     const old = one();
-    assertEqual([old.level, /pac 2\.12\.2/.test(old.message), /our own tests/.test(old.hint)], ["OK", true, true], "2.12.2 from the dotnet tool store is OK and carries the note");
+    assertEqual([old.level, /pac 2\.12\.2/.test(old.message), /In our tests pac 2\.12\.2/.test(old.hint)], ["OK", true, true], "2.12.2 from the dotnet tool store is OK and carries the note");
     fs.mkdirSync(path.join(bin, ".store", "microsoft.powerapps.cli.tool", "2.13.1"), { recursive: true });
     const cur = one();
     assertEqual([cur.level, /pac 2\.13\.1/.test(cur.message), cur.hint], ["OK", true, undefined], "the newest folder wins, 2.13.1 has no note");
