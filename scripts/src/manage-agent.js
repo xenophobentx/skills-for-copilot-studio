@@ -3,7 +3,7 @@
  * LanguageServerHost binary, using its custom LSP protocol.
  *
  * Subcommands:
- *   node manage-agent.bundle.js auth                          # Device code flow for both tokens
+ *   node manage-agent.bundle.js auth                          # Sign in for both tokens (browser, or device code over SSH)
  *   node manage-agent.bundle.js push --workspace <path>       # Push local changes
  *   node manage-agent.bundle.js pull --workspace <path>       # Pull remote changes
  *   node manage-agent.bundle.js clone --workspace <path>      # Clone agent to local
@@ -21,6 +21,8 @@
  *   CPS_ENVIRONMENT_URL     Dataverse environment URL (e.g. https://org123.crm.dynamics.com)
  *   CPS_AGENT_MGMT_URL      Agent management URL
  *   CPS_ENVIRONMENT_NAME    Display name for the environment
+ *   CPS_AUTH_MODE           device | interactive (default: device over SSH or without a display, else interactive)
+ *   CPS_AUTH_TIMEOUT_SECONDS  How long the browser sign-in may take (default 300)
  *
  * Output: JSON on stdout, diagnostics on stderr.
  */

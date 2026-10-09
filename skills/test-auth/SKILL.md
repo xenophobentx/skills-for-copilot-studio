@@ -61,7 +61,7 @@ If the user doesn't have one, guide them:
 
 ## Step 3: Authenticate
 
-Run the auth command (opens a browser — no device code needed):
+Run the auth command (opens a browser; over SSH or without a display it prints a device code instead):
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js auth --workspace <path> --client-id <id>

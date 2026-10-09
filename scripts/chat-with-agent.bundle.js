@@ -35776,21 +35776,68 @@ var require_shared_auth = __commonJS({
       if (!result) throw new Error("Device code flow returned no result");
       return buildTokenInfo(result);
     }
+    var INTERACTIVE_TIMEOUT_SECONDS = 300;
+    function resolveAuthMode(env = process.env, platform2 = process.platform) {
+      const requested = String(env.CPS_AUTH_MODE || "").trim().toLowerCase();
+      if (requested === "device" || requested === "device-code") {
+        return { mode: "device", reason: "CPS_AUTH_MODE=device" };
+      }
+      if (requested === "interactive") {
+        return { mode: "interactive", reason: "CPS_AUTH_MODE=interactive" };
+      }
+      if (requested && requested !== "auto") {
+        throw new Error(`Unknown CPS_AUTH_MODE "${env.CPS_AUTH_MODE}". Use "device" or "interactive".`);
+      }
+      if (env.SSH_CONNECTION || env.SSH_TTY) {
+        return { mode: "device", reason: "this is an SSH session" };
+      }
+      if (platform2 === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+        return { mode: "device", reason: "there is no display (DISPLAY and WAYLAND_DISPLAY are not set)" };
+      }
+      return { mode: "interactive", reason: null };
+    }
+    function interactiveTimeoutMs(env = process.env) {
+      const seconds = Number(env.CPS_AUTH_TIMEOUT_SECONDS);
+      return (seconds > 0 ? seconds : INTERACTIVE_TIMEOUT_SECONDS) * 1e3;
+    }
+    function withSignInTimeout(promise, ms) {
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(
+            `Browser sign-in did not finish within ${Math.round(ms / 1e3)} seconds. If this machine has no usable browser, run again with CPS_AUTH_MODE=device to sign in with a device code. If the browser showed an AADSTS error, you may have picked the wrong account: open the printed URL again and choose another one.`
+          ));
+        }, ms);
+      });
+      return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    }
     async function acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
-      const result = await app.acquireTokenInteractive({
-        scopes,
-        openBrowser: async (url) => {
-          log2("");
-          log2(`  Open this URL to sign in: ${url}`);
-          log2("");
-          const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
-          await open2(url);
-        },
-        successTemplate: "<html><body><h1>Login successful. You can close this tab.</h1></body></html>"
-      });
+      const result = await withSignInTimeout(
+        app.acquireTokenInteractive({
+          scopes,
+          openBrowser: async (url) => {
+            log2("");
+            log2(`  Open this URL to sign in: ${url}`);
+            log2("");
+            const open2 = (await Promise.resolve().then(() => (init_open(), open_exports))).default;
+            await open2(url);
+          },
+          successTemplate: "<html><body><h1>Login successful. You can close this tab.</h1></body></html>"
+        }),
+        interactiveTimeoutMs()
+      );
       if (!result) throw new Error("Interactive flow returned no result");
       return buildTokenInfo(result);
+    }
+    async function acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot) {
+      const { mode, reason } = resolveAuthMode();
+      if (mode === "device") {
+        log2(`Signing in with a device code (${reason}).`);
+        return acquireTokenDeviceCode(tenantId, clientId, scopes, cacheSlot);
+      }
+      log2("Signing in with the browser...");
+      return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
     }
     async function acquireTokenSilent2(tenantId, clientId, scopes, cacheSlot) {
       const app = await createMsalApp(tenantId, clientId, cacheSlot);
@@ -35819,8 +35866,8 @@ var require_shared_auth = __commonJS({
         log2(`${label}: using cached token (expires ${silent.expiresOn})`);
         return silent;
       }
-      log2(`${label}: starting interactive login...`);
-      return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
+      log2(`${label}: no cached token, signing in...`);
+      return acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot);
     }
     async function getOrAcquireIslandToken(tenantId, clusterCategory, label) {
       const resourceId = getIslandResourceId(clusterCategory);
@@ -35839,6 +35886,10 @@ var require_shared_auth = __commonJS({
       buildTokenInfo,
       acquireTokenDeviceCode,
       acquireTokenInteractive,
+      acquireTokenSignIn,
+      resolveAuthMode,
+      interactiveTimeoutMs,
+      withSignInTimeout,
       acquireTokenSilent: acquireTokenSilent2,
       getOrAcquireToken,
       getOrAcquireIslandToken
@@ -36115,15 +36166,15 @@ function activityToDict(activity) {
   return JSON.parse(JSON.stringify(activity));
 }
 async function getSdkAccessToken(tenantId, clientId) {
-  const { acquireTokenSilent: sharedSilent, acquireTokenInteractive: sharedInteractive } = require_shared_auth();
+  const { acquireTokenSilent: sharedSilent, acquireTokenSignIn: sharedSignIn } = require_shared_auth();
   const scope = "https://api.powerplatform.com/.default";
   const silent = await sharedSilent(tenantId, clientId, [scope], "test-agent");
   if (silent) {
     log("Using cached token.");
     return silent.accessToken;
   }
-  log("No cached token \u2014 starting interactive login...");
-  const token = await sharedInteractive(tenantId, clientId, [scope], "test-agent");
+  log("No cached token \u2014 signing in...");
+  const token = await sharedSignIn(tenantId, clientId, [scope], "test-agent");
   return token.accessToken;
 }
 async function chatSdk(utterance, conversationId, config, token) {

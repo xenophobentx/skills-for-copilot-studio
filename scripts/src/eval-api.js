@@ -33,7 +33,7 @@ const { log, die } = require("./shared-utils");
 const {
   VSCODE_CLIENT_ID,
   acquireTokenSilent,
-  acquireTokenInteractive,
+  acquireTokenSignIn,
   getOrAcquireToken,
 } = require("./shared-auth");
 
@@ -188,9 +188,9 @@ async function getToken(config) {
     return silent.accessToken;
   }
 
-  // No cached token — use interactive browser login
-  log("No cached token — starting interactive login...");
-  const token = await acquireTokenInteractive(config.tenantId, clientId, [PP_API_SCOPE], cacheSlot);
+  // No cached token — sign in (browser, or device code over SSH / without a display)
+  log("No cached token — signing in...");
+  const token = await acquireTokenSignIn(config.tenantId, clientId, [PP_API_SCOPE], cacheSlot);
   return token.accessToken;
 }
 

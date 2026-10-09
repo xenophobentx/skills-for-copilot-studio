@@ -341,7 +341,7 @@ function activityToDict(activity) {
 }
 
 async function getSdkAccessToken(tenantId, clientId) {
-  const { acquireTokenSilent: sharedSilent, acquireTokenInteractive: sharedInteractive } = require("./shared-auth");
+  const { acquireTokenSilent: sharedSilent, acquireTokenSignIn: sharedSignIn } = require("./shared-auth");
   const scope = "https://api.powerplatform.com/.default";
 
   // Use "test-agent" cache slot — shared with eval-api.js so one auth covers both
@@ -351,8 +351,8 @@ async function getSdkAccessToken(tenantId, clientId) {
     return silent.accessToken;
   }
 
-  log("No cached token — starting interactive login...");
-  const token = await sharedInteractive(tenantId, clientId, [scope], "test-agent");
+  log("No cached token — signing in...");
+  const token = await sharedSignIn(tenantId, clientId, [scope], "test-agent");
   return token.accessToken;
 }
 
