@@ -54,6 +54,10 @@ The manage-agent script uses two different auth flows depending on the operation
 
 Tokens are cached. After the first sign-in they refresh silently for ~90 days.
 
+## pac backend (optional)
+
+`clone`, `pull`, `push`, `publish` and `list-envs` can use the Power Platform CLI instead of the VS Code extension: add `--backend pac` (or `--backend auto`), or set `CPS_BACKEND`. The default stays the LSP. It needs pac 2.13.1 or newer and a profile made once with `pac auth create --deviceCode --environment <environmentId>`. `validate` and `changes` stay on the LSP. If a pac push result says `"validation":"skipped"`, the LSP did not check the files, so tell the user. Details are in the manage-agent skill.
+
 ## Agent Discovery
 
 The agent workspace is auto-detected by finding the subfolder with `.mcs/conn.json`. **NEVER hardcode an agent name or path.** If multiple agents are found, ask which one.

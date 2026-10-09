@@ -9,6 +9,7 @@ Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), or [VS Code](https://code.visualstudio.com/)
 - [Node.js](https://nodejs.org/) 18+
 - [VS Code](https://code.visualstudio.com/) with the [Copilot Studio Extension](https://github.com/microsoft/vscode-copilotstudio) (required for push/pull/clone operations)
+- Optional: the [Power Platform CLI](https://learn.microsoft.com/power-platform/developer/cli/introduction) (`pac`) 2.13.1 or newer can run clone, pull, push and publish instead of the extension. Opt in with `--backend pac`; see the manage-agent skill. `validate` and `changes` still use the extension.
 
 ## Installation
 

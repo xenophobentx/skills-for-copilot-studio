@@ -23,9 +23,28 @@ This is a new capability under active development. The manage-agent scripts (`ma
 
 ## Prerequisites
 
-1. **Copilot Studio VS Code extension** must be installed (`ms-copilotstudio.vscode-copilotstudio`).
+1. **Copilot Studio VS Code extension** must be installed (`ms-copilotstudio.vscode-copilotstudio`). `validate` and `changes` always need it. For clone, pull, push and publish, pac 2.13.1 or newer can replace it (see the pac backend section below).
 2. **Azure AD app registration** (optional). If `--client-id` is omitted, the script uses VS Code's first-party client ID.
 3. **Environment details** — tenant ID, environment ID, environment URL, and agent management URL. These come from the `.mcs/conn.json` inside a cloned agent workspace (created automatically during clone).
+
+## Optional: the pac backend
+
+`clone`, `pull`, `push`, `publish` and `list-envs` can run through the Power Platform CLI (`pac copilot`) instead of the VS Code extension. It needs no browser sign-in and none of the native sign-in packages.
+
+- Needs pac 2.13.1 or newer. Older versions can lose data when a pull hits a conflict, so they are refused. Install with `dotnet tool install --global Microsoft.PowerApps.CLI.Tool` (or `pac install latest` for the MSI build). If pac is not on PATH, set `CPS_PAC_PATH` to the file or its folder.
+- Needs a pac auth profile. Create one once with `pac auth create --deviceCode --environment <environmentId>` and check it with `pac auth list`.
+- Opt in with `--backend pac` or `CPS_BACKEND=pac`. `--backend auto` uses pac when it is 2.13.1 or newer and has an active auth profile, otherwise the LSP. The default is `lsp`. The flag wins over the variable.
+- Every result of these commands has `"backend":"pac"` or `"backend":"lsp"`.
+- `validate` and `changes` always use the LSP. `list-agents`, `chat-with-agent` and the eval commands keep their own sign-in.
+- The workspace files are the same on both backends, so you can switch back and forth without a new clone.
+
+What changes with pac:
+
+- `push` first runs the same local checks (conflict markers, YAML syntax, neither skipped by `--force`). Then it runs the LSP validation if the extension is installed, with no sign-in needed. If the extension or its `vscode-jsonrpc` package is missing, the push goes ahead without LSP validation and the result says `"validation":"skipped"`. Tell the user that in that case. pac itself accepts unknown node kinds.
+- If the server changed since the last pull, `push` stops with an error: run `pull` first.
+- `pull` with conflicts gives the same `"status":"conflict"` result as before.
+- `publish` pulls, publishes, pulls again and checks that `publishedOn` changed. It takes `--workspace` (and optionally `--agent-id`, `--environment-id`, `--timeout`), not `--tenant-id`. Because it pulls, resolve conflict markers first.
+- `clone` takes `--workspace`, `--agent-id` and `--environment-id` (or `--url`), no tenant needed.
 
 ## Phase 0: Resolve Configuration
 
@@ -268,6 +287,8 @@ All commands output JSON to stdout with a `status` field:
 {"status":"ok","method":"powerplatformls/syncPull","result":{...}}
 ```
 
+Results of `clone`, `pull`, `push`, `publish` and `list-envs` also carry `"backend":"lsp"` or `"backend":"pac"`.
+
 ### Conflict (pull wrote merge markers)
 ```json
 {"status":"conflict","method":"powerplatformls/syncPull","result":{...},"conflicts":[{"file":"topics/Greeting.mcs.yml","lines":[12,14,16]}],"message":"..."}
@@ -292,6 +313,10 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 | "Push refused: YAML syntax errors", or a `yaml-syntax` error from `validate` | A `.mcs.yml` file does not parse (unclosed quote, tab indentation, bad indentation) | Fix the file at the reported line (the real mistake can be above it), run `validate`, then push |
 | Token expired + silent refresh failed | Refresh token expired (~90 days) | Run the `auth` command again |
 | Binary missing | Extension installed but binary not present | Reinstall the extension |
+| `pac X is too old` | `--backend pac` with pac older than 2.13.1 | Update pac (`dotnet tool update --global Microsoft.PowerApps.CLI.Tool` or `pac install latest`) or use `--backend lsp` |
+| "pac was not found" | `--backend pac` and no pac on PATH | Install pac or set `CPS_PAC_PATH` |
+| pac says there is no auth profile, or the token fails | No `pac auth` profile for this environment | `pac auth create --deviceCode --environment <environmentId>` |
+| "Push refused: the agent changed on the server" | pac backend, server moved since the last pull | Run `pull`, resolve any conflict, push again |
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |
 | Publish timed out | Publish still in progress after timeout | Increase `--timeout` or check the Copilot Studio UI for status |
 | `No .mcs/botdefinition.json found in ...` | The workspace has no `.mcs/botdefinition.json`. `.mcs/.gitignore` ignores everything, so a workspace that went through git, or was copied without `.mcs/`, loses it | See "Missing `.mcs/botdefinition.json`" below |
