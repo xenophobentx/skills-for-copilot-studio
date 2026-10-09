@@ -11,6 +11,8 @@ agent: copilot-studio-author
 
 This skill guides users through adding a new connector action to their Copilot Studio agent. **It does NOT write action YAML directly** because connector actions require a connection reference that can only be created through the Copilot Studio UI.
 
+**Do not create or modify any file in this skill** — no `actions/*.mcs.yml`, no `connectionreferences.mcs.yml`, and no changes to the agent instructions or settings — even when the user asks for an MCP server or a connector by name and even if you know the endpoint. A hand-written action file has no real connection reference, so it would not work after a push. The answer to the user is the portal guidance below. Files are only touched after the user has added the action in the portal and pulled it, and then only through `/copilot-studio:edit-action`.
+
 ## Why This Is a Guide, Not a Generator
 
 Connector actions need:
@@ -65,7 +67,7 @@ Use these to help the user understand:
    > 6. Configure the connection (authenticate with your credentials)
    > 7. Save the action
    >
-   > Once saved, pull the updated agent files using the **Copilot Studio VS Code Extension** (Source Control → Pull).
+   > Once saved, pull the updated agent files with `/copilot-studio:manage-agent pull` (or use the **Copilot Studio VS Code Extension**: Source Control → Pull).
 
 5. **After the user confirms they've pulled**, check for the new action file:
    ```
@@ -103,11 +105,11 @@ If the user asks to add an MCP server action:
 
 ## Structural Reference
 
-For structural templates, see:
+To explain what the pulled action file will look like, see the structural templates:
 
 ```
 Read: ${CLAUDE_SKILL_DIR}/../../templates/actions/connector-action.mcs.yml
 Read: ${CLAUDE_SKILL_DIR}/../../templates/actions/mcp-action.mcs.yml
 ```
 
-Use these alongside `connector-lookup operation` output to understand both the YAML structure and the full inputs/outputs for a specific operation.
+Use these alongside `connector-lookup operation` output to understand both the YAML structure and the full inputs/outputs for a specific operation. They are a reference for the user-facing guidance only — never use them as the base for a new action file.

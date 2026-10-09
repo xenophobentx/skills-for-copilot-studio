@@ -28,6 +28,22 @@
           {"pattern": "**/*.mcs.yml", "min_count": 0, "max_count": 0}
         ]
       }
+    },
+    {
+      "id": 3,
+      "name": "MCP request gets portal guidance, not an action file",
+      "prompt": "I want my agent to be able to search Microsoft Learn documentation through their MCP server.",
+      "fixture": "basic-agent",
+      "mock_scripts": [],
+      "checks": {
+        "agent_invoked": "copilot-studio:Copilot Studio Author",
+        "skill_invoked": "copilot-studio:add-action",
+        "files_created": [
+          {"pattern": "actions/*", "min_count": 0, "max_count": 0},
+          {"pattern": "*.mcs.yml", "min_count": 0, "max_count": 0}
+        ],
+        "stdout_contains": ["Copilot Studio", "pull"]
+      }
     }
   ]
 }
