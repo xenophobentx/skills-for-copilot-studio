@@ -6,7 +6,7 @@ const { PublicClientApplication } = require("@azure/msal-node");
 const configDirIndex = process.argv.indexOf("--config-dir");
 if (configDirIndex === -1 || configDirIndex + 1 >= process.argv.length) {
   console.error("Error: --config-dir <path> is required.");
-  console.error("Usage: node run-tests.js --config-dir <path>");
+  console.error("Usage: node run-tests.js --config-dir <path> [--print-config]");
   process.exit(1);
 }
 const configDir = path.resolve(process.argv[configDirIndex + 1]);
@@ -20,6 +20,18 @@ const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
 
 const { environmentUrl, tenantId, clientId } = settings.dataverse;
 const { agentConfigurationId, agentTestSetId } = settings.testRun;
+
+// --print-config: show the tenant/client/environment that would be used, then exit
+// before any sign-in, so the caller can confirm them with the user first.
+if (process.argv.includes("--print-config")) {
+  console.log(`environmentUrl: ${environmentUrl}`);
+  console.log(`tenantId: ${tenantId}`);
+  console.log(`clientId: ${clientId}`);
+  console.log(`agentConfigurationId: ${agentConfigurationId}`);
+  console.log(`agentTestSetId: ${agentTestSetId}`);
+  process.exit(0);
+}
+
 const CACHE_PATH = path.join(configDir, ".token_cache.json");
 const API_BASE = `${environmentUrl}/api/data/v9.2`;
 

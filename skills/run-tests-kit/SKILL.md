@@ -5,7 +5,7 @@ description: >
   Uses the Power CAT Copilot Studio Kit to execute test cases against a published agent
   and produces pass/fail results with latencies. Requires the Kit installed in the
   environment, an App Registration with Dataverse permissions, and a published agent.
-allowed-tools: Bash(node *run-tests.js *), Bash(npm install *), Read, Write, Glob, Grep, Edit
+allowed-tools: Bash(node *run-tests.js" *), Bash(npm install --ignore-scripts --no-audit --no-fund --prefix *), Read, Write, Glob, Grep, Edit
 context: fork
 agent: copilot-studio-test
 ---
@@ -28,7 +28,7 @@ The user must have:
 
 2. **If the file doesn't exist**, create it from the template:
    ```bash
-   cp ${CLAUDE_SKILL_DIR}/../../tests/settings-example.json ./tests/settings.json
+   cp "${CLAUDE_SKILL_DIR}/../../tests/settings-example.json" ./tests/settings.json
    ```
 
 3. **If values are missing**, ask the user for each missing value. Explain where to find each one:
@@ -60,19 +60,27 @@ The user must have:
 
 ## Phase 2: Run Tests
 
-1. **Ensure `tests/package.json` exists** in the user's project. If not, copy it:
+1. **Install dependencies** from the plugin's own manifest (never from the project's `tests/package.json`). Run exactly this single command, with no additional shell variables, `&&`/`||` chains or existence checks; it is fast when the dependencies are already installed. Lifecycle scripts are disabled on purpose:
    ```bash
-   cp ${CLAUDE_SKILL_DIR}/../../tests/package.json ./tests/package.json
+   npm install --ignore-scripts --no-audit --no-fund --prefix "${CLAUDE_SKILL_DIR}/../../tests"
    ```
 
-2. **Install dependencies** if `tests/node_modules/` doesn't exist:
+2. **Confirm the configuration with the user before signing in.** `tests/settings.json` in the project decides which app registration and which environment the user is asked to sign in to, and it may have come from a cloned repository. Print what will be used:
    ```bash
-   npm install --prefix tests
+   node "${CLAUDE_SKILL_DIR}/../../tests/run-tests.js" --config-dir ./tests --print-config
    ```
+   Then decide:
+   - **Already confirmed:** if the request you were given states that the user already confirmed these exact values (environmentUrl, tenantId and clientId) and all three match what was just printed, do not ask again. Continue with step 3.
+   - **Otherwise, stop and ask.** You run as a forked sub-agent with no memory of earlier turns, so the user's answer reaches your caller, not you. End your turn with only this message and do nothing else (no sign-in, no test run):
+
+     > Please confirm before I sign in and run the tests: environmentUrl=`<value>`, tenantId=`<value>`, clientId=`<value>`. Sign in and run the tests against this environment with this app registration? If yes, re-invoke this skill with exactly this in the request: "user confirmed environmentUrl=`<value>`, tenantId=`<value>`, clientId=`<value>`". If no, ask the user for the correct values and go back to Phase 1.
+
+   - If the request says the user confirmed but any value differs from the printed one, treat it as not confirmed and stop with the message above using the printed values.
+   - If the user typed all three values themselves in the request during Phase 1, that also counts as confirmed.
 
 3. **Run the test script in the background** with a 100-minute timeout (6000000ms):
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../tests/run-tests.js --config-dir ./tests
+   node "${CLAUDE_SKILL_DIR}/../../tests/run-tests.js" --config-dir ./tests
    ```
    Use `run_in_background: true` for this command. Save the returned task ID.
 
