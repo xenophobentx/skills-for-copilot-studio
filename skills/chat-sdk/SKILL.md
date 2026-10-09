@@ -1,4 +1,5 @@
 ---
+name: chat-sdk
 user-invocable: false
 description: Send a message to a Copilot Studio agent via the Copilot Studio Client SDK (M365). Use for agents with integrated auth (Entra ID SSO). Requires an App Registration Client ID.
 argument-hint: <utterance>
@@ -23,7 +24,7 @@ Requires prior authentication via `/copilot-studio:test-auth`. Do NOT ask the us
      --client-id "<clientId>" "<utterance>" [--agent-dir <path>]
    ```
 
-2. **Authentication**: Requires prior authentication via `/copilot-studio:test-auth`. The token is cached in the `"test-agent"` slot and shared with the eval API. If auth fails or the SDK hangs, tell the caller to re-run `test-auth`.
+2. **Authentication**: Requires prior authentication via `/copilot-studio:test-auth`. The token is cached in the `"test-agent"` slot and shared with the eval API. If auth fails or the SDK hangs, tell the caller to re-run `test-auth`. If there is no cached token the script signs in itself: with a browser, or with a device code over SSH or without a display (`--auth-mode device|interactive` forces one). A device code cannot be shown while this command runs, so if there is no cached token, sign in with `/copilot-studio:test-auth` first.
 
 3. Parse the JSON output from stdout:
 
@@ -44,6 +45,15 @@ Display the agent's response from the `activities` array:
 - **Adaptive cards**: `attachments` with `contentType === "application/vnd.microsoft.card.adaptive"`
 
 **Save `conversation_id`** for follow-ups.
+
+## Messages with double quotes
+
+On Windows PowerShell 5.1 a message that contains double quotes is split into several arguments, and the script stops with "separate message arguments". Write the message to a UTF-8 file and pass `--message-file` instead of the message:
+
+```bash
+node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+  --client-id "<clientId>" --message-file "<path>"
+```
 
 ## Multi-turn
 

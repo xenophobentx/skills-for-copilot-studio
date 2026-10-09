@@ -52,5 +52,5 @@ Run `/copilot-studio:create-eval-set`. It reads the agent's YAML and writes a CS
 
 ## Execution rules
 
-- NEVER use `run_in_background: true` for eval or chat commands.
+- NEVER use `run_in_background: true` for eval or chat commands. The one exception is the `test-auth` sign-in when it prints a device code: follow the test-auth skill.
 - When testing multiple utterances: run detect-mode once, then all chat calls in parallel.

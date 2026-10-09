@@ -6,6 +6,9 @@
  * object, and Claude Code then refuses to load the skill
  * ("argument-hint must be a string").
  *
+ * Every skills/<folder>/SKILL.md must also declare `name: <folder>`: the
+ * `npx skills add` CLI only discovers skills that have a name and description.
+ *
  * Run: node tests/skill-frontmatter.test.js
  */
 
@@ -43,6 +46,18 @@ for (const file of listFiles()) {
     console.error(`FAIL ${rel}: missing frontmatter`);
     failed++;
     continue;
+  }
+  const isSkill = path.basename(file) === "SKILL.md";
+  if (isSkill) {
+    const folder = path.basename(path.dirname(file));
+    const nameLine = lines.find((l) => /^name\s*:/.test(l));
+    const value = nameLine ? nameLine.replace(/^name\s*:\s*/, "").replace(/^(["'])(.*)\1$/, "$2").trim() : null;
+    if (value !== folder) {
+      console.error(`FAIL ${rel}: "name" must be "${folder}" (the folder name), found ${value === null ? "none" : `"${value}"`}`);
+      failed++;
+    } else {
+      passed++;
+    }
   }
   for (const line of lines) {
     const m = line.match(/^([\w-]+)\s*:\s*(.*)$/);

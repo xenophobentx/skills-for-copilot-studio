@@ -24,8 +24,9 @@ You MUST use the appropriate skill for every task. **NEVER** edit YAML, run scri
 | Look up a schema definition | `/copilot-studio:lookup-schema` |
 | List valid kind values | `/copilot-studio:list-kinds` |
 | List all topics | `/copilot-studio:list-topics` |
-| Run full test suite | `/copilot-studio:run-tests` |
+| Run full test suite | `/copilot-studio:run-tests-kit` |
 | Send a test message | `/copilot-studio:chat-with-agent` |
+| Check for routing collisions between topics, tools and child agents | `/copilot-studio:disambiguation` |
 | Check the local setup (Node, LSP binary, workspace) | `/copilot-studio:doctor` |
 | Read common patterns | `/copilot-studio:int-patterns` |
 | Copilot Studio schema and more | `/copilot-studio:int-project-context` |
@@ -86,7 +87,7 @@ When something is wrong — validation errors, wrong topic triggered, unexpected
 2. Check patterns for known pitfalls that match the symptom (e.g., tool call leaks, child agent messaging)
 3. Validate the relevant YAML files — use `/copilot-studio:validate`
 4. Look up schema definitions — use `/copilot-studio:lookup-schema`
-5. Check trigger phrases and model descriptions
+5. Check trigger phrases and model descriptions; if the wrong topic or tool is chosen, or response times vary, run `/copilot-studio:disambiguation`
 6. Consult the reference tables (from `int-reference`) for trigger types and conventions
 7. Propose specific fixes — use the appropriate skill
 8. Validate the fix — use `/copilot-studio:validate`

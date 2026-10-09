@@ -1,6 +1,7 @@
 ---
+name: manage-agent
 user-invocable: false
-description: Push/pull Copilot Studio agent content via the VS Code extension's LanguageServerHost LSP binary. Handles authentication (interactive browser login for push/pull, device code flow for chat token), sync push, sync pull, clone, and diff operations.
+description: Push/pull Copilot Studio agent content via the VS Code extension's LanguageServerHost LSP binary. Handles authentication (browser login, or a device code over SSH or without a display), sync push, sync pull, clone, and diff operations.
 argument-hint: <push|pull|clone|changes|validate|publish|auth|list-agents|list-envs>
 allowed-tools: Bash(node *manage-agent.bundle.js *), Read, Glob, Grep
 context: fork
@@ -23,7 +24,7 @@ This is a new capability under active development. The manage-agent scripts (`ma
 ## Prerequisites
 
 1. **Copilot Studio VS Code extension** must be installed (`ms-copilotstudio.vscode-copilotstudio`).
-2. **Azure AD app registration** (optional) — only needed for device code flow (`auth` command). If `--client-id` is omitted, the script uses VS Code's first-party client ID with interactive browser login instead.
+2. **Azure AD app registration** (optional). If `--client-id` is omitted, the script uses VS Code's first-party client ID.
 3. **Environment details** — tenant ID, environment ID, environment URL, and agent management URL. These come from the `.mcs/conn.json` inside a cloned agent workspace (created automatically during clone).
 
 ## Phase 0: Resolve Configuration
@@ -32,21 +33,22 @@ Search for `.mcs/conn.json` in the workspace and nearby directories to find exis
 
 ## Phase 1: Authenticate
 
-There are **two different auth flows** depending on the operation:
+All commands that need a token sign in the same way. If there is no cached token, the script picks a flow by itself:
 
-### For push / pull / clone / changes / list-agents (interactive browser login)
+- On a machine with a browser, a browser window opens for Microsoft sign-in. The script waits 5 minutes for it to finish and then fails with an error that names the alternative.
+- Over SSH (`SSH_CONNECTION` or `SSH_TTY` is set), or on Linux without `DISPLAY` or `WAYLAND_DISPLAY`, the script uses the device code flow instead (see "When device code flow starts").
 
-These commands use VS Code's first-party client ID with the **Island API gateway**. Authentication is **interactive** — a browser window opens automatically for sign-in. No manual code entry is needed.
+Add `--auth-mode device` to force the device code flow or `--auth-mode interactive` to force the browser. The environment variable `CPS_AUTH_MODE` does the same, and the flag wins. `CPS_AUTH_TIMEOUT_SECONDS` (1 to 3600) changes the browser wait (default 300).
 
-- On first use, a browser window opens for Microsoft sign-in
-- Tokens are cached in the OS credential store and silently refreshed for ~90 days
-- After ~90 days, the browser will open again for re-authentication
+A foreground Bash call returns its output only when the command ends, so start it in the background (Claude Code: `run_in_background: true`; GitHub Copilot CLI: bash `mode: "async"`), check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
 
-**No separate auth step is needed before push/pull.** The commands handle token acquisition automatically. Just run the command directly (Phase 2).
+Push, pull, clone, changes and list-agents use VS Code's first-party client ID with the Island API gateway. No separate auth step is needed before them. Just run the command directly (Phase 2). Tokens are cached in the OS credential store and silently refreshed for about 90 days, after which the sign-in runs again.
 
-### For the `auth` command (device code flow — chat/test token)
+If the browser shows an AADSTS error such as AADSTS50020, the user most likely signed in with an account from the wrong tenant. The command keeps waiting until the timeout and then fails. Run it again and pick the right account.
 
-The `auth` command acquires a generic `api.powerplatform.com` token using **device code flow**. This token is used by the chat and test skills, not by push/pull.
+### For the `auth` command (chat/test token)
+
+The `auth` command acquires a generic `api.powerplatform.com` token and a Dataverse token. The chat and test skills use them, push and pull do not.
 
 Run with a **5-minute timeout**:
 
@@ -67,7 +69,7 @@ Tokens and MSAL refresh tokens are persisted in the OS credential store (macOS K
 - The script automatically refreshes expired access tokens silently using the cached refresh token
 - **Re-authentication is only needed on the very first use or after ~90 days**
 
-### When device code flow starts (auth command only)
+### When device code flow starts
 
 The script emits a JSON line to stdout:
 
@@ -103,7 +105,7 @@ All commands auto-detect the agent directory (finds the subfolder with `.mcs/con
 
 ### Pull (download remote changes)
 
-`--client-id` is optional. When omitted, uses VS Code's 1p client with interactive browser login.
+`--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
@@ -120,9 +122,17 @@ If the same line of a file was changed both locally and on the server, pull writ
 
 **Important:** Always `pull` before `push` to get fresh row versions. If you push without pulling first, you'll get a `ConcurrencyVersionMismatch` error.
 
-Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors, or if validation is incomplete (the language server timed out or exited before reporting diagnostics for every file, or a file could not be read; the output then has `validation.status: "incomplete"` and the command exits non-zero). Add `--force` to bypass validation (not recommended).
+Push automatically validates all `.mcs.yml` files before pushing and blocks if there are errors, or if validation is incomplete (the language server timed out or exited before reporting diagnostics for every file, or a file could not be read; the output then has `validation.status: "incomplete"`). A blocked push prints `"status":"error"` and exits non-zero. Add `--force` to bypass validation (not recommended).
 
 Push also refuses (`"status":"error"`, non-zero exit, with a `conflicts` list) when any `.mcs.yml` file still contains conflict markers. This check runs before any sign-in or upload, and `--force` does not bypass it. Resolve the markers first (see Pull).
+
+Push also refuses (`"status":"error"`, non-zero exit, with a `syntaxErrors` list of `file`, `line`, `column`, `message`) when a `.mcs.yml` file does not parse as YAML, for example because of an unclosed quote. What was measured: `validate` reported a file with an unclosed quote as valid, and pushing such a file with `pac copilot push` emptied the topic on the server. Push through this script was not tried on a broken file, so the refusal is a precaution. The reported line is where the parser gave up; the real mistake can be above it. Like the conflict check it runs before any sign-in or upload and `--force` does not bypass it. Fix the syntax and run `validate`, which reports the same errors.
+
+**Disambiguation check:** Before pushing, check if any routing-relevant changes were made since the last push (new topics with `modelDescription`, new child agents, changed `modelDescription` or `beginDialog.description` on any surface). If so, suggest a disambiguation check:
+
+> "You've made changes to topic/tool/child agent descriptions since the last push. Want to run a disambiguation check first to catch any routing collisions?"
+
+If the user declines, proceed with push. Do NOT block on this — it's advisory.
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js push \
@@ -179,7 +189,7 @@ When `--url` is provided, the script extracts `environmentId` and `agentId` from
 
 ### View Changes (diff local vs remote)
 
-`--client-id` is optional. When omitted, uses VS Code's 1p client with interactive browser login.
+`--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js changes \
@@ -276,9 +286,11 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 | Extension not found | Copilot Studio VS Code extension not installed | Install from VS Code marketplace |
 | LSP request timed out | Binary not responding or wrong protocol version | Check extension version, try updating |
 | device_code_expired | User didn't authenticate in time | Re-run auth, authenticate promptly |
+| `Browser sign-in did not finish within 300 seconds` | No browser could open, the tab was closed, or the wrong account was used | Run again, with `--auth-mode device` if there is no browser |
 | ConcurrencyVersionMismatch | Push without fresh row versions | Pull first, then push |
 | `conflict` status after pull, or "Push refused: unresolved merge conflict markers" | Same line changed locally and on the server | Pick the right version between the markers, delete the marker lines, run `validate`, then push |
-| Token expired + silent refresh failed | Refresh token expired (~90 days) | Run `auth` command for new device code flow |
+| "Push refused: YAML syntax errors", or a `yaml-syntax` error from `validate` | A `.mcs.yml` file does not parse (unclosed quote, tab indentation, bad indentation) | Fix the file at the reported line (the real mistake can be above it), run `validate`, then push |
+| Token expired + silent refresh failed | Refresh token expired (~90 days) | Run the `auth` command again |
 | Binary missing | Extension installed but binary not present | Reinstall the extension |
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |
 | Publish timed out | Publish still in progress after timeout | Increase `--timeout` or check the Copilot Studio UI for status |

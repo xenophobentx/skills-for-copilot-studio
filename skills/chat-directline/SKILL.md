@@ -1,4 +1,5 @@
 ---
+name: chat-directline
 user-invocable: false
 description: Send a message to a Copilot Studio agent via DirectLine v3. Use for agents with no auth or manual auth. Requires a token endpoint URL or DirectLine secret.
 argument-hint: <utterance>
@@ -69,6 +70,15 @@ The agent requires the user to authenticate (manual auth agents):
 3. Re-send the utterance: `node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js <followup_command>`
 
 Use `resume_command` and `followup_command` exactly as given.
+
+## Messages with double quotes
+
+On Windows PowerShell 5.1 a message that contains double quotes is split into several arguments, and the script stops with "separate message arguments". Write the message to a UTF-8 file and pass `--message-file` instead of the message:
+
+```bash
+node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+  --token-endpoint "<tokenEndpoint>" --message-file "<path>"
+```
 
 ## Multi-turn
 

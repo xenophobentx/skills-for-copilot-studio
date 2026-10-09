@@ -5,11 +5,17 @@
  * VS Code first-party client ID. Tokens are cached via OS-native credential storage
  * in the "manage-agent" MSAL cache slot by default.
  *
+ * When no cached token exists, acquireTokenSignIn picks the sign-in flow: the browser
+ * flow on a machine with a browser, the device code flow over SSH or without a display.
+ * CPS_AUTH_MODE=device|interactive overrides that (the scripts also take --auth-mode, which
+ * sets the same variable), and CPS_AUTH_TIMEOUT_SECONDS changes how long the browser flow
+ * waits (default 300, at most 3600).
+ *
  * An optional cacheSlot parameter allows scripts to use a different cache slot
  * (e.g., "chat" for the SDK chat path) without polluting the default singleton.
  */
 
-const { log } = require("./shared-utils");
+const { log, die } = require("./shared-utils");
 // msal-cache loads the native modules (keytar, msal-node-extensions) when it is
 // required. Load it on first use, so `manage-agent doctor` still runs without them.
 const createCachePlugin = (...args) => require("./msal-cache").createCachePlugin(...args);
@@ -149,24 +155,112 @@ async function acquireTokenDeviceCode(tenantId, clientId, scopes, cacheSlot) {
   return buildTokenInfo(result);
 }
 
+const INTERACTIVE_TIMEOUT_SECONDS = 300;
+const MAX_INTERACTIVE_TIMEOUT_SECONDS = 3600;
+
+// Decide how to sign in when there is no cached token. Returns { mode, reason } with
+// mode "device" or "interactive". env and platform are parameters so tests can inject them.
+function resolveAuthMode(env = process.env, platform = process.platform) {
+  const requested = String(env.CPS_AUTH_MODE || "").trim().toLowerCase();
+  if (requested === "device" || requested === "device-code") {
+    return { mode: "device", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
+  }
+  if (requested === "interactive") {
+    return { mode: "interactive", reason: "--auth-mode or CPS_AUTH_MODE asks for it" };
+  }
+  if (requested && requested !== "auto") {
+    throw new Error(`Unknown auth mode "${env.CPS_AUTH_MODE}". Use "device" or "interactive" (--auth-mode or CPS_AUTH_MODE).`);
+  }
+  if (env.SSH_CONNECTION || env.SSH_TTY) {
+    return { mode: "device", reason: "this is an SSH session" };
+  }
+  if (platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY) {
+    return { mode: "device", reason: "there is no display (DISPLAY and WAYLAND_DISPLAY are not set)" };
+  }
+  return { mode: "interactive", reason: null };
+}
+
+// Called by the scripts for --auth-mode. The flag wins over an existing CPS_AUTH_MODE.
+function setAuthModeOverride(value, env = process.env) {
+  if (value === undefined || value === "") die("--auth-mode needs a value: device or interactive.");
+  try {
+    resolveAuthMode({ CPS_AUTH_MODE: value }, "linux");
+  } catch (e) {
+    die(e.message);
+  }
+  env.CPS_AUTH_MODE = value;
+}
+
+function interactiveTimeoutMs(env = process.env) {
+  const raw = String(env.CPS_AUTH_TIMEOUT_SECONDS ?? "").trim();
+  if (!raw) return INTERACTIVE_TIMEOUT_SECONDS * 1000;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 1 || seconds > MAX_INTERACTIVE_TIMEOUT_SECONDS) {
+    throw new Error(
+      `CPS_AUTH_TIMEOUT_SECONDS must be a number of seconds between 1 and ${MAX_INTERACTIVE_TIMEOUT_SECONDS}, got "${raw}".`
+    );
+  }
+  return seconds * 1000;
+}
+
+// msal-node does not notice a closed browser tab, so the wait needs its own limit. Its
+// loopback server stays open after the limit, so the caller is expected to exit.
+function withSignInTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(
+        `Browser sign-in did not finish within ${Math.round(ms / 1000)} seconds. ` +
+        "Run the command again and pick the right account. " +
+        "If this machine has no usable browser, run it with --auth-mode device (or CPS_AUTH_MODE=device) to sign in with a device code."
+      ));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot) {
   const app = await createMsalApp(tenantId, clientId, cacheSlot);
+  const timeoutMs = interactiveTimeoutMs(); // before the browser opens, so a bad value fails early
 
-  const result = await app.acquireTokenInteractive({
-    scopes,
-    openBrowser: async (url) => {
-      log("");
-      log(`  Open this URL to sign in: ${url}`);
-      log("");
-      const open = (await import("open")).default;
-      await open(url);
-    },
-    successTemplate:
-      "<html><body><h1>Login successful. You can close this tab.</h1></body></html>",
-  });
+  const result = await withSignInTimeout(
+    app.acquireTokenInteractive({
+      scopes,
+      openBrowser: async (url) => {
+        log("");
+        log(`  Open this URL to sign in: ${url}`);
+        log("");
+        const open = (await import("open")).default;
+        await open(url);
+      },
+      successTemplate:
+        "<html><body><h1>Login successful. You can close this tab.</h1></body></html>",
+    }),
+    timeoutMs
+  );
 
   if (!result) throw new Error("Interactive flow returned no result");
   return buildTokenInfo(result);
+}
+
+/**
+ * Sign in with the flow that suits this machine (see resolveAuthMode).
+ */
+async function acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot) {
+  const { mode, reason } = resolveAuthMode();
+  if (mode === "device") {
+    log(`Signing in with a device code (${reason}).`);
+    try {
+      return await acquireTokenDeviceCode(tenantId, clientId, scopes, cacheSlot);
+    } catch (e) {
+      if (/AADSTS(53003|530036)\b/.test(e.message)) {
+        e.message += " Your tenant may block device code sign-in. On a machine with a browser, run again with --auth-mode interactive.";
+      }
+      throw e;
+    }
+  }
+  log("Signing in with the browser...");
+  return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
 }
 
 async function acquireTokenSilent(tenantId, clientId, scopes, cacheSlot) {
@@ -193,7 +287,7 @@ async function acquireTokenSilent(tenantId, clientId, scopes, cacheSlot) {
 }
 
 /**
- * Get a token silently, falling back to interactive browser login.
+ * Get a token silently, falling back to a sign-in (browser or device code).
  */
 async function getOrAcquireToken(tenantId, clientId, scopes, label, cacheSlot) {
   const silent = await acquireTokenSilent(tenantId, clientId, scopes, cacheSlot);
@@ -201,8 +295,8 @@ async function getOrAcquireToken(tenantId, clientId, scopes, label, cacheSlot) {
     log(`${label}: using cached token (expires ${silent.expiresOn})`);
     return silent;
   }
-  log(`${label}: starting interactive login...`);
-  return acquireTokenInteractive(tenantId, clientId, scopes, cacheSlot);
+  log(`${label}: no cached token, signing in...`);
+  return acquireTokenSignIn(tenantId, clientId, scopes, cacheSlot);
 }
 
 /**
@@ -229,6 +323,11 @@ module.exports = {
   buildTokenInfo,
   acquireTokenDeviceCode,
   acquireTokenInteractive,
+  acquireTokenSignIn,
+  resolveAuthMode,
+  setAuthModeOverride,
+  interactiveTimeoutMs,
+  withSignInTimeout,
   acquireTokenSilent,
   getOrAcquireToken,
   getOrAcquireIslandToken,

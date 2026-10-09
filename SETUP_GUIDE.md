@@ -43,7 +43,7 @@ claude --plugin-dir /path/to/skills-for-copilot-studio
 claude plugin install /path/to/skills-for-copilot-studio --scope user
 ```
 
-To verify, type `@` in the input — you should see `copilot-studio:copilot-studio-manage`, `copilot-studio:copilot-studio-author`, `copilot-studio:copilot-studio-test`, and `copilot-studio:copilot-studio-advisor` in the autocomplete menu.
+To verify, type `@` in the input — you should see `copilot-studio:copilot-studio-manage`, `copilot-studio:copilot-studio-author`, `copilot-studio:copilot-studio-test`, `copilot-studio:copilot-studio-advisor`, and `copilot-studio:copilot-studio-describer` in the autocomplete menu.
 
 ---
 
@@ -55,7 +55,7 @@ To verify, type `@` in the input — you should see `copilot-studio:copilot-stud
 @copilot-studio:copilot-studio-manage clone
 ```
 
-This walks you through environment selection, agent selection, and downloads the agent files — all with interactive browser auth (no app registration needed).
+This walks you through environment selection, agent selection, and downloads the agent files. Sign-in is a browser window, or a device code over SSH or without a display. No app registration is needed.
 
 ### Option B: Clone via VS Code
 
@@ -72,8 +72,10 @@ Open Claude Code (or your preferred tool) in the cloned agent's directory.
 ### Explore the agent
 
 ```
-@copilot-studio:copilot-studio-author What topics does this agent have? Give me an overview.
+@copilot-studio:copilot-studio-describer Describe everything this agent does.
 ```
+
+The describer is read-only. It reviews the local agent files, asks clarification questions if something is unclear, and returns a detailed report of the agent's instructions, topics, actions, knowledge, variables, and behavior.
 
 ### Create a new topic
 
@@ -99,7 +101,7 @@ The agent generates a valid YAML file with unique IDs and saves it to the `topic
 @copilot-studio:copilot-studio-manage push
 ```
 
-A browser window may open for sign-in on first use. Tokens are cached after that.
+A browser window may open for sign-in on first use (over SSH or without a display you get a device code to enter instead). Tokens are cached after that. `--auth-mode device|interactive` forces one flow, and `CPS_AUTH_TIMEOUT_SECONDS` changes how long the browser sign-in may take (default 300 seconds).
 
 ### Push via VS Code
 
@@ -132,7 +134,7 @@ Send a single utterance directly to the published agent and see its full respons
 @copilot-studio:copilot-studio-test Send "What products do you offer?" to the published agent
 ```
 
-The test agent will ask for your App Registration Client ID on first use, authenticate via device code flow, and return the agent's full response. Multi-turn is supported — the agent reuses the conversation automatically.
+The test agent will ask for your App Registration Client ID on first use, sign in (device code over SSH or without a display, browser otherwise), and return the agent's full response. Multi-turn is supported and the agent reuses the conversation automatically.
 
 ### Option B: Run a batch test suite (Copilot Studio Kit)
 
@@ -196,7 +198,7 @@ If something goes wrong, you can always re-clone the original agent with `@copil
 - [ ] Plugin installed from marketplace or loaded locally
 - [ ] Copilot Studio VS Code Extension installed (provides the LSP binary)
 - [ ] Agent cloned with `@copilot-studio:copilot-studio-manage clone` or VS Code Extension
-- [ ] `@copilot-studio:copilot-studio-manage`, `:copilot-studio-author`, `:copilot-studio-test`, `:copilot-studio-advisor` visible in `@` autocomplete
+- [ ] `@copilot-studio:copilot-studio-manage`, `:copilot-studio-author`, `:copilot-studio-test`, `:copilot-studio-advisor`, `:copilot-studio-describer` visible in `@` autocomplete
 - [ ] Created a topic with `@copilot-studio:copilot-studio-author`
 - [ ] Validated with `@copilot-studio:copilot-studio-advisor`
 - [ ] Pulled, pushed, and published (`@copilot-studio:copilot-studio-manage pull`, then `push`)
