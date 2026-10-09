@@ -45,6 +45,15 @@ Display the agent's response from the `activities` array:
 
 **Save `conversation_id`** for follow-ups.
 
+## Messages with double quotes
+
+On Windows PowerShell 5.1 a message that contains double quotes is split into several arguments, and the script stops with "separate message arguments". Write the message to a UTF-8 file and pass `--message-file` instead of the message:
+
+```bash
+node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+  --client-id "<clientId>" --message-file "<path>"
+```
+
 ## Multi-turn
 
 Pass `--conversation-id` from the previous response:

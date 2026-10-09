@@ -35919,10 +35919,26 @@ var {
   VSCODE_CLIENT_ID,
   acquireTokenSilent
 } = require_shared_auth();
-function parseArgs() {
-  const args = process.argv.slice(2);
+function splitMessageError(parts) {
+  const shown = parts.map((p) => JSON.stringify(p)).join(", ");
+  return `Got ${parts.length} separate message arguments (${shown}) but expected one. A message with double quotes is split like this by Windows PowerShell 5.1. Write the message to a UTF-8 file and pass --message-file <path> instead.`;
+}
+function readMessageFile(file) {
+  let text;
+  try {
+    text = fs6.readFileSync(file, "utf8");
+  } catch (e) {
+    die(`Cannot read --message-file ${file}: ${e.message}`);
+  }
+  text = text.replace(/^\uFEFF/, "").replace(/\r?\n$/, "");
+  if (!text.trim()) die(`--message-file ${file} is empty.`);
+  return text;
+}
+function parseArgs(args = process.argv.slice(2)) {
+  const positional = [];
   const parsed = {
     utterance: null,
+    messageFile: null,
     clientId: null,
     conversationId: null,
     agentDir: null,
@@ -35960,15 +35976,26 @@ function parseArgs() {
       case "--watermark":
         parsed.watermark = args[++i];
         break;
+      case "--message-file":
+        parsed.messageFile = args[++i];
+        break;
       case "--detect-only":
         parsed.detectOnly = true;
         break;
       default:
         if (!args[i].startsWith("--")) {
-          parsed.utterance = args[i];
+          positional.push(args[i]);
         }
         break;
     }
+  }
+  if (positional.length > 1) die(splitMessageError(positional));
+  if (parsed.messageFile !== null) {
+    if (!parsed.messageFile) die("--message-file needs a path.");
+    if (positional.length > 0) die("Give the message either as an argument or with --message-file, not both.");
+    parsed.utterance = readMessageFile(parsed.messageFile);
+  } else {
+    parsed.utterance = positional[0] || null;
   }
   if (!parsed.utterance && !parsed.detectOnly) die("Missing utterance argument.");
   return parsed;
