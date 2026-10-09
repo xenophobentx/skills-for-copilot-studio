@@ -1,4 +1,4 @@
-var _d=process.env.CLAUDE_PLUGIN_DATA;if(!_d){try{_d=JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.copilot-studio-cli','plugin-paths.json'),'utf8')).pluginData}catch{}}if(_d){var _p=require('path');process.env.NODE_PATH=[_p.join(_d,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_p.delimiter);require('module')._initPaths()}
+var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{var v=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData;if(typeof v=='string'&&_sf.existsSync(v))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -18302,16 +18302,22 @@ var require_doctor = __commonJS({
     function cliDir(ctx) {
       return path3.join(ctx.home, ".copilot-studio-cli");
     }
-    function pluginData(ctx) {
-      if (ctx.env.CLAUDE_PLUGIN_DATA) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
-      const r = readJson(ctx, path3.join(cliDir(ctx), "plugin-paths.json"));
-      if (r.value && typeof r.value.pluginData === "string") {
-        return { dir: r.value.pluginData, source: "plugin-paths.json" };
-      }
-      return null;
+    function pathFileData(ctx, name) {
+      const r = readJson(ctx, path3.join(cliDir(ctx), name));
+      const v = r.value && r.value.pluginData;
+      return typeof v === "string" && exists(ctx, v) ? v : null;
     }
-    function ownRoot(ctx) {
-      return path3.resolve(path3.dirname(ctx.scriptPath), "..");
+    function ours(ctx, dir) {
+      return typeof dir === "string" && dir !== "" && exists(ctx, path3.join(dir, "native-deps.json"));
+    }
+    function pluginData(ctx) {
+      if (ctx.env.SFCS_PLUGIN_DATA) return { dir: ctx.env.SFCS_PLUGIN_DATA, source: "SFCS_PLUGIN_DATA" };
+      const own = pathFileData(ctx, "sfcs-plugin-paths.json");
+      if (own) return { dir: own, source: "sfcs-plugin-paths.json" };
+      if (ours(ctx, ctx.env.CLAUDE_PLUGIN_DATA)) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
+      const old = pathFileData(ctx, "plugin-paths.json");
+      if (ours(ctx, old)) return { dir: old, source: "plugin-paths.json" };
+      return null;
     }
     function samePath(ctx, a, b) {
       const real = (p) => {
@@ -18324,12 +18330,6 @@ var require_doctor = __commonJS({
       const x = real(a);
       const y = real(b);
       return ctx.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
-    }
-    function foreignRoot(ctx) {
-      const r = readJson(ctx, path3.join(cliDir(ctx), "plugin-paths.json"));
-      const root = r.value && r.value.pluginRoot;
-      if (typeof root !== "string" || samePath(ctx, root, ownRoot(ctx))) return null;
-      return root;
     }
     function checkNode(ctx, deps, add) {
       const major = parseInt(String(ctx.nodeVersion).split(".")[0], 10);
@@ -18406,8 +18406,7 @@ var require_doctor = __commonJS({
       const dirs = pd ? [path3.join(pd.dir, "node_modules")] : [];
       const log2 = pd ? path3.join(pd.dir, "install.log") : null;
       const logHint = log2 && exists(ctx, log2) ? ` See ${log2}.` : "";
-      const foreign = foreignRoot(ctx);
-      const session = "Start a new session with this plugin loaded." + (foreign ? " plugin-paths.json points to another plugin." : "");
+      const session = "Start a new session with this plugin loaded.";
       let allLoad = true;
       for (const name of NATIVE_MODULES) {
         try {
@@ -18454,35 +18453,35 @@ var require_doctor = __commonJS({
       }
     }
     function checkPluginPaths(ctx, deps, add) {
-      const file = path3.join(cliDir(ctx), "plugin-paths.json");
+      const file = path3.join(cliDir(ctx), "sfcs-plugin-paths.json");
       const r = readJson(ctx, file);
       if (r.missing) {
-        if (ctx.env.CLAUDE_PLUGIN_DATA) {
-          add("plugin-paths", "OK", "no plugin-paths.json, CLAUDE_PLUGIN_DATA is set");
+        if (ctx.env.SFCS_PLUGIN_DATA) {
+          add("plugin-paths", "OK", "no sfcs-plugin-paths.json, SFCS_PLUGIN_DATA is set");
         } else {
           add("plugin-paths", "WARN", `${file} not found`, "Start a session with the plugin loaded, the setup hook writes it.");
         }
-        return;
-      }
-      if (r.error || !r.value || typeof r.value !== "object") {
-        add("plugin-paths", "FAIL", `${file} is not valid JSON`, "Delete it and start a new session.");
-        return;
-      }
-      const foreign = foreignRoot(ctx);
-      if (foreign) {
-        add(
-          "plugin-paths",
-          "WARN",
-          `${file} points to another plugin (pluginRoot ${foreign}), this plugin is at ${ownRoot(ctx)}`,
-          "Scripts run outside a Claude Code session load the native modules from that plugin's data folder. Start a session with this plugin loaded to rewrite the file."
-        );
-        return;
-      }
-      const bad = ["pluginData", "pluginRoot"].filter((k) => typeof r.value[k] !== "string" || !exists(ctx, r.value[k]));
-      if (bad.length > 0) {
-        add("plugin-paths", "WARN", `${bad.join(" and ")} in ${file} does not exist`, "Start a new session to rewrite it.");
+      } else if (r.error || !r.value || typeof r.value !== "object" || Array.isArray(r.value)) {
+        add("plugin-paths", "WARN", `${file} is not valid, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
+      } else if (typeof r.value.pluginData !== "string" || !exists(ctx, r.value.pluginData)) {
+        add("plugin-paths", "WARN", `pluginData in ${file} is missing or does not exist, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
       } else {
-        add("plugin-paths", "OK", `${file} points to existing folders`);
+        const pd = pluginData(ctx);
+        if (pd && pd.source === "SFCS_PLUGIN_DATA" && !samePath(ctx, pd.dir, r.value.pluginData)) {
+          add("plugin-paths", "OK", `${file} points to ${r.value.pluginData}; this session uses SFCS_PLUGIN_DATA (${pd.dir})`);
+        } else {
+          add("plugin-paths", "OK", `${file} points to an existing folder`);
+        }
+      }
+      const old = path3.join(cliDir(ctx), "plugin-paths.json");
+      const o = readJson(ctx, old);
+      if (o.missing) return;
+      const data = o.value && typeof o.value.pluginData === "string" ? o.value.pluginData : null;
+      if (data && ours(ctx, data)) {
+        add("plugin-paths-old", "OK", `${old} is an old file from an earlier version, still accepted`);
+      } else {
+        const who = o.value && typeof o.value.pluginRoot === "string" ? ` (pluginRoot ${o.value.pluginRoot})` : "";
+        add("plugin-paths-old", "OK", `${old} was written by another plugin${who} or is not readable, this plugin does not use it`);
       }
     }
     function checkSecretService(ctx, deps, add) {
@@ -18710,7 +18709,7 @@ var require_doctor = __commonJS({
         }
       };
     }
-    module2.exports = { runDoctor, formatLine, makeContext };
+    module2.exports = { runDoctor, formatLine, makeContext, pluginData };
   }
 });
 

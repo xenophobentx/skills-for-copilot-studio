@@ -200,7 +200,7 @@ try {
   // ---- native dependencies and the setup marker
   {
     const data = tmp("data");
-    const ctx = makeCtx({ env: { CLAUDE_PLUGIN_DATA: data } });
+    const ctx = makeCtx({ env: { SFCS_PLUGIN_DATA: data } });
     const manifest = fs.readFileSync(path.join(path.dirname(ctx.scriptPath), "native-deps.json"), "utf8");
     assertEqual(level(ctx, null, "native-marker"), ["WARN"], "marker missing warns");
     writeFile(path.join(data, "native-deps.json"), manifest + " ");
@@ -211,14 +211,14 @@ try {
 
     writeFile(path.join(data, "install.log"), "boom");
     const bad = run(
-      makeCtx({ env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "keytar") throw new Error("libsecret-1.so.0 missing\nstack"); return {}; } }),
+      makeCtx({ env: { SFCS_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "keytar") throw new Error("libsecret-1.so.0 missing\nstack"); return {}; } }),
       null, "native"
     );
     assertEqual(bad.map((c) => c.level), ["FAIL", "OK", "OK"], "keytar failing to load fails on Linux");
     assertEqual(bad[0].hint.includes(path.join(data, "install.log")), true, "install.log is shown when it exists");
     assertEqual(bad[0].message.includes("stack"), false, "only the first error line is shown");
     const win = run(
-      makeCtx({ platform: "win32", env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "keytar") throw new Error("no binding"); return {}; } }),
+      makeCtx({ platform: "win32", env: { SFCS_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "keytar") throw new Error("no binding"); return {}; } }),
       null, "native"
     );
     assertEqual(win.map((c) => c.level), ["WARN", "OK", "OK"], "keytar failing on Windows only warns");
@@ -227,7 +227,7 @@ try {
     const winStub = run(
       makeCtx({
         platform: "win32",
-        env: { CLAUDE_PLUGIN_DATA: data },
+        env: { SFCS_PLUGIN_DATA: data },
         stubKeytar: () => { stubbed = true; },
         tryRequire: (n) => { if (n === "keytar" || (n === "@azure/msal-node-extensions" && !stubbed)) throw new Error("no binding"); return {}; },
       }),
@@ -235,11 +235,11 @@ try {
     );
     assertEqual(winStub.map((c) => c.level), ["WARN", "OK", "OK"], "on Windows msal-node-extensions loads after the keytar stub");
     const winNoStub = run(
-      makeCtx({ platform: "win32", env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n !== "vscode-jsonrpc") throw new Error("no binding"); return {}; } }),
+      makeCtx({ platform: "win32", env: { SFCS_PLUGIN_DATA: data }, tryRequire: (n) => { if (n !== "vscode-jsonrpc") throw new Error("no binding"); return {}; } }),
       null, "native"
     );
     assertEqual(winNoStub.map((c) => c.level), ["WARN", "FAIL", "OK"], "on Windows a broken msal-node-extensions still fails");
-    const jsonrpc = run(makeCtx({ env: { CLAUDE_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "vscode-jsonrpc") throw new Error("gone"); return {}; } }), null, "native");
+    const jsonrpc = run(makeCtx({ env: { SFCS_PLUGIN_DATA: data }, tryRequire: (n) => { if (n === "vscode-jsonrpc") throw new Error("gone"); return {}; } }), null, "native");
     assertEqual(jsonrpc.map((c) => c.level), ["OK", "OK", "FAIL"], "a missing vscode-jsonrpc fails");
   }
   {
@@ -248,37 +248,108 @@ try {
     assertEqual(/plugin/.test(r[0].hint), true, "hint explains the missing plugin data folder");
   }
   {
-    // plugin data found through plugin-paths.json, like the bundles do
+    // plugin data found through sfcs-plugin-paths.json, like the bundles do
     const data = tmp("data");
     const ctx = makeCtx();
-    writeFile(path.join(ctx.home, ".copilot-studio-cli", "plugin-paths.json"), JSON.stringify({ pluginData: data, pluginRoot: data }));
+    writeFile(path.join(ctx.home, ".copilot-studio-cli", "sfcs-plugin-paths.json"), JSON.stringify({ pluginData: data, pluginRoot: data }));
     let seen = null;
     ctx.tryRequire = (n, dirs) => { seen = dirs; return {}; };
     run(ctx, null, "native");
-    assertEqual(seen, [path.join(data, "node_modules")], "modules are looked up in the folder from plugin-paths.json");
+    assertEqual(seen, [path.join(data, "node_modules")], "modules are looked up in the folder from sfcs-plugin-paths.json");
+  }
+  {
+    // another plugin's CLAUDE_PLUGIN_DATA and plugin-paths.json, ours in SFCS_PLUGIN_DATA
+    const data = tmp("data");
+    const other = tmp("other-data");
+    const ctx = makeCtx({ env: { CLAUDE_PLUGIN_DATA: other, SFCS_PLUGIN_DATA: data } });
+    writeFile(path.join(ctx.home, ".copilot-studio-cli", "plugin-paths.json"), JSON.stringify({ pluginData: other, pluginRoot: tmp("other-plugin") }));
+    writeFile(path.join(data, "native-deps.json"), fs.readFileSync(path.join(path.dirname(ctx.scriptPath), "native-deps.json"), "utf8"));
+    let seen = null;
+    ctx.tryRequire = (n, dirs) => { seen = dirs; return {}; };
+    const all = run(ctx, null);
+    assertEqual(seen, [path.join(data, "node_modules")], "the clash case looks in our folder");
+    assertEqual(all.filter((c) => c.level !== "OK" && /^(native|plugin-paths)/.test(c.name)).map((c) => c.name), [], "the clash case reports no WARN or FAIL");
+    assertEqual(all.find((c) => c.name === "native-marker").level, "OK", "the clash case reads the marker from our folder");
+    assertEqual(all.find((c) => c.name === "plugin-paths").level, "OK", "SFCS_PLUGIN_DATA alone is enough without the file");
+    const old = all.find((c) => c.name === "plugin-paths-old");
+    assertEqual([old.level, /another plugin/.test(old.message)], ["OK", true], "the shared file of another plugin is information only");
   }
 
-  // ---- plugin-paths.json
+  // ---- sfcs-plugin-paths.json
   {
     const ctx = makeCtx();
-    assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "no plugin-paths.json warns");
-    assertEqual(level(makeCtx({ env: { CLAUDE_PLUGIN_DATA: "/d" } }), null, "plugin-paths"), ["OK"], "no file is fine when CLAUDE_PLUGIN_DATA is set");
-    const file = path.join(ctx.home, ".copilot-studio-cli", "plugin-paths.json");
+    assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "no sfcs-plugin-paths.json warns");
+    assertEqual(level(makeCtx({ env: { SFCS_PLUGIN_DATA: "/d" } }), null, "plugin-paths"), ["OK"], "no file is fine when SFCS_PLUGIN_DATA is set");
+    assertEqual(level(makeCtx({ env: { CLAUDE_PLUGIN_DATA: "/d" } }), null, "plugin-paths"), ["WARN"], "CLAUDE_PLUGIN_DATA alone is not enough");
+    const file = path.join(ctx.home, ".copilot-studio-cli", "sfcs-plugin-paths.json");
     writeFile(file, "{not json");
-    assertEqual(level(ctx, null, "plugin-paths"), ["FAIL"], "broken JSON fails");
+    assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "broken JSON warns");
     writeFile(file, JSON.stringify({ pluginData: path.join(root, "gone"), pluginRoot: root }));
     const r = run(ctx, null, "plugin-paths");
     assertEqual([r[0].level, r[0].message.includes("pluginData")], ["WARN", true], "a path that does not exist warns and is named");
-    writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: root }));
-    assertEqual(level(ctx, null, "plugin-paths"), ["OK"], "existing paths are fine");
-    // another plugin owns the file
-    writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: tmp("other-plugin") }));
-    const foreign = run(ctx, null, "plugin-paths")[0];
-    assertEqual([foreign.level, /another plugin/.test(foreign.message), /outside a Claude Code session/.test(foreign.hint)], ["WARN", true, true], "pluginRoot of another plugin warns and explains");
-    const marker = run(ctx, null, "native-marker");
-    assertEqual(marker.every((c) => c.level !== "WARN" || !/Start a new session\.$/.test(c.hint || "")), true, "the marker hint does not just say start a new session");
+    writeFile(file, JSON.stringify({ pluginData: 5 }));
+    assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "pluginData that is not a string warns");
+    writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: tmp("another-version") }));
+    assertEqual(level(ctx, null, "plugin-paths"), ["OK"], "existing pluginData is fine whatever pluginRoot says");
     writeFile(file, "[]");
     assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "wrong shape warns");
+    // the file and SFCS_PLUGIN_DATA disagree: information
+    const data = tmp("data");
+    writeFile(file, JSON.stringify({ pluginData: root }));
+    const both = run(makeCtx({ home: ctx.home, env: { SFCS_PLUGIN_DATA: data } }), null, "plugin-paths")[0];
+    assertEqual([both.level, both.message.includes("SFCS_PLUGIN_DATA")], ["OK", true], "a different SFCS_PLUGIN_DATA is shown, not a problem");
+  }
+
+  // ---- the old shared plugin-paths.json is information only
+  {
+    const ctx = makeCtx();
+    const file = path.join(ctx.home, ".copilot-studio-cli", "plugin-paths.json");
+    assertEqual(run(ctx, null, "plugin-paths-old"), [], "no old file, no line");
+    writeFile(file, "{not json");
+    assertEqual(level(ctx, null, "plugin-paths-old"), ["OK"], "a broken old file is information");
+    const mine = tmp("old-data");
+    writeFile(path.join(mine, "native-deps.json"), "{}");
+    writeFile(file, JSON.stringify({ pluginData: mine, pluginRoot: "/x" }));
+    const own = run(ctx, null, "plugin-paths-old")[0];
+    assertEqual([own.level, /earlier version/.test(own.message)], ["OK", true], "an old file with our install is still accepted");
+    writeFile(file, JSON.stringify({ pluginData: tmp("foreign-data"), pluginRoot: "/x" }));
+    const foreign = run(ctx, null, "plugin-paths-old")[0];
+    assertEqual([foreign.level, /another plugin \(pluginRoot \/x\)/.test(foreign.message)], ["OK", true], "an old file of another plugin is information");
+  }
+
+  // ---- doctor and the bundles pick the same folder
+  {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "scripts", "package.json"), "utf8"));
+    const banner = pkg.scripts["build:manage-agent"].match(/--banner:js="(.*)"$/)[1];
+    const { pluginData } = require("../scripts/src/doctor.js");
+    const own = tmp("own"); writeFile(path.join(own, "native-deps.json"), "{}");
+    const own2 = tmp("own2"); writeFile(path.join(own2, "native-deps.json"), "{}");
+    const foreign = tmp("foreign");
+    const gone = path.join(root, "gone");
+    const cases = [
+      ["nothing", {}, {}],
+      ["SFCS env first", { SFCS_PLUGIN_DATA: own, CLAUDE_PLUGIN_DATA: own2 }, { "sfcs-plugin-paths.json": own2 }],
+      ["sfcs file", {}, { "sfcs-plugin-paths.json": own }],
+      ["sfcs file beats foreign CLAUDE_PLUGIN_DATA", { CLAUDE_PLUGIN_DATA: foreign }, { "sfcs-plugin-paths.json": own }],
+      ["stale sfcs file falls through to CLAUDE_PLUGIN_DATA", { CLAUDE_PLUGIN_DATA: own }, { "sfcs-plugin-paths.json": gone }],
+      ["CLAUDE_PLUGIN_DATA with marker", { CLAUDE_PLUGIN_DATA: own }, {}],
+      ["CLAUDE_PLUGIN_DATA without marker", { CLAUDE_PLUGIN_DATA: foreign }, {}],
+      ["foreign CLAUDE_PLUGIN_DATA, old file ours", { CLAUDE_PLUGIN_DATA: foreign }, { "plugin-paths.json": own }],
+      ["old file of another plugin", {}, { "plugin-paths.json": foreign }],
+      ["old file, folder gone", {}, { "plugin-paths.json": gone }],
+      ["pluginData not a string", {}, { "sfcs-plugin-paths.json": 5, "plugin-paths.json": { a: 1 } }],
+    ];
+    for (const [label, env, files] of cases) {
+      const home = tmp("home");
+      for (const [n, v] of Object.entries(files)) writeFile(path.join(home, ".copilot-studio-cli", n), JSON.stringify({ pluginData: v }));
+      const probe = spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], {
+        env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, ...env },
+        encoding: "utf8",
+      });
+      const first = probe.stdout.trim().split(path.delimiter)[0];
+      const d = pluginData(makeCtx({ home, env }));
+      assertEqual(d ? path.join(d.dir, "node_modules") : "", probe.status === 0 ? first : "banner failed: " + probe.stderr, `doctor and the banner agree: ${label}`);
+    }
   }
 
   // ---- Secret Service (Linux only)

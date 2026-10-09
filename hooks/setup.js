@@ -5,6 +5,10 @@ const os = require('os');
 
 // __dirname is the hooks/ directory; the plugin root is one level up
 const r = p.resolve(__dirname, '..');
+// CLAUDE_PLUGIN_DATA is what the harness hands to this hook, so it is this plugin's
+// own folder here. Other plugins use the same name in the session, so the scripts
+// get SFCS_PLUGIN_DATA and sfcs-plugin-paths.json, and read CLAUDE_PLUGIN_DATA
+// only when that folder holds our native-deps.json.
 const d = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA;
 const e = process.env.CLAUDE_ENV_FILE;
 
@@ -95,14 +99,14 @@ if (process.argv[2] === '--install') {
 var pd = p.join(os.homedir(), '.copilot-studio-cli');
 fs.mkdirSync(pd, { recursive: true });
 fs.writeFileSync(
-  p.join(pd, 'plugin-paths.json'),
+  p.join(pd, 'sfcs-plugin-paths.json'),
   JSON.stringify({ pluginData: d, pluginRoot: r })
 );
 
 if (e) {
   fs.appendFileSync(
     e,
-    'export CLAUDE_PLUGIN_DATA="' + d + '"\nexport CLAUDE_PLUGIN_ROOT="' + r + '"\n'
+    'export SFCS_PLUGIN_DATA="' + d + '"\n'
   );
 }
 
