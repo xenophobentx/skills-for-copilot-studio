@@ -208,7 +208,7 @@ function getPlatformSuffix() {
   const a = os.arch();
   if (p === "darwin") return a === "arm64" ? "darwin-arm64" : "darwin-x64";
   if (p === "win32") return a === "arm64" ? "win32-arm64" : "win32-x64";
-  return "linux-x64";
+  return a === "arm64" ? "linux-arm64" : "linux-x64";
 }
 
 function parseSemver(v) {
@@ -244,32 +244,39 @@ function searchInDir(extensionsDir) {
     if (version) matches.push({ dir: entry, version });
   }
 
-  if (matches.length === 0) return null;
   matches.sort((a, b) => compareSemver(b.version, a.version));
 
-  const best = matches[0];
-  const extensionDir = path.join(extensionsDir, best.dir);
-  const lspOutDir = path.join(extensionDir, "lspOut");
+  // Newest version that has a binary wins. Since 1.9 the macOS package keeps one
+  // binary per architecture under lspOut/osx-arm64 and lspOut/osx-x64; the
+  // extension itself looks there first and falls back to lspOut/.
   const binaryName =
     os.platform() === "win32" ? `${BINARY_NAME}.exe` : BINARY_NAME;
-  const binaryPath = path.join(lspOutDir, binaryName);
-
-  if (!fs.existsSync(binaryPath)) {
-    log(`Extension found at ${extensionDir} but binary missing: ${binaryPath}`);
-    return null;
-  }
-
-  // Ensure executable on Unix
-  if (os.platform() !== "win32") {
-    try {
-      fs.accessSync(binaryPath, fs.constants.X_OK);
-    } catch {
-      log(`Setting executable permission on ${binaryPath}`);
-      fs.chmodSync(binaryPath, 0o755);
+  const archDir = os.arch() === "arm64" ? "osx-arm64" : "osx-x64";
+  for (const match of matches) {
+    const extensionDir = path.join(extensionsDir, match.dir);
+    const candidates = [path.join(extensionDir, "lspOut", binaryName)];
+    if (os.platform() === "darwin") {
+      candidates.unshift(path.join(extensionDir, "lspOut", archDir, binaryName));
     }
-  }
+    const binaryPath = candidates.find((c) => fs.existsSync(c));
+    if (!binaryPath) {
+      log(`Extension found at ${extensionDir} but binary missing: ${candidates.join(" or ")}`);
+      continue;
+    }
 
-  return { binaryPath, extensionDir, lspOutDir, version: best.version };
+    // Ensure executable on Unix
+    if (os.platform() !== "win32") {
+      try {
+        fs.accessSync(binaryPath, fs.constants.X_OK);
+      } catch {
+        log(`Setting executable permission on ${binaryPath}`);
+        fs.chmodSync(binaryPath, 0o755);
+      }
+    }
+
+    return { binaryPath, extensionDir, lspOutDir: path.dirname(binaryPath), version: match.version };
+  }
+  return null;
 }
 
 function findBinary() {

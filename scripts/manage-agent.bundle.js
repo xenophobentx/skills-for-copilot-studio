@@ -15381,7 +15381,7 @@ function getPlatformSuffix() {
   const a = os2.arch();
   if (p === "darwin") return a === "arm64" ? "darwin-arm64" : "darwin-x64";
   if (p === "win32") return a === "arm64" ? "win32-arm64" : "win32-x64";
-  return "linux-x64";
+  return a === "arm64" ? "linux-arm64" : "linux-x64";
 }
 function parseSemver(v) {
   return v.split(".").map((n) => parseInt(n, 10) || 0);
@@ -15412,26 +15412,31 @@ function searchInDir(extensionsDir) {
     const version2 = rest.slice(0, -(suffix.length + 1));
     if (version2) matches.push({ dir: entry, version: version2 });
   }
-  if (matches.length === 0) return null;
   matches.sort((a, b) => compareSemver(b.version, a.version));
-  const best = matches[0];
-  const extensionDir = path2.join(extensionsDir, best.dir);
-  const lspOutDir = path2.join(extensionDir, "lspOut");
   const binaryName = os2.platform() === "win32" ? `${BINARY_NAME}.exe` : BINARY_NAME;
-  const binaryPath = path2.join(lspOutDir, binaryName);
-  if (!fs6.existsSync(binaryPath)) {
-    log(`Extension found at ${extensionDir} but binary missing: ${binaryPath}`);
-    return null;
-  }
-  if (os2.platform() !== "win32") {
-    try {
-      fs6.accessSync(binaryPath, fs6.constants.X_OK);
-    } catch {
-      log(`Setting executable permission on ${binaryPath}`);
-      fs6.chmodSync(binaryPath, 493);
+  const archDir = os2.arch() === "arm64" ? "osx-arm64" : "osx-x64";
+  for (const match of matches) {
+    const extensionDir = path2.join(extensionsDir, match.dir);
+    const candidates = [path2.join(extensionDir, "lspOut", binaryName)];
+    if (os2.platform() === "darwin") {
+      candidates.unshift(path2.join(extensionDir, "lspOut", archDir, binaryName));
     }
+    const binaryPath = candidates.find((c) => fs6.existsSync(c));
+    if (!binaryPath) {
+      log(`Extension found at ${extensionDir} but binary missing: ${candidates.join(" or ")}`);
+      continue;
+    }
+    if (os2.platform() !== "win32") {
+      try {
+        fs6.accessSync(binaryPath, fs6.constants.X_OK);
+      } catch {
+        log(`Setting executable permission on ${binaryPath}`);
+        fs6.chmodSync(binaryPath, 493);
+      }
+    }
+    return { binaryPath, extensionDir, lspOutDir: path2.dirname(binaryPath), version: match.version };
   }
-  return { binaryPath, extensionDir, lspOutDir, version: best.version };
+  return null;
 }
 function findBinary() {
   const envBinary = process.env.CPS_LSP_BINARY;
