@@ -18,7 +18,7 @@ Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft
 ## Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), or [VS Code](https://code.visualstudio.com/)
-- [Node.js](https://nodejs.org/) 18+
+- [Node.js](https://nodejs.org/) 20 or later
 - [VS Code](https://code.visualstudio.com/) with the [Copilot Studio Extension](https://github.com/microsoft/vscode-copilotstudio) (required for push/pull/clone operations)
 
 ## Installation
