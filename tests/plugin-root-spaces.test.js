@@ -32,6 +32,7 @@ for (const d of fs.readdirSync(path.join(ROOT, "skills"))) {
 }
 for (const a of fs.readdirSync(path.join(ROOT, "agents"))) files.push(path.join(ROOT, "agents", a));
 files.push(path.join(ROOT, "hooks", "system-prompt.md"));
+files.push(path.join(ROOT, "README.md"));
 
 // 1. quoting
 const commands = [];
@@ -40,7 +41,7 @@ for (const f of files) {
   const rel = path.relative(ROOT, f);
   const lines = fs.readFileSync(f, "utf8").replace(/\r\n/g, "\n").split("\n");
   lines.forEach((line, i) => {
-    if (/\bnode\s+<pluginRoot>/.test(line) || /(--prefix|\bcp)\s+<pluginRoot>/.test(line)) offenders.push(`${rel}:${i + 1} ${line.trim()}`);
+    if (/\bnode\s+<(pluginRoot|plugin folder)>/.test(line) || /(--prefix|\bcp)\s+<pluginRoot>/.test(line)) offenders.push(`${rel}:${i + 1} ${line.trim()}`);
     const m = /\bnode\s+"<pluginRoot>\/scripts\/([a-z-]+\.bundle\.js)"(.*)$/.exec(line);
     if (m) commands.push({ rel, script: m[1], rest: m[2].replace(/\s+#.*$/, "").replace(/\\$/, "").trim() });
   });
