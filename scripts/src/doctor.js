@@ -69,10 +69,18 @@ function ensureCommand(ctx) {
 }
 
 // Path file entry: pluginData as a string, only if the folder exists (same as the bundle banner).
-function pathFileData(ctx, name) {
+// With ownCopy, also only if pluginRoot is this plugin copy: sfcs-plugin-paths.json is shared by
+// every copy and the last session start wins.
+function pathFileData(ctx, name, ownCopy) {
   const r = readJson(ctx, path.join(cliDir(ctx), name));
   const v = r.value && r.value.pluginData;
-  return typeof v === "string" && exists(ctx, v) ? v : null;
+  if (typeof v !== "string" || !exists(ctx, v)) return null;
+  if (ownCopy && !isOwnRoot(ctx, r.value.pluginRoot)) return null;
+  return v;
+}
+
+function isOwnRoot(ctx, root) {
+  return typeof root === "string" && exists(ctx, root) && samePath(ctx, root, ownRoot(ctx));
 }
 
 // Folder of a plugin install, recognized by the marker setup.js writes last.
@@ -81,12 +89,12 @@ function ours(ctx, dir) {
 }
 
 // Same lookup, in the same order, as the banner in scripts/package.json and
-// hooks/setup.js. The shared CLAUDE_PLUGIN_DATA and plugin-paths.json belong to whichever
+// hooks/setup.js (sfcs-plugin-paths.json counts only when it names this plugin copy). The shared CLAUDE_PLUGIN_DATA and plugin-paths.json belong to whichever
 // plugin wrote last, so they count only when the folder holds this plugin's marker.
 // tests/doctor.test.js runs the banner and this function on the same fixtures.
 function pluginData(ctx) {
   if (ctx.env.SFCS_PLUGIN_DATA) return { dir: ctx.env.SFCS_PLUGIN_DATA, source: "SFCS_PLUGIN_DATA" };
-  const own = pathFileData(ctx, "sfcs-plugin-paths.json");
+  const own = pathFileData(ctx, "sfcs-plugin-paths.json", true);
   if (own) return { dir: own, source: "sfcs-plugin-paths.json" };
   // The folder `hooks/setup.js --ensure` installs into when no hook has run (Codex without a
   // trusted hook). It exists only after someone ran that, and it is ours, so it comes before
@@ -263,6 +271,9 @@ function checkPluginPaths(ctx, deps, add) {
     add("plugin-paths", "WARN", `${file} is not valid, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
   } else if (typeof r.value.pluginData !== "string" || !exists(ctx, r.value.pluginData)) {
     add("plugin-paths", "WARN", `pluginData in ${file} is missing or does not exist, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
+  } else if (!isOwnRoot(ctx, r.value.pluginRoot)) {
+    const root = typeof r.value.pluginRoot === "string" ? r.value.pluginRoot : "missing";
+    add("plugin-paths", "OK", `${file} was written by another copy of the plugin (pluginRoot ${root}), this copy ignores it`);
   } else {
     const pd = pluginData(ctx);
     if (pd && pd.source === "SFCS_PLUGIN_DATA" && !samePath(ctx, pd.dir, r.value.pluginData)) {
