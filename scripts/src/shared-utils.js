@@ -7,6 +7,8 @@
  */
 
 const readline = require("readline");
+const fs = require("fs");
+const path = require("path");
 
 // ---------------------------------------------------------------------------
 // Process I/O helpers
@@ -19,6 +21,20 @@ function log(msg) {
 function die(msg) {
   process.stdout.write(JSON.stringify({ status: "error", error: msg }) + "\n");
   process.exit(1);
+}
+
+// require() of a native module (keytar, msal-node-extensions, vscode-jsonrpc) that is
+// not installed: add the command that installs it without a session hook.
+function requireNative(load) {
+  try {
+    return load();
+  } catch (err) {
+    if (err && err.code === "MODULE_NOT_FOUND" && /keytar|msal-node-extensions|vscode-jsonrpc/.test(String(err.message))) {
+      const setup = [path.join(__dirname, "..", "hooks", "setup.js"), path.join(__dirname, "..", "..", "hooks", "setup.js")].find((f) => fs.existsSync(f));
+      if (setup) err.message += `\nThe native dependencies are not installed. Run: node "${setup}" --ensure`;
+    }
+    throw err;
+  }
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -237,6 +253,7 @@ async function runPollLoop(domain, conversationId, token, opts) {
 // ---------------------------------------------------------------------------
 
 module.exports = {
+  requireNative,
   log,
   die,
   sleep,

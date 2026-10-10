@@ -7,12 +7,26 @@ var __commonJS = (cb, mod) => function __require() {
 var require_shared_utils = __commonJS({
   "src/shared-utils.js"(exports2, module2) {
     var readline = require("readline");
+    var fs = require("fs");
+    var path = require("path");
     function log2(msg) {
       process.stderr.write(msg + "\n");
     }
     function die2(msg) {
       process.stdout.write(JSON.stringify({ status: "error", error: msg }) + "\n");
       process.exit(1);
+    }
+    function requireNative(load) {
+      try {
+        return load();
+      } catch (err) {
+        if (err && err.code === "MODULE_NOT_FOUND" && /keytar|msal-node-extensions|vscode-jsonrpc/.test(String(err.message))) {
+          const setup = [path.join(__dirname, "..", "hooks", "setup.js"), path.join(__dirname, "..", "..", "hooks", "setup.js")].find((f) => fs.existsSync(f));
+          if (setup) err.message += `
+The native dependencies are not installed. Run: node "${setup}" --ensure`;
+        }
+        throw err;
+      }
     }
     var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function httpGet(url, headers) {
@@ -171,6 +185,7 @@ var require_shared_utils = __commonJS({
       return { activities: allBotActivities, watermark };
     }
     module2.exports = {
+      requireNative,
       log: log2,
       die: die2,
       sleep,

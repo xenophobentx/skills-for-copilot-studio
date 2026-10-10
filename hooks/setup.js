@@ -8,9 +8,34 @@ const r = p.resolve(__dirname, '..');
 // CLAUDE_PLUGIN_DATA is what the harness hands to this hook, so it is this plugin's
 // own folder here. Other plugins use the same name in the session, so the scripts
 // get SFCS_PLUGIN_DATA and sfcs-plugin-paths.json, and read CLAUDE_PLUGIN_DATA
-// only when that folder holds our native-deps.json.
-const d = process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA;
+// only when that folder holds our native-deps.json. PLUGIN_DATA is the plain name
+// Codex also sets.
+//
+// `setup.js --ensure` is the way without a hook (Codex before the hook is trusted,
+// `npx skills add`). It runs from a model's shell, so CLAUDE_PLUGIN_DATA and
+// plugin-paths.json can name another plugin's folder (a shell started from a Claude
+// Code session has them set) and are never used to pick an install folder. It installs
+// into SFCS_PLUGIN_DATA, the folder in sfcs-plugin-paths.json (written by our hook), or
+// ~/.copilot-studio-cli/sfcs-data, one folder per user. It waits for the install and
+// writes no paths file.
+const ensure = process.argv[2] === '--ensure';
+const cli = p.join(os.homedir(), '.copilot-studio-cli');
+const fallback = p.join(cli, 'sfcs-data');
 const e = process.env.CLAUDE_ENV_FILE;
+
+function pathFileData(name) {
+  try {
+    const v = JSON.parse(fs.readFileSync(p.join(cli, name), 'utf8').replace(/^\uFEFF/, '')).pluginData;
+    return typeof v === 'string' && fs.existsSync(v) ? v : undefined;
+  } catch {}
+}
+// The banner in scripts/package.json and pluginData() in doctor.js look in this order:
+// SFCS_PLUGIN_DATA, sfcs-plugin-paths.json, the stable folder, then the shared names.
+// tests/plugin-data.test.js checks that after --ensure all three pick its folder.
+function lookup() {
+  return process.env.SFCS_PLUGIN_DATA || pathFileData('sfcs-plugin-paths.json') || fallback;
+}
+const d = ensure ? lookup() : process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || process.env.PLUGIN_DATA;
 
 if (!r || !d) {
   process.exit(0);
@@ -133,7 +158,36 @@ if (process.argv[2] === '--install') {
   return;
 }
 
-var pd = p.join(os.homedir(), '.copilot-studio-cli');
+if (ensure) {
+  const deadline = Date.now() + Number(process.env.SFCS_ENSURE_TIMEOUT_MS || 180000);
+  fs.mkdirSync(d, { recursive: true });
+  if (!installed()) {
+    console.log('copilot-studio: installing the native dependencies into ' + d + ', this takes up to a minute');
+    // One installer at a time (it stages under its own pid). If another session is
+    // installing, the child returns at once and we wait for its result.
+    while (!installed() && Date.now() < deadline) {
+      const out = fs.openSync(log, 'a');
+      const res = cp.spawnSync(process.execPath, [__filename, '--install'], {
+        cwd: d,
+        env: { ...process.env, CLAUDE_PLUGIN_DATA: d },
+        stdio: ['ignore', out, out],
+        windowsHide: true,
+        timeout: Math.max(1000, deadline - Date.now()),
+      });
+      fs.closeSync(out);
+      if (res.status !== 0) break;
+      if (!installed()) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    }
+  }
+  if (!installed()) {
+    fs.writeSync(2, 'copilot-studio: the native dependencies are not installed in ' + d + ', see ' + log + '\n');
+    process.exit(1);
+  }
+  console.log('copilot-studio: native dependencies ready in ' + d);
+  return;
+}
+
+var pd = cli;
 fs.mkdirSync(pd, { recursive: true });
 fs.writeFileSync(
   p.join(pd, 'sfcs-plugin-paths.json'),
