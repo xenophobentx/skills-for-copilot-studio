@@ -78,7 +78,11 @@ function install() {
   // install from one that was killed, and never touch a directory that is in use.
   for (const n of fs.readdirSync(d)) {
     if (!n.startsWith('.install-') && !n.startsWith('.old-')) continue;
-    if (n.startsWith('.install-') && alive(Number(n.slice(9)))) return console.log('another session is installing (' + n + ')');
+    // Both kinds carry the pid of the installer that made them. A live installer is
+    // still writing to its stage, or has just moved the old tree aside for running scripts.
+    const live = alive(Number(n.slice(n.indexOf('-') + 1)));
+    if (live && n.startsWith('.install-')) return console.log('another session is installing (' + n + ')');
+    if (live) continue;
     try {
       fs.rmSync(p.join(d, n), rm);
     } catch {}
@@ -133,32 +137,101 @@ if (process.argv[2] === '--install') {
   return;
 }
 
-if (ensure) {
-  const deadline = Date.now() + Number(process.env.SFCS_ENSURE_TIMEOUT_MS || 180000);
-  fs.mkdirSync(d, { recursive: true });
-  if (!installed()) {
-    console.log('copilot-studio: installing the native dependencies into ' + d + ', this takes up to a minute');
-    // One installer at a time (it stages under its own pid). If another session is
-    // installing, the child returns at once and we wait for its result.
-    while (!installed() && Date.now() < deadline) {
-      const out = fs.openSync(log, 'a');
-      const res = cp.spawnSync(process.execPath, [__filename, '--install'], {
-        cwd: d,
-        env: { ...process.env, CLAUDE_PLUGIN_DATA: d },
-        stdio: ['ignore', out, out],
-        windowsHide: true,
-        timeout: Math.max(1000, deadline - Date.now()),
-      });
-      fs.closeSync(out);
-      if (res.status !== 0) break;
-      if (!installed()) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+// An install that is running now: a .install-<pid> folder whose pid is alive.
+function liveInstaller() {
+  try {
+    return fs.readdirSync(d).find((n) => n.startsWith('.install-') && alive(Number(n.slice(9))));
+  } catch {}
+}
+
+// Kills the --install child and everything it started (npm, its scripts). It runs in
+// its own process group on POSIX; on Windows taskkill walks the tree.
+function killTree(child) {
+  if (process.platform === 'win32') {
+    cp.spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+  } else {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch (err) {
+      if (err.code !== 'ESRCH') child.kill('SIGKILL');
     }
   }
-  if (!installed()) {
-    fs.writeSync(2, 'copilot-studio: the native dependencies are not installed in ' + d + ', see ' + log + '\n');
-    process.exit(1);
+}
+
+function ensureFail(msg) {
+  fs.writeSync(2, 'copilot-studio: ' + msg + '\n');
+  process.exit(1);
+}
+
+function runEnsure() {
+  try {
+    fs.mkdirSync(d, { recursive: true });
+    fs.closeSync(fs.openSync(log, 'a'));
+  } catch (err) {
+    ensureFail('cannot write to ' + d + ' (' + (err.code || err.message) + '). Run this command outside the sandbox, or in a sandbox that can write there and reach the network.');
   }
-  console.log('copilot-studio: native dependencies ready in ' + d);
+  if (installed()) {
+    console.log('copilot-studio: native dependencies ready in ' + d);
+    return;
+  }
+  console.log('copilot-studio: installing the native dependencies into ' + d + ', this takes up to a minute');
+  const timeoutMs = Number(process.env.SFCS_ENSURE_TIMEOUT_MS || 180000);
+  const deadline = Date.now() + timeoutMs;
+  // One installer at a time (it stages under its own pid). If another session is
+  // installing we only watch its folder and the marker; we start --install ourselves
+  // only when nobody else is.
+  let child = null;
+  let starts = 0;
+  const stop = (code, msg) => {
+    if (child && child.exitCode === null) killTree(child);
+    if (msg) fs.writeSync(2, 'copilot-studio: ' + msg + '\n');
+    process.exit(code);
+  };
+  process.on('SIGINT', () => stop(130));
+  process.on('SIGTERM', () => stop(143));
+  const tick = () => {
+    if (installed()) {
+      console.log('copilot-studio: native dependencies ready in ' + d);
+      clearInterval(timer); // let the event loop end, so stdout is flushed
+      return;
+    }
+    if (Date.now() >= deadline) {
+      const waited = Math.round(timeoutMs / 1000) + ' seconds';
+      if (child && child.exitCode === null) {
+        stop(1, 'the install did not finish in ' + waited + '; stopped it. See ' + log);
+      }
+      const other = liveInstaller();
+      if (other) {
+        fs.writeSync(2, 'copilot-studio: another session is still installing (' + other + ') after ' + waited + '. Run this again in a minute. See ' + log + '\n');
+        process.exit(1);
+      }
+      ensureFail('the native dependencies are not installed in ' + d + ', see ' + log);
+    }
+    if (child) {
+      if (child.exitCode === null) return;
+      if (child.exitCode !== 0) ensureFail('the native dependencies are not installed in ' + d + ', see ' + log);
+      child = null; // it returned because another installer holds the folder, or it finished
+    }
+    if (liveInstaller()) return;
+    if (installed()) return;
+    if (++starts > 3) ensureFail('the native dependencies are not installed in ' + d + ', see ' + log);
+    const out = fs.openSync(log, 'a');
+    child = cp.spawn(process.execPath, [__filename, '--install'], {
+      cwd: d,
+      env: { ...process.env, CLAUDE_PLUGIN_DATA: d },
+      stdio: ['ignore', out, out],
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+    });
+    fs.closeSync(out);
+    child.on('error', (err) => ensureFail('could not start the install: ' + err.message));
+  };
+  const timer = setInterval(tick, 500);
+  tick();
+}
+
+if (ensure) {
+  runEnsure();
   return;
 }
 
