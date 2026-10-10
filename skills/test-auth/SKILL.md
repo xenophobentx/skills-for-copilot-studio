@@ -6,7 +6,7 @@ description: >
   that is shared across run-eval and chat-sdk skills. Run this before any
   eval or SDK chat workflow. Requires an App Registration with MakerOperations
   and Copilots.Invoke permissions.
-allowed-tools: Bash(node *eval-api.bundle.js auth *), Read, Glob
+allowed-tools: Bash(node *eval-api.bundle.js auth *), Bash(node *eval-api.bundle.js" auth *), Read, Glob
 context: fork
 agent: copilot-studio-test
 ---

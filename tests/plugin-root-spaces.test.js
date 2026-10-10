@@ -79,6 +79,31 @@ for (const c of samples.filter(Boolean)) {
 const bad = run(`node ${root}${path.sep}scripts${path.sep}schema-lookup.bundle.js kinds`);
 check("the unquoted form fails with spaces in the path", bad.status !== 0);
 
+// 3. Claude Code matches a skill's Bash(...) rules against the raw command, quotes included, with
+// * as "any characters". Every quoted command of a skill must match one of that skill's own rules,
+// or Claude Code asks for permission (and refuses in non-interactive runs).
+{
+  const spaced = "/Users/Jane Doe/.claude/plugins/cache/x/copilot-studio/1.0";
+  const toRe = (r) => new RegExp("^" + r.split("*").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$", "s");
+  let checked = 0;
+  const unmatched = [];
+  for (const d of fs.readdirSync(path.join(ROOT, "skills"))) {
+    const f = path.join(ROOT, "skills", d, "SKILL.md");
+    if (!fs.existsSync(f)) continue;
+    const text = fs.readFileSync(f, "utf8").replace(/\r\n/g, "\n");
+    const m = text.split("\n---")[0].match(/^allowed-tools:\s*(.*)$/m);
+    if (!m) continue; // no rules: every command asks, before and after the quoting
+    const rules = [...m[1].matchAll(/Bash\(([^)]*)\)/g)].map((x) => x[1]);
+    for (const c of text.matchAll(/node "<pluginRoot>\/(?:scripts|tests)\/[^`\n]*/g)) {
+      const cmd = c[0].trim().replace(/<pluginRoot>/g, spaced);
+      checked++;
+      if (!rules.some((r) => toRe(r).test(cmd))) unmatched.push(`${d}: ${c[0].trim()}  (rules: ${rules.join(" ; ")})`);
+    }
+  }
+  check("every quoted skill command matches one of its own skill's Bash(...) rules", unmatched.length === 0, unmatched.slice(0, 5).join("\n      "));
+  check("the rule coverage check saw the commands", checked > 15);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`${passed + failed} tests: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -3,7 +3,7 @@ name: doctor
 user-invocable: true
 description: Check the local setup for Copilot Studio push and pull. Reports Node, the LanguageServerHost binary, native dependencies, sign-in cache files, pac and the state of an agent workspace. Use when clone, push, pull or sign-in fails, or on a new machine.
 argument-hint: "[--workspace <path>]"
-allowed-tools: Bash(node *manage-agent.bundle.js doctor*), Read, Glob
+allowed-tools: Bash(node *manage-agent.bundle.js doctor*), Bash(node *manage-agent.bundle.js" doctor*), Read, Glob
 ---
 
 # Doctor

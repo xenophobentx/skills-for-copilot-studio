@@ -3,7 +3,7 @@ name: detect-mode
 user-invocable: false
 description: Detect a Copilot Studio agent's authentication mode (DirectLine vs M365) by querying Dataverse. Returns the mode and connection details needed to chat.
 argument-hint: "[--agent-dir <path>]"
-allowed-tools: Bash(node *chat-with-agent.bundle.js --detect-only *), Read, Glob
+allowed-tools: Bash(node *chat-with-agent.bundle.js --detect-only *), Bash(node *chat-with-agent.bundle.js" --detect-only *), Read, Glob
 agent: copilot-studio-test
 ---
 
