@@ -372,6 +372,20 @@ function findBinary() {
 // LSP client — spawn binary, connect via named pipe, JSON-RPC lifecycle
 // ---------------------------------------------------------------------------
 
+// Known faults inside LanguageServerHost, recognized from its log messages.
+// Returns a one-sentence explanation, or null.
+function lspFaultHint(message) {
+  if (typeof message === "string" && /Can't read file outside of client workspace/i.test(message)) {
+    return (
+      "LanguageServerHost threw \"Can't read file outside of client workspace\" " +
+      "(microsoft/skills-for-copilot-studio#178, seen with extension 1.5.57 on Windows and a workspace with many child agents). " +
+      "This is a fault inside the Copilot Studio VS Code extension, not in your YAML. " +
+      "Update the extension and try again. If it still happens, use the extension itself for this workspace."
+    );
+  }
+  return null;
+}
+
 class LspClient {
   constructor(binaryInfo, workspaceRoot) {
     this.binaryPath = binaryInfo.binaryPath;
@@ -386,6 +400,7 @@ class LspClient {
     this._onDiagnosticsCallback = null;
     this._onExitCallback = null;
     this.exitInfo = null; // set when the LSP process exits or errors
+    this.faultHint = null; // set when the LSP logs a known internal fault
   }
 
   async start() {
@@ -483,6 +498,7 @@ class LspClient {
     });
 
     this._connection.onUnhandledNotification((msg) => {
+      if (msg.method === "window/logMessage") this._noteLogMessage(msg.params);
       const detail = msg.params
         ? ` ${JSON.stringify(msg.params).substring(0, 300)}`
         : "";
@@ -513,6 +529,10 @@ class LspClient {
     this.running = true;
 
     return initResult;
+  }
+
+  _noteLogMessage(params) {
+    if (!this.faultHint && params) this.faultHint = lspFaultHint(params.message);
   }
 
   async sendCustomRequest(method, params) {
@@ -935,6 +955,7 @@ async function runValidation(client, args, tokens) {
       problems.push(`${why}; no diagnostics received for ${missing.length} of ${filePaths.length} file(s)`);
     }
     if (unreadable.length > 0) problems.push(`${unreadable.length} file(s) could not be read`);
+    if (client.faultHint) problems.push(client.faultHint);
     incomplete = {
       reason: missing.length > 0 ? reason || "timeout" : "unreadable",
       message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
@@ -1272,7 +1293,13 @@ async function cmdWithLsp(args, method) {
 
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
-    const result = await sendCustomRequestWithRetries(client, method, request);
+    let result;
+    try {
+      result = await sendCustomRequestWithRetries(client, method, request);
+    } catch (e) {
+      if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+      throw e;
+    }
 
     // syncPull reports success even when it wrote merge markers into a file.
     const conflicts = method === "powerplatformls/syncPull"
@@ -1661,6 +1688,9 @@ async function cmdChanges(args) {
         2
       ) + "\n"
     );
+  } catch (e) {
+    if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+    throw e;
   } finally {
     await client.stop();
   }

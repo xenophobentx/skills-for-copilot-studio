@@ -18902,6 +18902,12 @@ Install from: https://marketplace.visualstudio.com/items?itemName=ms-copilotstud
 Or set CPS_LSP_BINARY env var to the LanguageServerHost path.`
   );
 }
+function lspFaultHint(message) {
+  if (typeof message === "string" && /Can't read file outside of client workspace/i.test(message)) {
+    return `LanguageServerHost threw "Can't read file outside of client workspace" (microsoft/skills-for-copilot-studio#178, seen with extension 1.5.57 on Windows and a workspace with many child agents). This is a fault inside the Copilot Studio VS Code extension, not in your YAML. Update the extension and try again. If it still happens, use the extension itself for this workspace.`;
+  }
+  return null;
+}
 var LspClient = class {
   constructor(binaryInfo, workspaceRoot) {
     this.binaryPath = binaryInfo.binaryPath;
@@ -18916,6 +18922,7 @@ var LspClient = class {
     this._onDiagnosticsCallback = null;
     this._onExitCallback = null;
     this.exitInfo = null;
+    this.faultHint = null;
   }
   async start() {
     if (this.running) return;
@@ -18988,6 +18995,7 @@ var LspClient = class {
       if (this._onDiagnosticsCallback) this._onDiagnosticsCallback(uri, diagnostics || []);
     });
     this._connection.onUnhandledNotification((msg) => {
+      if (msg.method === "window/logMessage") this._noteLogMessage(msg.params);
       const detail = msg.params ? ` ${JSON.stringify(msg.params).substring(0, 300)}` : "";
       log(`[LSP notification] ${msg.method}${detail}`);
     });
@@ -19009,6 +19017,9 @@ var LspClient = class {
     this._connection.sendNotification("initialized", {});
     this.running = true;
     return initResult;
+  }
+  _noteLogMessage(params) {
+    if (!this.faultHint && params) this.faultHint = lspFaultHint(params.message);
   }
   async sendCustomRequest(method, params) {
     if (!this.running) throw new Error("LSP client not running");
@@ -19356,6 +19367,7 @@ async function runValidation(client, args, tokens) {
       problems.push(`${why}; no diagnostics received for ${missing.length} of ${filePaths.length} file(s)`);
     }
     if (unreadable.length > 0) problems.push(`${unreadable.length} file(s) could not be read`);
+    if (client.faultHint) problems.push(client.faultHint);
     incomplete = {
       reason: missing.length > 0 ? reason || "timeout" : "unreadable",
       message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
@@ -19616,7 +19628,13 @@ async function cmdWithLsp(args, method) {
     }
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
-    const result = await sendCustomRequestWithRetries(client, method, request);
+    let result;
+    try {
+      result = await sendCustomRequestWithRetries(client, method, request);
+    } catch (e) {
+      if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+      throw e;
+    }
     const conflicts = method === "powerplatformls/syncPull" ? findConflictMarkers(agentDir) : [];
     if (conflicts.length > 0) {
       process.stdout.write(
@@ -19924,6 +19942,9 @@ async function cmdChanges(args) {
         2
       ) + "\n"
     );
+  } catch (e) {
+    if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+    throw e;
   } finally {
     await client.stop();
   }
