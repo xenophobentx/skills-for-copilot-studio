@@ -3,7 +3,7 @@ name: add-knowledge
 user-invocable: false
 description: Add a knowledge source (public website or SharePoint) to a Copilot Studio agent. Use when the user asks to add a knowledge source, documentation URL, website, or SharePoint site for the agent to search.
 argument-hint: <url>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -11,6 +11,17 @@ agent: copilot-studio-author
 # Add Knowledge Source
 
 Add a knowledge source to the agent. Supports **Public Website**, **SharePoint**, and **Custom API** sources.
+
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
+
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/add-knowledge/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Instructions
 
@@ -44,7 +55,7 @@ Add a knowledge source to the agent. Supports **Public Website**, **SharePoint**
 
 5. **Look up the knowledge source schema**:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve KnowledgeSourceConfiguration
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve KnowledgeSourceConfiguration
    ```
 
 6. **Generate the knowledge source YAML**.
@@ -86,7 +97,7 @@ When the user wants to connect a **proprietary search API or database** not nati
 3. Transform API results into the required schema: `Content`, `ContentLocation`, `Title`
 4. Set `System.SearchResults` with the transformed results
 
-**Use the template:** `${CLAUDE_SKILL_DIR}/../../templates/topics/custom-knowledge-source.topic.mcs.yml`
+**Use the template:** `<pluginRoot>/templates/topics/custom-knowledge-source.topic.mcs.yml`
 
 **Prerequisites:** The user needs a connector action (in `actions/`) that calls their search API. If they don't have one yet, they should create it through the Copilot Studio UI or VS Code extension first.
 

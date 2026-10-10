@@ -9,6 +9,15 @@ context: fork
 
 **Only read the pattern file relevant to the current task** — do NOT read all files.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/int-patterns/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
+
 ## How to use patterns
 
 Patterns are **recommendations, not requirements**. How you present them depends on your role:
@@ -29,7 +38,7 @@ Patterns are **recommendations, not requirements**. How you present them depends
 
 ## Pattern Index
 
-### JIT Glossary → [jit-glossary.md](${CLAUDE_SKILL_DIR}/../../patterns/jit-glossary.md)
+### JIT Glossary → `<pluginRoot>/patterns/jit-glossary.md`
 
 Loads customer-specific acronyms into a global variable on first message so the orchestrator can expand them before searching knowledge sources.
 
@@ -38,7 +47,7 @@ Loads customer-specific acronyms into a global variable on first message so the 
 - Knowledge search quality is poor because the agent doesn't understand internal abbreviations
 - The user asks about loading CSV/text data into a variable at conversation start
 
-### JIT User Context → [jit-user-context.md](${CLAUDE_SKILL_DIR}/../../patterns/jit-user-context.md)
+### JIT User Context → `<pluginRoot>/patterns/jit-user-context.md`
 
 Loads the current user's M365 profile (country, department) into global variables for personalized answers.
 
@@ -47,7 +56,7 @@ Loads the current user's M365 profile (country, department) into global variable
 - The agent needs to call the M365 Users connector
 - The user asks about personalizing responses based on who is chatting
 
-### Dynamic Topic Redirect → [dynamic-topic-redirect.md](${CLAUDE_SKILL_DIR}/../../patterns/dynamic-topic-redirect.md)
+### Dynamic Topic Redirect → `<pluginRoot>/patterns/dynamic-topic-redirect.md`
 
 Uses a Switch expression inside a BeginDialog node to route to different topics based on a variable.
 
@@ -56,7 +65,7 @@ Uses a Switch expression inside a BeginDialog node to route to different topics 
 - The user wants to replace nested ConditionGroup nodes with a cleaner approach
 - The user asks about dynamic topic redirects or Switch expressions
 
-### Prevent Child Agent Responses → [prevent-child-agent-responses.md](${CLAUDE_SKILL_DIR}/../../patterns/prevent-child-agent-responses.md)
+### Prevent Child Agent Responses → `<pluginRoot>/patterns/prevent-child-agent-responses.md`
 
 Stops child agents from messaging users directly by instructing them to use output variables.
 
@@ -65,7 +74,7 @@ Stops child agents from messaging users directly by instructing them to use outp
 - The user is confused about the completion setting on a child agent
 - The parent agent needs to control all user-facing responses
 
-### Date Context → [date-context.md](${CLAUDE_SKILL_DIR}/../../patterns/date-context.md)
+### Date Context → `<pluginRoot>/patterns/date-context.md`
 
 Injects the current date into agent instructions using Power Fx for accurate date-relative responses.
 
@@ -74,7 +83,7 @@ Injects the current date into agent instructions using Power Fx for accurate dat
 - The agent handles schedules, calendars, deadlines, or time-sensitive content
 - Date interpretation is causing confusion or hallucinations
 
-### Orchestrator-Generated Variables → [orchestrator-variables.md](${CLAUDE_SKILL_DIR}/../../patterns/orchestrator-variables.md)
+### Orchestrator-Generated Variables → `<pluginRoot>/patterns/orchestrator-variables.md`
 
 Uses AutomaticTaskInput to classify or extract structured data from the user's message at orchestration time — zero extra cost or latency.
 
@@ -83,7 +92,7 @@ Uses AutomaticTaskInput to classify or extract structured data from the user's m
 - The user wants to extract a classification without asking the user or using an AI Prompt
 - Knowledge search quality suffers because all sources are searched indiscriminately
 
-### Prevent Tool Call Leaks → [prevent-tool-call-leaks.md](${CLAUDE_SKILL_DIR}/../../patterns/prevent-tool-call-leaks.md)
+### Prevent Tool Call Leaks → `<pluginRoot>/patterns/prevent-tool-call-leaks.md`
 
 Stops the orchestrator from leaking internal reasoning and tool call metadata to the end user.
 
@@ -92,7 +101,7 @@ Stops the orchestrator from leaking internal reasoning and tool call metadata to
 - The agent has connector actions that the orchestrator invokes indirectly
 - Responses contain `explanation_of_tool_call` or similar internal metadata
 
-### Channel-Aware Behavior → [channel-aware-behavior.md](${CLAUDE_SKILL_DIR}/../../patterns/channel-aware-behavior.md)
+### Channel-Aware Behavior → `<pluginRoot>/patterns/channel-aware-behavior.md`
 
 Detects the host channel from `System.Activity.ChannelId` and gates behavior per surface (Teams, M365 Copilot, web chat, Direct Line, voice).
 
@@ -100,7 +109,7 @@ Detects the host channel from `System.Activity.ChannelId` and gates behavior per
 - A feature works on one channel but breaks on another (file upload, Adaptive Card variants, hyperlinks)
 - The user asks to detect Teams vs. M365 Copilot vs. web vs. voice
 - A naive `=Lower(ChannelId) = "msteams"` check is silently failing for `msteams:Copilot` or other compound channel IDs
-### RAI Error Handling → [rai-error-handling.md](${CLAUDE_SKILL_DIR}/../../patterns/rai-error-handling.md)
+### RAI Error Handling → `<pluginRoot>/patterns/rai-error-handling.md`
 
 Classifies Azure OpenAI content-filter errors by subcode in the OnError topic and returns category-specific user messages with telemetry. Azure OpenAI models only — does not work with Anthropic or xAI models.
 
@@ -109,7 +118,7 @@ Classifies Azure OpenAI content-filter errors by subcode in the OnError topic an
 - The user wants category-specific handling (e.g., crisis resources for self-harm, security messaging for jailbreak attempts)
 - The user asks about `OnError`, `ContentFiltered`, Azure OpenAI content filters, or RAI subcodes
 
-### Line Breaks in Messages → [line-breaks-in-messages.md](${CLAUDE_SKILL_DIR}/../../patterns/line-breaks-in-messages.md)
+### Line Breaks in Messages → `<pluginRoot>/patterns/line-breaks-in-messages.md`
 
 Uses `<br /><br />` inside message and question nodes to render reliable paragraph spacing across channels.
 
@@ -118,7 +127,7 @@ Uses `<br /><br />` inside message and question nodes to render reliable paragra
 - Multi-part questions or welcome messages need visual separation
 - The user asks about line breaks, `<br />`, or formatting in messages or questions
 
-### Knowledge Hold Message → [knowledge-hold-message.md](${CLAUDE_SKILL_DIR}/../../patterns/knowledge-hold-message.md)
+### Knowledge Hold Message → `<pluginRoot>/patterns/knowledge-hold-message.md`
 
 Sends a randomized hold message during knowledge search so users know the agent is working.
 
@@ -127,7 +136,7 @@ Sends a randomized hold message during knowledge search so users know the agent 
 - Users are abandoning conversations or resending questions during delays
 - The user asks about `OnKnowledgeRequested`, typing indicators, or hold messages
 
-### Deterministic MCP Calls → [deterministic-mcp-calls.md](${CLAUDE_SKILL_DIR}/../../patterns/deterministic-mcp-calls.md)
+### Deterministic MCP Calls → `<pluginRoot>/patterns/deterministic-mcp-calls.md`
 
 Workarounds to improve MCP tool invocation reliability using instruction-based nudges or a dedicated child agent wrapper.
 
@@ -136,7 +145,7 @@ Workarounds to improve MCP tool invocation reliability using instruction-based n
 - The user asks about forcing MCP tool invocation or `/` syntax with MCP tools
 - The user needs deterministic tool calls for business-critical workflows
 
-### Chain of Thought Logging → [chain-of-thought-logging.md](${CLAUDE_SKILL_DIR}/../../patterns/chain-of-thought-logging.md)
+### Chain of Thought Logging → `<pluginRoot>/patterns/chain-of-thought-logging.md`
 
 Sends high-level "Thinking" messages during multi-step orchestration to improve observability and perceived responsiveness.
 
@@ -146,7 +155,7 @@ Sends high-level "Thinking" messages during multi-step orchestration to improve 
 - The user wants a debug or observability trace of orchestrator behavior
 - The user asks about streaming, typing indicators, or progress messages for complex flows
 
-### Conversation History Variable → [conversation-history-variable.md](${CLAUDE_SKILL_DIR}/../../patterns/conversation-history-variable.md)
+### Conversation History Variable → `<pluginRoot>/patterns/conversation-history-variable.md`
 
 Captures a best-effort conversation transcript into a variable for escalation, logging, and downstream automation.
 
@@ -155,7 +164,7 @@ Captures a best-effort conversation transcript into a variable for escalation, l
 - A downstream tool or connector requires conversation history as input
 - The user wants to log conversations to Dataverse, a ticketing system, or email
 
-### Teams Production Hardening → [teams-production-hardening.md](${CLAUDE_SKILL_DIR}/../../patterns/teams-production-hardening.md)
+### Teams Production Hardening → `<pluginRoot>/patterns/teams-production-hardening.md`
 
 Eight coordinated production patterns for Teams and M365 Copilot agents covering reinstalls, stale context, resets, diagnostics, and suggested prompts.
 
@@ -166,7 +175,7 @@ Eight coordinated production patterns for Teams and M365 Copilot agents covering
 - The user wants richer OnError or Start Over experiences with diagnostic info
 - The user asks about `OnInstallationUpdate`, `OnInactivity`, `OnSystemRedirect`, suggested prompts, or Teams-specific behavior
 
-### NL to Query Compilation → [nl-to-query-compilation.md](${CLAUDE_SKILL_DIR}/../../patterns/nl-to-query-compilation.md)
+### NL to Query Compilation → `<pluginRoot>/patterns/nl-to-query-compilation.md`
 
 Enriches the `modelDescription` of API tools with field meanings, valid values and glossaries, so the orchestrator maps the user's words to API parameters and codes.
 
@@ -175,7 +184,7 @@ Enriches the `modelDescription` of API tools with field meanings, valid values a
 - The orchestrator passes wrong or invented parameter values to an API tool
 - The user asks where API mappings belong, in `modelDescription` or in the agent instructions
 
-### OpenAPI HTTP API Tools → [openapi-http-api-tools.md](${CLAUDE_SKILL_DIR}/../../patterns/openapi-http-api-tools.md)
+### OpenAPI HTTP API Tools → `<pluginRoot>/patterns/openapi-http-api-tools.md`
 
 Spec rules for uploading a public REST API as a tool: response `type: object`, JSON by default, short descriptions at upload, and the parameters check after the pull.
 
@@ -183,7 +192,7 @@ Spec rules for uploading a public REST API as a tool: response `type: object`, J
 - The user writes an OpenAPI spec for a REST API, or a REST API tool fails at upload or at runtime
 - The error is `JsonReaderException`, `Expecting Record but received Table` or a tool that ignores its parameters
 
-### Data Visualization in Chat → [data-visualization.md](${CLAUDE_SKILL_DIR}/../../patterns/data-visualization.md)
+### Data Visualization in Chat → `<pluginRoot>/patterns/data-visualization.md`
 
 Tables and fact sets in agent replies through Adaptive Cards (the default), or charts and diagrams through QuickChart or Mermaid.ink image URLs on explicit request. The URL options send the chart data to a third-party service.
 

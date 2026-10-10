@@ -3,7 +3,7 @@ name: add-node
 user-invocable: false
 description: Add or modify a node in an existing Copilot Studio topic. Use when the user asks to add a question, message, condition, variable, or other node to a topic. Do NOT use this for generative answers or knowledge search — use /add-generative-answers instead.
 argument-hint: <node-type> to <topic-name>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Edit, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Edit, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -11,6 +11,17 @@ agent: copilot-studio-author
 # Add Node to Topic
 
 Add a new node to an existing Copilot Studio topic, or modify an existing one.
+
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
+
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/add-node/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 In Copilot Studio, the elements inside a topic's `actions` array are **nodes** (SendActivity, Question, ConditionGroup, etc.). These are different from **actions** (`actions/*.mcs.yml`), which are connector-based TaskDialogs. This skill handles nodes within topics.
 
@@ -31,7 +42,7 @@ In Copilot Studio, the elements inside a topic's `actions` array are **nodes** (
 
 3. **Look up the node schema**:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve <NodeType>
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve <NodeType>
    ```
 
 4. **Read the existing topic file** to understand its current structure.

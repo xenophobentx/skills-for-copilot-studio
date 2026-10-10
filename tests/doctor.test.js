@@ -253,7 +253,7 @@ try {
     // plugin data found through sfcs-plugin-paths.json, like the bundles do
     const data = tmp("data");
     const ctx = makeCtx();
-    writeFile(path.join(ctx.home, ".copilot-studio-cli", "sfcs-plugin-paths.json"), JSON.stringify({ pluginData: data, pluginRoot: data }));
+    writeFile(path.join(ctx.home, ".copilot-studio-cli", "sfcs-plugin-paths.json"), JSON.stringify({ pluginData: data, pluginRoot: path.resolve(path.dirname(ctx.scriptPath), "..") }));
     let seen = null;
     ctx.tryRequire = (n, dirs) => { seen = dirs; return {}; };
     run(ctx, null, "native");
@@ -286,19 +286,26 @@ try {
     const file = path.join(ctx.home, ".copilot-studio-cli", "sfcs-plugin-paths.json");
     writeFile(file, "{not json");
     assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "broken JSON warns");
-    writeFile(file, JSON.stringify({ pluginData: path.join(root, "gone"), pluginRoot: root }));
+    const ownRootDir = path.resolve(path.dirname(ctx.scriptPath), "..");
+    writeFile(file, JSON.stringify({ pluginData: path.join(root, "gone"), pluginRoot: ownRootDir }));
     const r = run(ctx, null, "plugin-paths");
     assertEqual([r[0].level, r[0].message.includes("pluginData")], ["WARN", true], "a path that does not exist warns and is named");
     writeFile(file, JSON.stringify({ pluginData: 5 }));
     assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "pluginData that is not a string warns");
+    writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: ownRootDir }));
+    const mineLine = run(ctx, null, "plugin-paths")[0];
+    assertEqual([mineLine.level, /points to an existing folder/.test(mineLine.message)], ["OK", true], "a file written by this copy is fine");
     writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: tmp("another-version") }));
-    assertEqual(level(ctx, null, "plugin-paths"), ["OK"], "existing pluginData is fine whatever pluginRoot says");
+    const otherCopy = run(ctx, null, "plugin-paths")[0];
+    assertEqual([otherCopy.level, /another copy of the plugin/.test(otherCopy.message)], ["OK", true], "a file written by another copy is information, and ignored");
+    writeFile(file, JSON.stringify({ pluginData: root }));
+    assertEqual(/another copy of the plugin/.test(run(ctx, null, "plugin-paths")[0].message), true, "a file without pluginRoot is not trusted");
     writeFile(file, "[]");
     assertEqual(level(ctx, null, "plugin-paths"), ["WARN"], "wrong shape warns");
     // the file and SFCS_PLUGIN_DATA disagree: information
     const data = tmp("data");
-    writeFile(file, JSON.stringify({ pluginData: root }));
-    const both = run(makeCtx({ home: ctx.home, env: { SFCS_PLUGIN_DATA: data } }), null, "plugin-paths")[0];
+    writeFile(file, JSON.stringify({ pluginData: root, pluginRoot: ownRootDir }));
+    const both = run(makeCtx({ home: ctx.home, scriptPath: ctx.scriptPath, env: { SFCS_PLUGIN_DATA: data } }), null, "plugin-paths")[0];
     assertEqual([both.level, both.message.includes("SFCS_PLUGIN_DATA")], ["OK", true], "a different SFCS_PLUGIN_DATA is shown, not a problem");
   }
 
@@ -328,6 +335,12 @@ try {
     const own2 = tmp("own2"); writeFile(path.join(own2, "native-deps.json"), "{}");
     const foreign = tmp("foreign");
     const gone = path.join(root, "gone");
+    // The banner runs from a file in <bannerRoot>/scripts, where it finds its own plugin root.
+    const bannerRoot = tmp("banner-root");
+    const bannerFile = path.join(bannerRoot, "scripts", "banner.js");
+    writeFile(bannerFile, banner + ";console.log(process.env.NODE_PATH||'')");
+    const elsewhere = tmp("other-copy");
+    // sfcs-plugin-paths.json entries are { pluginData, pluginRoot }; a plain string means this copy.
     const cases = [
       ["nothing", {}, {}],
       ["SFCS env first", { SFCS_PLUGIN_DATA: own, CLAUDE_PLUGIN_DATA: own2 }, { "sfcs-plugin-paths.json": own2 }],
@@ -340,18 +353,49 @@ try {
       ["old file of another plugin", {}, { "plugin-paths.json": foreign }],
       ["old file, folder gone", {}, { "plugin-paths.json": gone }],
       ["pluginData not a string", {}, { "sfcs-plugin-paths.json": 5, "plugin-paths.json": { a: 1 } }],
+      // the stable per-user folder that hooks/setup.js --ensure uses without a hook
+      ["stable folder with marker", {}, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder without marker", {}, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "node_modules", "x"), "")],
+      ["sfcs file of another copy is ignored", {}, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: elsewhere } }],
+      ["sfcs file of another copy, stable folder used", {}, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: elsewhere } }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["sfcs file of another copy, CLAUDE_PLUGIN_DATA used", { CLAUDE_PLUGIN_DATA: own2 }, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: elsewhere } }],
+      ["sfcs file without pluginRoot is ignored", {}, { "sfcs-plugin-paths.json": { pluginData: own } }],
+      ["sfcs file with a pluginRoot that is gone is ignored", {}, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: gone } }],
+      ["stable folder loses to the sfcs file", {}, { "sfcs-plugin-paths.json": own }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder beats CLAUDE_PLUGIN_DATA", { CLAUDE_PLUGIN_DATA: own }, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder beats the old file", {}, { "plugin-paths.json": own }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder beats a foreign marker folder", { CLAUDE_PLUGIN_DATA: own2 }, { "plugin-paths.json": own2 }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder without marker falls through to CLAUDE_PLUGIN_DATA", { CLAUDE_PLUGIN_DATA: own }, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "node_modules", "x"), "")],
     ];
-    for (const [label, env, files] of cases) {
+    for (const [label, env, files, prepare] of cases) {
       const home = tmp("home");
-      for (const [n, v] of Object.entries(files)) writeFile(path.join(home, ".copilot-studio-cli", n), JSON.stringify({ pluginData: v }));
-      const probe = spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], {
+      if (prepare) prepare(home);
+      for (const [n, v] of Object.entries(files)) {
+        const body = n === "sfcs-plugin-paths.json" && typeof v === "object" && v !== null && "pluginData" in v ? v
+          : n === "sfcs-plugin-paths.json" ? { pluginData: v, pluginRoot: bannerRoot } : { pluginData: v };
+        writeFile(path.join(home, ".copilot-studio-cli", n), JSON.stringify(body));
+      }
+      const probe = spawnSync(process.execPath, [bannerFile], {
         env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, ...env },
         encoding: "utf8",
       });
       const first = probe.stdout.trim().split(path.delimiter)[0];
-      const d = pluginData(makeCtx({ home, env }));
+      const d = pluginData(makeCtx({ home, env, scriptPath: path.join(bannerRoot, "scripts", "manage-agent.bundle.js") }));
       assertEqual(d ? path.join(d.dir, "node_modules") : "", probe.status === 0 ? first : "banner failed: " + probe.stderr, `doctor and the banner agree: ${label}`);
     }
+  }
+
+  // ---- the stable folder is reported, and the missing-install hints name the --ensure command
+  {
+    const ctx = makeCtx();
+    writeFile(path.join(ctx.home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}");
+    const pd = require("../scripts/src/doctor.js").pluginData(ctx);
+    assertEqual([pd.dir, pd.source], [path.join(ctx.home, ".copilot-studio-cli", "sfcs-data"), "stable folder"], "doctor finds the stable folder");
+    const line = run(ctx, null, "plugin-paths")[0];
+    assertEqual([line.level, /stable folder/.test(line.message)], ["OK", true], "no sfcs-plugin-paths.json is fine when the stable folder is used");
+    const bare = makeCtx();
+    const hint = run(bare, null, "plugin-paths")[0].hint;
+    assertEqual(/hooks[\\/]setup\.js" --ensure/.test(hint), true, "the hint without a hook names setup.js --ensure");
   }
 
   // ---- Secret Service (Linux only)

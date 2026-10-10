@@ -6,7 +6,7 @@ description: >
   Works on DRAFT agents — no publish step required. Lists test sets, starts a run,
   polls until complete, fetches results, and proposes YAML fixes for failures.
   Use when the user wants to test agent changes without publishing.
-allowed-tools: Bash(node *eval-api.bundle.js *), Bash(node *manage-agent.bundle.js push *), Bash(node *manage-agent.bundle.js pull *), Read, Glob, Grep, Edit
+allowed-tools: Bash(node *eval-api.bundle.js *), Bash(node *eval-api.bundle.js" *), Bash(node *manage-agent.bundle.js push *), Bash(node *manage-agent.bundle.js pull *), Read, Glob, Grep, Edit
 context: fork
 agent: copilot-studio-test
 ---
@@ -15,14 +15,27 @@ agent: copilot-studio-test
 
 Run evaluations against a Copilot Studio agent's **draft** — no publish needed.
 
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
+
+**Sandbox.** The `eval-api.bundle.js` commands and `manage-agent.bundle.js push` and `pull` sign in, call the network and write to `~/.copilot-studio-cli`. Run the command and do not assume it is blocked: a sandbox can allow the network and the folders it needs. If the command fails with a concrete sandbox error (network unreachable, `EPERM`, permission denied, read-only file system), ask for only the access that is missing (the network, write access to the folder in the error, or on macOS the keychain) and run it again. If you cannot ask (Codex with `approval_policy = "never"`), say which access is missing and stop.
+
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/run-eval/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 The caller (test agent) must provide `--client-id` and `--workspace`. If you don't have the client ID, return immediately and tell the caller to run `test-auth` first.
 
-All eval-api commands run in the **foreground**. NEVER use `run_in_background`.
+All eval-api commands run in the **foreground**. NEVER use `run_in_background`. If your client returns before the command ends (Codex: `exec_command` returns a `session_id`), poll that session with `write_stdin` until the result has an `exit_code`, and do not start the command a second time.
 
 ## Step 1: List test sets and let the user choose
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js list-testsets --workspace <path> --client-id <id>
+node "<pluginRoot>/scripts/eval-api.bundle.js" list-testsets --workspace <path> --client-id <id>
 ```
 
 - **No test sets found**: Tell the user to create one in Copilot Studio (Evaluate tab > New evaluation). Stop.
@@ -51,7 +64,7 @@ Ask the user:
 ## Step 3: Start the run
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js start-run --workspace <path> --client-id <id> --testset-id <id> --run-name "Draft eval <date>"
+node "<pluginRoot>/scripts/eval-api.bundle.js" start-run --workspace <path> --client-id <id> --testset-id <id> --run-name "Draft eval <date>"
 ```
 
 Add `--connection-id <id>` if the user provided a connection ID in Step 2.
@@ -61,7 +74,7 @@ Add `--published` only if the user explicitly asked for published-bot testing.
 ## Step 4: Poll until complete
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js get-run --workspace <path> --client-id <id> --run-id <runId>
+node "<pluginRoot>/scripts/eval-api.bundle.js" get-run --workspace <path> --client-id <id> --run-id <runId>
 ```
 
 Poll every 15-30 seconds. Report progress: "Processing: 3/10 test cases..."
@@ -71,7 +84,7 @@ Stop when `state` is `Completed`, `Failed`, `Abandoned`, or `Cancelled`.
 ## Step 5: Fetch and analyze results
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js get-results --workspace <path> --client-id <id> --run-id <runId>
+node "<pluginRoot>/scripts/eval-api.bundle.js" get-results --workspace <path> --client-id <id> --run-id <runId>
 ```
 
 Present a summary table (total, passed, failed, errors). For failures:

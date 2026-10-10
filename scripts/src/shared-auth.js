@@ -15,10 +15,10 @@
  * (e.g., "chat" for the SDK chat path) without polluting the default singleton.
  */
 
-const { log, die } = require("./shared-utils");
+const { log, die, requireNative } = require("./shared-utils");
 // msal-cache loads the native modules (keytar, msal-node-extensions) when it is
 // required. Load it on first use, so `manage-agent doctor` still runs without them.
-const createCachePlugin = (...args) => require("./msal-cache").createCachePlugin(...args);
+const createCachePlugin = (...args) => requireNative(() => require("./msal-cache")).createCachePlugin(...args);
 
 // ---------------------------------------------------------------------------
 // Constants

@@ -12,6 +12,8 @@ agent: copilot-studio-author
 
 Create a global variable that persists across all topics within a conversation.
 
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
+
 ## Instructions
 
 1. **Auto-discover the agent directory**:

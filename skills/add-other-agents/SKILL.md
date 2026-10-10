@@ -3,7 +3,7 @@ name: add-other-agents
 user-invocable: false
 description: Add child agents, connected agents, or other multi-agent patterns to a Copilot Studio agent. Use when the user asks to create a sub-agent, child agent, connected agent, or call another agent.
 argument-hint: <agent description>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -11,6 +11,17 @@ agent: copilot-studio-author
 # Add Other Agents
 
 Add multi-agent capabilities to a Copilot Studio agent. Two patterns are supported:
+
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
+
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/add-other-agents/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 | Pattern | Use when | What it creates |
 |---------|----------|----------------|
@@ -35,8 +46,8 @@ Create a new child agent (AgentDialog) that the parent agent's orchestrator can 
 
 2. **Look up the AgentDialog schema**:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve AgentDialog
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve OnToolSelected
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve AgentDialog
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve OnToolSelected
    ```
 
 3. **Determine from the user**:
@@ -51,7 +62,7 @@ Create a new child agent (AgentDialog) that the parent agent's orchestrator can 
    └── agent.mcs.yml
    ```
 
-5. **Generate `agent.mcs.yml`** using `${CLAUDE_SKILL_DIR}/../../templates/agents/child-agent.mcs.yml` as the starting template. Read the template, then customize all placeholder values (`<...>`) based on the user's requirements.
+5. **Generate `agent.mcs.yml`** using `<pluginRoot>/templates/agents/child-agent.mcs.yml` as the starting template. Read the template, then customize all placeholder values (`<...>`) based on the user's requirements.
 
    Key structure:
    - `kind: AgentDialog` — marks this as a child agent

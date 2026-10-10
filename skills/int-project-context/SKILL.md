@@ -10,6 +10,15 @@ user-invocable: false
 
 You are working inside a Copilot Studio agent project. All YAML files have the `.mcs.yml` extension.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/int-project-context/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
+
 ## Project Structure
 
 ```
@@ -35,21 +44,23 @@ This plugin supports CLASSIC (topic-based) agents only. Copilot Studio CLI agent
 
 Supporting evidence only, never enough on its own: `configuration.agentSettings.instructions.segments` with `kind: StaticSegment`, a `capabilities/` folder, skills under `behaviors/` with `kind: InlineAgentSkill`, `authoringShape: 2` in `.mcs/botdefinition.json`, and no `agent.mcs.yml`/`topics/`. A classic agent has `agent.mcs.yml` plus `topics/`, `actions/`, `knowledge/`, `variables/`.
 
+**Fresh clone.** A cloud agent has no local file yet. Clone, then run the check on the new subfolder's `settings.mcs.yml` right after the download (the clone creates that subfolder; it must not exist yet). On a match, tell the user the path of the downloaded folder and that it is a CLI agent workspace, and leave it for them to keep or delete.
+
 **In a CLI agent workspace this plugin only reads and describes.** Do not create or edit files, and do not pull, push, publish or clone into it (pull rewrites the files with classic tooling). Do not fall back to the "no agent found, clone one" flow either. Tell the user:
 
 > This is a Copilot Studio CLI agent workspace, not a classic agent. This plugin targets classic (topic-based) agents, and classic edits are silently ignored or break CLI agents. Use the Copilot Studio plugin for CLI agents instead: https://github.com/microsoft/copilot-studio-plugin
 
 ## Schema Lookup Script
 
-When you write new YAML files, be sure to use the schema lookup script to understand the schema, including mandatory fields, definitions, and references. The script is located at `${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js`, and you can use it in the terminal as follows:
+When you write new YAML files, be sure to use the schema lookup script to understand the schema, including mandatory fields, definitions, and references. The script is located at `<pluginRoot>/scripts/schema-lookup.bundle.js`, and you can use it in the terminal as follows:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js search trigger             # Search by keyword
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js lookup SendActivity        # Look up a definition
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve AdaptiveDialog     # Resolve with $refs
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js kinds                      # List all valid kind values
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary Question           # Compact overview
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js validate <file.yml>        # Validate a YAML file
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" search trigger             # Search by keyword
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" lookup SendActivity        # Look up a definition
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve AdaptiveDialog     # Resolve with $refs
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" kinds                      # List all valid kind values
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary Question           # Compact overview
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" validate <file.yml>        # Validate a YAML file
 ```
 
 If you already know the specific definition you want to look up, use `lookup`. If you want to explore the schema around a certain topic, use `search` or `summary`.
@@ -59,13 +70,13 @@ Always check the schema before writing YAML to ensure you include all required f
 
 ## Connector Lookup Script
 
-The connector lookup script is at `${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js`. Use it for any questions about connectors, actions, their inputs, and outputs:
+The connector lookup script is at `<pluginRoot>/scripts/connector-lookup.bundle.js`. Use it for any questions about connectors, actions, their inputs, and outputs:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js list                                 # List all connectors with operation counts
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js operations <connector>               # List operations for a connector
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js operation <connector> <operationId>  # Full details of one operation (inputs/outputs)
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js search <keyword>                     # Search operations across all connectors
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" list                                 # List all connectors with operation counts
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operations <connector>               # List operations for a connector
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operation <connector> <operationId>  # Full details of one operation (inputs/outputs)
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" search <keyword>                     # Search operations across all connectors
 ```
 
 `<connector>` matches by API name (`shared_office365`) or partial display name (`outlook`).
