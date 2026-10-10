@@ -12,6 +12,8 @@ agent: copilot-studio-author
 
 Edit an existing action (`kind: TaskDialog`) in a Copilot Studio agent. Supports both regular connector actions (`InvokeConnectorTaskAction`) and MCP server actions (`InvokeExternalAgentTaskAction`). Uses connector definitions to understand the full operation schema (inputs, outputs, types) and action templates as structural reference.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 ## Connector Lookup
 
 Help the user find the right connector and operation before they go to the UI. Use the connector lookup tool. Important: The connector lookup script only covers a subset of connectors (run `list` to see which ones). If the user's requested connector is not in the list, tell the user they need to find and add the connector action entirely through the Copilot Studio portal, then ask them to pull again the files locally. Once pulled, `/copilot-studio:edit-action` can still be used to customize the YAML.

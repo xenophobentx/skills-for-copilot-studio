@@ -12,6 +12,8 @@ agent: copilot-studio-author
 
 Add a new node to an existing Copilot Studio topic, or modify an existing one.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 In Copilot Studio, the elements inside a topic's `actions` array are **nodes** (SendActivity, Question, ConditionGroup, etc.). These are different from **actions** (`actions/*.mcs.yml`), which are connector-based TaskDialogs. This skill handles nodes within topics.
 
 **For generative answers (SearchAndSummarizeContent, AnswerQuestionWithAI)**, use the `/add-generative-answers` skill instead — it has the specific patterns, follow-up ConditionGroup logic, and disambiguation guidance needed to set them up correctly.

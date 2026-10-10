@@ -12,6 +12,8 @@ agent: copilot-studio-author
 
 Add multi-agent capabilities to a Copilot Studio agent. Two patterns are supported:
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 | Pattern | Use when | What it creates |
 |---------|----------|----------------|
 | **Child agent** | The agent needs a specialist sub-agent owned by the same parent | `AgentDialog` in `agents/` subdirectory |
