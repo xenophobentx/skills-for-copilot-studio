@@ -21,15 +21,16 @@ When using child agents, the **parent agent** should control all communication w
 
 ## YAML Example
 
-**Child agent instructions** (in the child agent's `settings.mcs.yml`):
+**Child agent instructions** (in the child agent's `agent.mcs.yml`, under `settings`):
 
 ```yaml
-instructions: |
-  CRITICAL - DO NOT MESSAGE USERS
-  - DO NOT respond directly to the user
-  - DO NOT call SendMessageTool or send any messages
-  - ONLY populate the output variables with your response
-  - Let the parent orchestrator deliver the response to the user
+settings:
+  instructions: |
+    CRITICAL - DO NOT MESSAGE USERS
+    - DO NOT respond directly to the user
+    - DO NOT call SendMessageTool or send any messages
+    - ONLY populate the output variables with your response
+    - Let the parent orchestrator deliver the response to the user
 ```
 
 **Parent agent flow** (calling the child and reading its output):

@@ -23,7 +23,7 @@ The expression `{Text(Today(),DateTimeFormat.LongDate)}` is evaluated once per c
 
 ## YAML Example
 
-**Agent instructions** (in `settings.mcs.yml`):
+**Agent instructions** (in `agent.mcs.yml`):
 
 ```yaml
 instructions: |

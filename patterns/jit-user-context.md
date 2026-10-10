@@ -71,7 +71,7 @@ kind: GlobalVariableComponent
 defaultValue: DEFAULT
 ```
 
-**Agent instructions** (in `settings.mcs.yml`):
+**Agent instructions** (in `agent.mcs.yml`):
 
 ```yaml
 instructions: |

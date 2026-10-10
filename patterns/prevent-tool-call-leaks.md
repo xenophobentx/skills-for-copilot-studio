@@ -26,7 +26,7 @@ Create an `OnGeneratedResponse` topic that pattern-matches for the leaked metada
 
 ## YAML Example
 
-**Approach 1 — Instructions** (in `settings.mcs.yml`):
+**Approach 1 — Instructions** (in `agent.mcs.yml`):
 
 ```yaml
 instructions: |
