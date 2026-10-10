@@ -44,6 +44,8 @@ This plugin supports CLASSIC (topic-based) agents only. Copilot Studio CLI agent
 
 Supporting evidence only, never enough on its own: `configuration.agentSettings.instructions.segments` with `kind: StaticSegment`, a `capabilities/` folder, skills under `behaviors/` with `kind: InlineAgentSkill`, `authoringShape: 2` in `.mcs/botdefinition.json`, and no `agent.mcs.yml`/`topics/`. A classic agent has `agent.mcs.yml` plus `topics/`, `actions/`, `knowledge/`, `variables/`.
 
+**Fresh clone.** A cloud agent has no local file yet. Clone into an empty folder and run the check on that folder's `settings.mcs.yml` right after the download. On a match, tell the user the path of the downloaded folder and that it is a CLI agent workspace, and leave it for them to keep or delete.
+
 **In a CLI agent workspace this plugin only reads and describes.** Do not create or edit files, and do not pull, push, publish or clone into it (pull rewrites the files with classic tooling). Do not fall back to the "no agent found, clone one" flow either. Tell the user:
 
 > This is a Copilot Studio CLI agent workspace, not a classic agent. This plugin targets classic (topic-based) agents, and classic edits are silently ignored or break CLI agents. Use the Copilot Studio plugin for CLI agents instead: https://github.com/microsoft/copilot-studio-plugin

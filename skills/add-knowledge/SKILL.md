@@ -12,7 +12,7 @@ agent: copilot-studio-author
 
 Add a knowledge source to the agent. Supports **Public Website**, **SharePoint**, and **Custom API** sources.
 
-**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
 
 ## Locate the plugin files
 

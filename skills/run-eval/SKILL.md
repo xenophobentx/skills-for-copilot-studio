@@ -15,7 +15,7 @@ agent: copilot-studio-test
 
 Run evaluations against a Copilot Studio agent's **draft** — no publish needed.
 
-**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
 
 **Sandbox.** The `eval-api.bundle.js` commands and `manage-agent.bundle.js push` and `pull` sign in, call the network and write to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (for example Codex without `--yolo`), run them outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run them directly.
 

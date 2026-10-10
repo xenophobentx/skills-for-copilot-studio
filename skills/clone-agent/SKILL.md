@@ -12,7 +12,9 @@ agent: copilot-studio-manage
 
 Guided flow to clone a Copilot Studio agent from the cloud to a local workspace. Walks the user through environment selection, agent selection, and downloads the agent's YAML files.
 
-**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
+
+**Cloning.** There is no local `settings.mcs.yml` to check before a download. Clone into an empty folder, never into a folder that already holds an agent (check that agent as above). Right after the download, search the new folder's `settings.mcs.yml` for the same two markers. On a match it is a CLI agent: do not edit, pull, push or publish it, tell the user the path of the downloaded folder and that it is a CLI agent workspace, point to https://github.com/microsoft/copilot-studio-plugin, and leave the folder for the user to keep or delete.
 
 **Sandbox.** The `manage-agent.bundle.js` commands below sign in, call the network and write to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (for example Codex without `--yolo`), run them outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run them directly.
 
@@ -144,7 +146,7 @@ Ask the user to pick an agent. Extract the `agentId`.
 
 ## Phase 3: Clone
 
-Run the clone command. The workspace should be the current directory (`.`). The `--agent-id` is required (from Phase 2):
+Run the clone command. Use the current directory as the workspace if it is empty, otherwise create a new empty folder and use that (the clone writes a folder named after the agent inside it). The `--agent-id` is required (from Phase 2):
 
 ```bash
 node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
@@ -159,6 +161,7 @@ node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
 **Timeout: 300000ms (5 minutes)**
 
 On success:
+0. Apply the Cloning rule above to the folder named in `agentFolderName`. If it is a CLI agent, stop here.
 1. Run `Glob: **/agent.mcs.yml` to find and show the cloned agent file
 2. Check that `.mcs/conn.json` was created in the agent directory
 3. Summarize what was cloned and where the files are

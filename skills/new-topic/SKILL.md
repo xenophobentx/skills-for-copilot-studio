@@ -12,7 +12,7 @@ agent: copilot-studio-author
 
 Generate a new Copilot Studio topic YAML file based on user requirements.
 
-**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+**Before you change anything.** If the agent is already on disk, search its own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change. A fresh clone has no file to search yet, see the Cloning rule in `clone-agent`.
 
 **Sandbox.** Only Step B, `manage-agent.bundle.js validate`, signs in, calls the network and writes to `~/.copilot-studio-cli`. Schema lookup, Step A and writing the topic are local. If your client runs commands in a sandbox (for example Codex without `--yolo`), run Step B outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`) or Step B cannot run, skip Step B, still write and schema-validate the topic, and tell the user that the LSP validation did not run. With full access (`--yolo`), run Step B directly.
 
