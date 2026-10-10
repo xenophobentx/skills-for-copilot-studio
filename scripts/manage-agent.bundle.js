@@ -19056,6 +19056,28 @@ function findYamlSyntaxErrors(agentDir) {
 function formatYamlSyntaxErrors(errors) {
   return errors.map((e) => `${e.file} (line ${e.line}, column ${e.column}: ${e.message})`).join("; ");
 }
+function findInstructionsShapeErrors(agentDir) {
+  const rel = "agent.mcs.yml";
+  let text;
+  let doc;
+  try {
+    text = fs6.readFileSync(path2.join(agentDir, rel), "utf8");
+    if (conflictMarkerLines(text).length > 0) return [];
+    doc = yaml.load(text, { json: true });
+  } catch {
+    return [];
+  }
+  if (!doc || typeof doc !== "object" || doc.kind !== "GptComponentMetadata") return [];
+  const ins = doc.instructions;
+  if (ins === null || typeof ins !== "object" || ins instanceof Date) return [];
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const i = lines.findIndex((l) => /^instructions\s*:/.test(l));
+  return [{
+    file: rel,
+    line: i === -1 ? 1 : i + 1,
+    message: "instructions must be a string. An object or a list under it is dropped without an error and the agent runs with empty instructions. Write the text as a block scalar (instructions: |)."
+  }];
+}
 function findLocalErrors(agentDir) {
   const errors = [];
   for (const c of findConflictMarkers(agentDir)) {
@@ -19075,6 +19097,9 @@ function findLocalErrors(agentDir) {
       source: "yaml-syntax",
       message: `YAML syntax error (line ${e.line}, column ${e.column}): ${e.message}`
     });
+  }
+  for (const e of findInstructionsShapeErrors(agentDir)) {
+    errors.push({ file: e.file, line: e.line, column: 1, source: "instructions-shape", message: e.message });
   }
   return errors;
 }

@@ -13,6 +13,7 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - A push blocked by validation exits 1. Upstream exits 0.
 - Push and validate stop early with a clear message when `.mcs/botdefinition.json` is missing, instead of the `CdsBotId` error (upstream issue #155).
 - The language server no longer logs an error at the end of every command.
+- validate (and `schema-lookup validate`) fails a classic `agent.mcs.yml` whose `instructions` is an object or a list, with source `instructions-shape`. The language server reads it as empty instructions and reports nothing (upstream issue #175).
 
 ## Sign-in
 

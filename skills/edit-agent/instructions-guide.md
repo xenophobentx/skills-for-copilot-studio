@@ -1,6 +1,6 @@
 # Writing Effective Agent Instructions
 
-The `instructions` field in `agent.mcs.yml` is the system prompt. It is the most powerful lever for improving knowledge-based responses.
+The `instructions` field in `agent.mcs.yml` is the system prompt. It is the most powerful lever for improving knowledge-based responses. It is a plain string.
 
 ## Role of `instructions` in Knowledge Usage
 

@@ -3062,7 +3062,13 @@ function validateYamlFile(filepath, definitions) {
     }
   } else if (kind === "GptComponentMetadata") {
     for (const prop of ["displayName", "instructions"]) {
-      if (data[prop]) {
+      const v = data[prop];
+      if (prop === "instructions" && v !== null && typeof v === "object" && !(v instanceof Date)) {
+        console.log(
+          "[FAIL] 'instructions' must be a string. An object or a list under it is dropped without an error and the agent runs with empty instructions. Write the text as a block scalar (instructions: |)."
+        );
+        failures++;
+      } else if (data[prop]) {
         console.log(`[PASS] Required '${prop}' property present`);
         passes++;
       } else {
