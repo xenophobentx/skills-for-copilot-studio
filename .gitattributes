@@ -1,6 +1,6 @@
-# Check out text files with LF on every OS. The CI job rebuilds the bundles
-# and compares them with the committed ones, and a Windows checkout with
-# autocrlf would otherwise turn them into CRLF.
+# Several tests read the script sources line by line and fail on CRLF, and
+# windows-latest checks out with core.autocrlf=true. Check text files out
+# with LF on every OS.
 * text=auto eol=lf
 
 *.png binary
