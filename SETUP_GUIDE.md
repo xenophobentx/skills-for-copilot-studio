@@ -41,8 +41,9 @@ git clone https://github.com/xenophobentx/skills-for-copilot-studio.git
 # Load for a single session:
 claude --plugin-dir /path/to/skills-for-copilot-studio
 
-# Or install persistently from the clone:
-claude plugin install /path/to/skills-for-copilot-studio --scope user
+# Or add the clone as a marketplace and install from it:
+claude plugin marketplace add /path/to/skills-for-copilot-studio
+claude plugin install copilot-studio@xeno-skills-for-copilot-studio --scope user
 ```
 
 To verify, type `@` in the input. You should see `copilot-studio:copilot-studio-manage`, `copilot-studio:copilot-studio-author`, `copilot-studio:copilot-studio-test`, `copilot-studio:copilot-studio-advisor`, and `copilot-studio:copilot-studio-describer` in the autocomplete menu.

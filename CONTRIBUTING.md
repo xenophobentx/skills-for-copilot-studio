@@ -10,8 +10,9 @@ cd skills-for-copilot-studio
 # Load the plugin from your local clone (one-off session)
 claude --plugin-dir /path/to/skills-for-copilot-studio
 
-# Or install persistently from your local clone
-claude plugin install /path/to/skills-for-copilot-studio --scope user
+# Or add the clone as a marketplace and install from it
+claude plugin marketplace add /path/to/skills-for-copilot-studio
+claude plugin install copilot-studio@xeno-skills-for-copilot-studio --scope user
 ```
 
 ## Release workflow
