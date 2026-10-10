@@ -141,10 +141,18 @@ fs.writeFileSync(
 );
 
 if (e) {
-  fs.appendFileSync(
-    e,
-    'export SFCS_PLUGIN_DATA="' + d + '"\n'
-  );
+  // Double quotes with \, ", $ and ` escaped: bash and zsh read that back
+  // unchanged, and Claude Code's PowerShell tool only accepts quoted values of
+  // this kind (a '\'' escape makes it drop every plugin's variables).
+  // The hook can run more than once against the same file; add the line once.
+  const line = 'export SFCS_PLUGIN_DATA="' + d.replace(/[\\"$`]/g, '\\$&') + '"\n';
+  let have = '';
+  try {
+    have = fs.readFileSync(e, 'utf8');
+  } catch {}
+  if (!have.split('\n').includes(line.trimEnd())) {
+    fs.appendFileSync(e, have && !have.endsWith('\n') ? '\n' + line : line);
+  }
 }
 
 if (!installed()) {

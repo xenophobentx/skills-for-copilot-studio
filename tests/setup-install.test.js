@@ -146,6 +146,32 @@ check("failed fetch: the old node_modules and manifest copy are untouched",
   !fs.existsSync(path.join(data4, "node_modules", "keytar")) &&
   fs.readFileSync(path.join(data4, "native-deps.json"), "utf8") === "{\"old\":true}");
 
+// The env file: one line however often the hook runs, and the path survives a shell.
+// Folder names with a single quote, $, backtick and backslash (a backslash and a
+// double quote are not possible in a Windows file name).
+const names = ["it's a $HOME `dir`", "plain dir"];
+if (process.platform !== "win32") names.push('back\\slash "q" \\$x');
+let n = 0;
+for (const name of names) {
+  const odd = dir(name);
+  fs.copyFileSync(path.join(SCRIPTS, "native-deps.json"), path.join(odd, "native-deps.json"));
+  fs.mkdirSync(path.join(odd, "node_modules"));
+  const envFile = path.join(root, "env-file-" + n++);
+  fs.writeFileSync(envFile, "export KEEP=1");
+  for (let i = 0; i < 3; i++) runHook(odd, dir("home-env-" + n), { CLAUDE_ENV_FILE: envFile });
+  const lines = fs.readFileSync(envFile, "utf8").split("\n").filter(Boolean);
+  check(`env file (${name}): three hook runs add one line and keep the earlier one`, lines.length === 2 && lines[0] === "export KEEP=1" && lines[1].startsWith("export SFCS_PLUGIN_DATA="), lines.join(" | "));
+  // Claude Code's PowerShell tool accepts only a double-quoted value with \\, ", $ and ` escaped.
+  check(`env file (${name}): the line is a plain double-quoted assignment`, /^export SFCS_PLUGIN_DATA="(?:[^"\\$`]|\\[\\"$`])*"$/.test(lines[1]), lines[1]);
+  // On Windows a bash on PATH can be WSL, which cannot read the Windows path.
+  const sh = process.platform === "win32" ? { error: true } : cp.spawnSync("bash", ["-c", `. "$1"; printf %s "$SFCS_PLUGIN_DATA"`, "sh", envFile], { encoding: "utf8" });
+  if (sh.error) {
+    console.log("  SKIP  env file read back by bash (not run on Windows or no bash)");
+  } else {
+    check(`env file (${name}): bash reads the path back unchanged`, sh.stdout === odd, sh.stdout + " vs " + odd);
+  }
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
