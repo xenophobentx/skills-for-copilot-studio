@@ -47,6 +47,47 @@ function getIslandResourceId(clusterCategory) {
   return id;
 }
 
+// Cluster category used when nothing says otherwise: Prod.
+const DEFAULT_CLUSTER_CATEGORY = 5;
+
+// The Copilot Studio web hosts the extension knows. The part between
+// "copilotstudio." and ".microsoft.com" picks the cluster category: preview 4,
+// preprod 3, test 2, anything else (the plain host) 5. Same table as the VS Code
+// extension 1.9.14 uses when it reads an agent URL.
+const COPILOT_STUDIO_HOST_RE = /^copilotstudio(?:\.(preview|preprod|test))?\.microsoft\.com$/i;
+const CLUSTER_CATEGORY_BY_REALM = { preview: 4, preprod: 3, test: 2 };
+
+/**
+ * Check a --cluster-category value. Accepts only the plain digits of a category
+ * in ISLAND_RESOURCE_IDS; throws an Error with a message for the user otherwise.
+ */
+function parseClusterCategory(value) {
+  const text = value == null ? "" : String(value).trim();
+  if (Object.prototype.hasOwnProperty.call(ISLAND_RESOURCE_IDS, text)) return Number(text);
+  const known = Object.keys(ISLAND_RESOURCE_IDS).join(", ");
+  throw new Error(
+    `Invalid --cluster-category ${value == null ? "(missing value)" : JSON.stringify(String(value))}. ` +
+      `Use one of ${known}. 5 is Prod and the default, 4 preview, 3 preprod, 2 test.`
+  );
+}
+
+/**
+ * Cluster category implied by a Copilot Studio web URL, or null when the URL is
+ * not one (no URL, not parseable, other host).
+ */
+function clusterCategoryFromUrl(url) {
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return null;
+  }
+  const m = COPILOT_STUDIO_HOST_RE.exec(host);
+  if (!m) return null;
+  const realm = m[1] ? m[1].toLowerCase() : null;
+  return realm ? CLUSTER_CATEGORY_BY_REALM[realm] : DEFAULT_CLUSTER_CATEGORY;
+}
+
 // ---------------------------------------------------------------------------
 // MSAL app singleton — one instance per (tenantId, clientId) pair.
 // Sharing the instance ensures all token acquisitions see the same
@@ -319,6 +360,10 @@ module.exports = {
   VSCODE_CLIENT_ID,
   ISLAND_RESOURCE_IDS,
   getIslandResourceId,
+  DEFAULT_CLUSTER_CATEGORY,
+  COPILOT_STUDIO_HOST_RE,
+  parseClusterCategory,
+  clusterCategoryFromUrl,
   createMsalApp,
   buildTokenInfo,
   acquireTokenDeviceCode,

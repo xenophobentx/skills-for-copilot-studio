@@ -35708,6 +35708,29 @@ var require_shared_auth = __commonJS({
       if (!id) throw new Error(`Unknown cluster category: ${clusterCategory}`);
       return id;
     }
+    var DEFAULT_CLUSTER_CATEGORY = 5;
+    var COPILOT_STUDIO_HOST_RE = /^copilotstudio(?:\.(preview|preprod|test))?\.microsoft\.com$/i;
+    var CLUSTER_CATEGORY_BY_REALM = { preview: 4, preprod: 3, test: 2 };
+    function parseClusterCategory(value) {
+      const text = value == null ? "" : String(value).trim();
+      if (Object.prototype.hasOwnProperty.call(ISLAND_RESOURCE_IDS, text)) return Number(text);
+      const known = Object.keys(ISLAND_RESOURCE_IDS).join(", ");
+      throw new Error(
+        `Invalid --cluster-category ${value == null ? "(missing value)" : JSON.stringify(String(value))}. Use one of ${known}. 5 is Prod and the default, 4 preview, 3 preprod, 2 test.`
+      );
+    }
+    function clusterCategoryFromUrl(url) {
+      let host;
+      try {
+        host = new URL(url).hostname;
+      } catch {
+        return null;
+      }
+      const m = COPILOT_STUDIO_HOST_RE.exec(host);
+      if (!m) return null;
+      const realm = m[1] ? m[1].toLowerCase() : null;
+      return realm ? CLUSTER_CATEGORY_BY_REALM[realm] : DEFAULT_CLUSTER_CATEGORY;
+    }
     var _cachePlugin = null;
     var _msalApps = /* @__PURE__ */ new Map();
     async function getDefaultCachePlugin() {
@@ -35907,6 +35930,10 @@ var require_shared_auth = __commonJS({
       VSCODE_CLIENT_ID: VSCODE_CLIENT_ID2,
       ISLAND_RESOURCE_IDS,
       getIslandResourceId,
+      DEFAULT_CLUSTER_CATEGORY,
+      COPILOT_STUDIO_HOST_RE,
+      parseClusterCategory,
+      clusterCategoryFromUrl,
       createMsalApp,
       buildTokenInfo,
       acquireTokenDeviceCode,

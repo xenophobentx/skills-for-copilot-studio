@@ -40,6 +40,10 @@ const { log, die, sleep } = require("./shared-utils");
 const {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
+  DEFAULT_CLUSTER_CATEGORY,
+  COPILOT_STUDIO_HOST_RE,
+  parseClusterCategory,
+  clusterCategoryFromUrl,
   buildTokenInfo,
   acquireTokenSilent,
   resolveAuthMode,
@@ -61,14 +65,13 @@ function warn(msg) {
 // URL parsing — extract environmentId + agentId from Copilot Studio URLs
 // ---------------------------------------------------------------------------
 
-const COPILOT_STUDIO_HOST_RE = /^copilotstudio(?:\.preview)?\.microsoft\.com$/i;
-
 /**
  * Parse a Copilot Studio web URL and extract environmentId + agentId.
  *
  * Accepted formats:
  *   https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>[/...]
  *   https://copilotstudio.preview.microsoft.com/environments/<envId>/bots/<agentId>[/...]
+ *   https://copilotstudio.preprod.microsoft.com/... and https://copilotstudio.test.microsoft.com/...
  *
  * @param {string} url — Copilot Studio URL
  * @returns {{ environmentId: string, agentId: string }} or null if the URL doesn't match
@@ -120,6 +123,7 @@ function parseArgs() {
     owner: true, // default: filter by owner
     timeout: 300000, // default: 5 minutes for publish polling
     force: false,
+    clusterCategory: null,
     url: null,
   };
 
@@ -165,6 +169,13 @@ function parseArgs() {
       }
       case "--force":
         parsed.force = true;
+        break;
+      case "--cluster-category":
+        try {
+          parsed.clusterCategory = parseClusterCategory(args[++i]);
+        } catch (e) {
+          die(e.message);
+        }
         break;
       case "--url":
         parsed.url = args[++i];
@@ -1679,9 +1690,25 @@ async function cmdClone(args) {
 
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
 
-  // Clone uses Island API token (same as push/pull) — default to Prod cluster (5)
-  const DEFAULT_CLUSTER_CATEGORY = 5;
-  const cpsToken = await getOrAcquireIslandToken(args.tenantId, DEFAULT_CLUSTER_CATEGORY, "Island API");
+  // Clone uses Island API token (same as push/pull). The cluster category comes from
+  // --cluster-category, else from the --url host (preview 4, preprod 3, test 2), else Prod (5).
+  // It is written to .mcs/conn.json, which push and pull read later.
+  const urlCategory = args.url ? clusterCategoryFromUrl(args.url) : null;
+  let clusterCategory;
+  if (args.clusterCategory != null) {
+    clusterCategory = args.clusterCategory;
+    log(`Cluster category ${clusterCategory} (from --cluster-category)`);
+    if (urlCategory != null && urlCategory !== clusterCategory) {
+      warn(`--url host suggests cluster category ${urlCategory}; using ${clusterCategory} as given.`);
+    }
+  } else if (urlCategory != null) {
+    clusterCategory = urlCategory;
+    log(`Cluster category ${clusterCategory} (from the --url host)`);
+  } else {
+    clusterCategory = DEFAULT_CLUSTER_CATEGORY;
+    log(`Cluster category ${clusterCategory} (default, Prod)`);
+  }
+  const cpsToken = await getOrAcquireIslandToken(args.tenantId, clusterCategory, "Island API");
 
   const dvToken = await getOrAcquireToken(args.tenantId, VSCODE_CLIENT_ID, [`${envUrl}/.default`], "Dataverse API");
 
@@ -1707,7 +1734,7 @@ async function cmdClone(args) {
         accountId: args.accountId || dvToken.account?.homeAccountId || "unknown",
         accountEmail: args.accountEmail || dvToken.account?.username || undefined,
         tenantId: args.tenantId,
-        clusterCategory: DEFAULT_CLUSTER_CATEGORY,
+        clusterCategory,
       },
       copilotStudioAccessToken: cpsToken.accessToken,
       dataverseAccessToken: dvToken.accessToken,

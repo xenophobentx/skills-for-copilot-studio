@@ -24,8 +24,14 @@ const snippet = src
   });
 
 // Simpler: just eval the specific function + constant in isolation
+// The host pattern lives in shared-auth.js; take its literal from there so the test cannot drift.
+const authSrc = fs.readFileSync(path.join(__dirname, "..", "scripts", "src", "shared-auth.js"), "utf8");
+const hostReMatch = /^const COPILOT_STUDIO_HOST_RE = (\/.*\/[a-z]*);$/m.exec(authSrc);
+if (!hostReMatch) throw new Error("COPILOT_STUDIO_HOST_RE not found in shared-auth.js");
+const hostReLiteral = hostReMatch[1];
+
 const extractCode = `
-const COPILOT_STUDIO_HOST_RE = /^copilotstudio(?:\\.preview)?\\.microsoft\\.com$/i;
+const COPILOT_STUDIO_HOST_RE = ${hostReLiteral};
 
 function parseAgentUrl(url) {
   let parsed;
@@ -102,6 +108,18 @@ assertEqual(
   "preview URL without trailing path"
 );
 
+// Preprod and test hosts (the VS Code extension reads these too)
+assertEqual(
+  parseAgentUrl("https://copilotstudio.preprod.microsoft.com/environments/env1/bots/bot1/overview"),
+  { environmentId: "env1", agentId: "bot1" },
+  "preprod URL"
+);
+assertEqual(
+  parseAgentUrl("https://copilotstudio.test.microsoft.com/environments/env1/bots/bot1"),
+  { environmentId: "env1", agentId: "bot1" },
+  "test URL"
+);
+
 // Production URL with /canvas suffix
 assertEqual(
   parseAgentUrl(
@@ -165,6 +183,18 @@ assertEqual(
   ),
   null,
   "wrong domain"
+);
+
+// Unknown realm and look-alike hosts
+assertEqual(
+  parseAgentUrl("https://copilotstudio.dev.microsoft.com/environments/env1/bots/bot1"),
+  null,
+  "unknown realm"
+);
+assertEqual(
+  parseAgentUrl("https://copilotstudio.test.microsoft.com.evil.example/environments/env1/bots/bot1"),
+  null,
+  "look-alike host"
 );
 
 // Missing environments segment

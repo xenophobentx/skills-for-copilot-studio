@@ -17896,6 +17896,29 @@ var require_shared_auth = __commonJS({
       if (!id) throw new Error(`Unknown cluster category: ${clusterCategory}`);
       return id;
     }
+    var DEFAULT_CLUSTER_CATEGORY2 = 5;
+    var COPILOT_STUDIO_HOST_RE2 = /^copilotstudio(?:\.(preview|preprod|test))?\.microsoft\.com$/i;
+    var CLUSTER_CATEGORY_BY_REALM = { preview: 4, preprod: 3, test: 2 };
+    function parseClusterCategory2(value) {
+      const text = value == null ? "" : String(value).trim();
+      if (Object.prototype.hasOwnProperty.call(ISLAND_RESOURCE_IDS, text)) return Number(text);
+      const known = Object.keys(ISLAND_RESOURCE_IDS).join(", ");
+      throw new Error(
+        `Invalid --cluster-category ${value == null ? "(missing value)" : JSON.stringify(String(value))}. Use one of ${known}. 5 is Prod and the default, 4 preview, 3 preprod, 2 test.`
+      );
+    }
+    function clusterCategoryFromUrl2(url) {
+      let host;
+      try {
+        host = new URL(url).hostname;
+      } catch {
+        return null;
+      }
+      const m = COPILOT_STUDIO_HOST_RE2.exec(host);
+      if (!m) return null;
+      const realm = m[1] ? m[1].toLowerCase() : null;
+      return realm ? CLUSTER_CATEGORY_BY_REALM[realm] : DEFAULT_CLUSTER_CATEGORY2;
+    }
     var _cachePlugin = null;
     var _msalApps = /* @__PURE__ */ new Map();
     async function getDefaultCachePlugin() {
@@ -18095,6 +18118,10 @@ var require_shared_auth = __commonJS({
       VSCODE_CLIENT_ID: VSCODE_CLIENT_ID2,
       ISLAND_RESOURCE_IDS,
       getIslandResourceId: getIslandResourceId2,
+      DEFAULT_CLUSTER_CATEGORY: DEFAULT_CLUSTER_CATEGORY2,
+      COPILOT_STUDIO_HOST_RE: COPILOT_STUDIO_HOST_RE2,
+      parseClusterCategory: parseClusterCategory2,
+      clusterCategoryFromUrl: clusterCategoryFromUrl2,
       createMsalApp,
       buildTokenInfo: buildTokenInfo2,
       acquireTokenDeviceCode,
@@ -18577,6 +18604,10 @@ var { log, die, sleep } = require_shared_utils();
 var {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
+  DEFAULT_CLUSTER_CATEGORY,
+  COPILOT_STUDIO_HOST_RE,
+  parseClusterCategory,
+  clusterCategoryFromUrl,
   buildTokenInfo,
   acquireTokenSilent,
   resolveAuthMode,
@@ -18588,7 +18619,6 @@ var doctor = require_doctor();
 function warn(msg) {
   process.stderr.write("[WARN] " + msg + "\n");
 }
-var COPILOT_STUDIO_HOST_RE = /^copilotstudio(?:\.preview)?\.microsoft\.com$/i;
 function parseAgentUrl(url) {
   let parsed;
   try {
@@ -18627,6 +18657,7 @@ function parseArgs() {
     timeout: 3e5,
     // default: 5 minutes for publish polling
     force: false,
+    clusterCategory: null,
     url: null
   };
   for (let i = 0; i < args.length; i++) {
@@ -18671,6 +18702,13 @@ function parseArgs() {
       }
       case "--force":
         parsed.force = true;
+        break;
+      case "--cluster-category":
+        try {
+          parsed.clusterCategory = parseClusterCategory(args[++i]);
+        } catch (e) {
+          die(e.message);
+        }
         break;
       case "--url":
         parsed.url = args[++i];
@@ -19871,8 +19909,22 @@ async function cmdClone(args) {
   if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
   if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
-  const DEFAULT_CLUSTER_CATEGORY = 5;
-  const cpsToken = await getOrAcquireIslandToken(args.tenantId, DEFAULT_CLUSTER_CATEGORY, "Island API");
+  const urlCategory = args.url ? clusterCategoryFromUrl(args.url) : null;
+  let clusterCategory;
+  if (args.clusterCategory != null) {
+    clusterCategory = args.clusterCategory;
+    log(`Cluster category ${clusterCategory} (from --cluster-category)`);
+    if (urlCategory != null && urlCategory !== clusterCategory) {
+      warn(`--url host suggests cluster category ${urlCategory}; using ${clusterCategory} as given.`);
+    }
+  } else if (urlCategory != null) {
+    clusterCategory = urlCategory;
+    log(`Cluster category ${clusterCategory} (from the --url host)`);
+  } else {
+    clusterCategory = DEFAULT_CLUSTER_CATEGORY;
+    log(`Cluster category ${clusterCategory} (default, Prod)`);
+  }
+  const cpsToken = await getOrAcquireIslandToken(args.tenantId, clusterCategory, "Island API");
   const dvToken = await getOrAcquireToken(args.tenantId, VSCODE_CLIENT_ID, [`${envUrl}/.default`], "Dataverse API");
   const [agentInfo, solVersions] = await Promise.all([
     fetchAgentInfo(envUrl, args.agentId, dvToken.accessToken),
@@ -19889,7 +19941,7 @@ async function cmdClone(args) {
         accountId: args.accountId || dvToken.account?.homeAccountId || "unknown",
         accountEmail: args.accountEmail || dvToken.account?.username || void 0,
         tenantId: args.tenantId,
-        clusterCategory: DEFAULT_CLUSTER_CATEGORY
+        clusterCategory
       },
       copilotStudioAccessToken: cpsToken.accessToken,
       dataverseAccessToken: dvToken.accessToken,
