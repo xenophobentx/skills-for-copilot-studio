@@ -653,8 +653,36 @@ function formatYamlSyntaxErrors(errors) {
   return errors.map((e) => `${e.file} (line ${e.line}, column ${e.column}: ${e.message})`).join("; ");
 }
 
+// In a classic agent.mcs.yml, an object or a list under instructions reads as
+// empty instructions: the language server sees no difference from an empty
+// value (getLocalChanges, extension 1.9.14) and raises no diagnostic. Plain
+// scalars (a number, a boolean, a date) are text for the server, so they pass.
+// Only the agent.mcs.yml in the agent root is checked.
+// Returns [{ file, line, message }] (line is 1-based, 1 when unknown).
+function findInstructionsShapeErrors(agentDir) {
+  const rel = "agent.mcs.yml";
+  let text;
+  let doc;
+  try {
+    text = fs.readFileSync(path.join(agentDir, rel), "utf8");
+    if (conflictMarkerLines(text).length > 0) return [];
+    doc = yaml.load(text, { json: true });
+  } catch { return []; }
+  if (!doc || typeof doc !== "object" || doc.kind !== "GptComponentMetadata") return [];
+  const ins = doc.instructions;
+  if (ins === null || typeof ins !== "object" || ins instanceof Date) return [];
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const i = lines.findIndex((l) => /^instructions\s*:/.test(l));
+  return [{
+    file: rel,
+    line: i === -1 ? 1 : i + 1,
+    message: "instructions must be a string. An object or a list under it is dropped without an error and the agent runs with empty instructions. Write the text as a block scalar (instructions: |).",
+  }];
+}
+
 // What validate adds to the LSP diagnostics: one merge marker error per file,
-// then YAML syntax errors (files with markers are not parsed).
+// then YAML syntax errors (files with markers are not parsed), then the
+// instructions shape error.
 function findLocalErrors(agentDir) {
   const errors = [];
   for (const c of findConflictMarkers(agentDir)) {
@@ -668,6 +696,9 @@ function findLocalErrors(agentDir) {
       file: e.file, line: e.line, column: e.column, source: "yaml-syntax",
       message: `YAML syntax error (line ${e.line}, column ${e.column}): ${e.message}`,
     });
+  }
+  for (const e of findInstructionsShapeErrors(agentDir)) {
+    errors.push({ file: e.file, line: e.line, column: 1, source: "instructions-shape", message: e.message });
   }
   return errors;
 }
