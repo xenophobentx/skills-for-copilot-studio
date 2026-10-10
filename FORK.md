@@ -17,6 +17,9 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - `clone --cluster-category N` sets the cluster category that is stored in `.mcs/conn.json`, so an agent outside Prod can be cloned. Without it, clone reads the category from the agent URL host the way the Copilot Studio extension does (preview 4, preprod 3, test 2, otherwise 5), and picks the BAP host for the environment lookup by category as the extension does. Push and pull read the stored value. Anything outside 0 to 8 is refused with a message, and other commands warn that they ignore the option. Based on upstream PR #165 by @adilei.
 - Tested live with categories 4 and 5 against a Prod environment, including `changes` and `pull` on a category 4 workspace. Categories 0 to 3 are not tested, there is no test or preprod tenant here. Categories 6 to 8 (government clouds) need `--environment-url` and `--agent-mgmt-url`, and the sign-in for them is not there.
 - A clone from a preview URL now stores 4, where it stored 5 before. That is what the extension stores. 4 and 5 use the same Island resource, and existing workspaces keep their value.
+- `pull` and `push` refuse a CLI agent workspace (`template: cliagent*` or `authoringModel: CliCopilot`), with `--allow-cli-agent` as the override. Upstream issue #180 reports a pull into such a workspace that cut the tail off `settings.mcs.yml`. I could not reproduce the cut with extension 1.9.14, so this only keeps the plugin out of a layout it does not support.
+- When the language server logs `Can't read file outside of client workspace`, the error from `pull`, `changes` and `validate` says it is a fault inside the extension and what to do (upstream issue #178). The crash itself is in closed-source LanguageServerHost and I could not reproduce it on 1.9.14.
+- `manage-agent pack-copy --workspace <agent> --out <new folder>` copies the files `pac copilot pack` accepts and lists what it left out. pac 2.13.1 refuses `workflows/`, `knowledge/`, `agents/`, a README or `.git` in the folder (upstream issue #185).
 
 ## Sign-in
 
@@ -50,6 +53,7 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - `argument-hint` values are quoted, so GitHub Copilot CLI loads every skill.
 - MCP and connector requests go to the portal flow first.
 - run-tests-kit installs its dependencies from the plugin folder.
+- create-eval-set and lookup-schema say that `EvaluationSet` and `EvaluationData` YAML is not a way to make a test set: push ignores it outside `testcases/`, and inside `testcases/` it goes up but never comes back on pull (upstream issue #170). The skill writes the CSV for the Evaluate tab.
 
 ## CI
 
