@@ -319,6 +319,15 @@ const logOf = (d) => { try { return fs.readFileSync(path.join(d, "install.log"),
   sim.kill();
 }
 {
+  // a timeout that is not a positive number falls back to the default (110 s), it does not end the wait at once
+  for (const bad of ["abc", "", "0", "-5"]) {
+    const h = dir("ensure-home-badtimeout");
+    fs.rmSync(path.join(h, ".copilot-studio-cli"), { recursive: true, force: true });
+    const res = ensure({ SFCS_ENSURE_TIMEOUT_MS: bad }, h);
+    check(`--ensure with SFCS_ENSURE_TIMEOUT_MS="${bad}" installs normally`, res.status === 0 && res.stdout.includes("ready in"), res.stderr + res.stdout);
+  }
+}
+{
   // leftovers: .old-<pid> and .install-<pid> of dead pids are removed, .old-<pid> of a live pid stays
   const h = dir("ensure-home-old");
   const d = stableOf(h);

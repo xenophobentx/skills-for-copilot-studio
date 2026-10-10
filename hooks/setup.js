@@ -212,7 +212,10 @@ function runEnsure() {
     return;
   }
   console.log('copilot-studio: installing the native dependencies into ' + d + ', this takes up to a minute');
-  const timeoutMs = Number(process.env.SFCS_ENSURE_TIMEOUT_MS || 180000);
+  // Ends within 110 s by default, so a tool call with a 2 minute limit does not cut it off.
+  // A value that is not a positive number is ignored.
+  const asked = Number(process.env.SFCS_ENSURE_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(asked) && asked > 0 ? asked : 110000;
   const deadline = Date.now() + timeoutMs;
   // One installer at a time (it stages under its own pid). If another session is
   // installing we only watch its folder and the marker; we start --install ourselves
