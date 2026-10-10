@@ -166,6 +166,32 @@ Eight coordinated production patterns for Teams and M365 Copilot agents covering
 - The user wants richer OnError or Start Over experiences with diagnostic info
 - The user asks about `OnInstallationUpdate`, `OnInactivity`, `OnSystemRedirect`, suggested prompts, or Teams-specific behavior
 
+### NL to Query Compilation → [nl-to-query-compilation.md](${CLAUDE_SKILL_DIR}/../../patterns/nl-to-query-compilation.md)
+
+Enriches the `modelDescription` of API tools with field meanings, valid values and glossaries, so the orchestrator maps the user's words to API parameters and codes.
+
+**Read this pattern when:**
+- An API tool uses codes, IDs or query syntax the user should not need to know
+- The orchestrator passes wrong or invented parameter values to an API tool
+- The user asks where API mappings belong, in `modelDescription` or in the agent instructions
+
+### OpenAPI HTTP API Tools → [openapi-http-api-tools.md](${CLAUDE_SKILL_DIR}/../../patterns/openapi-http-api-tools.md)
+
+Spec rules for uploading a public REST API as a tool: response `type: object`, JSON by default, short descriptions at upload, and the parameters check after the pull.
+
+**Read this pattern when:**
+- The user writes an OpenAPI spec for a REST API, or a REST API tool fails at upload or at runtime
+- The error is `JsonReaderException`, `Expecting Record but received Table` or a tool that ignores its parameters
+
+### Data Visualization in Chat → [data-visualization.md](${CLAUDE_SKILL_DIR}/../../patterns/data-visualization.md)
+
+Tables and fact sets in agent replies through Adaptive Cards (the default), or charts and diagrams through QuickChart or Mermaid.ink image URLs on explicit request. The URL options send the chart data to a third-party service.
+
+**Read this pattern when:**
+- The user wants charts, graphs or diagrams in agent replies
+- An API returns an image or PDF that cannot be used as a tool
+- The user asks about QuickChart, Mermaid or Adaptive Cards for showing data (tell them the data goes to a third party with the URL options)
+
 ## Combining patterns
 
 Multiple patterns can be combined in a single agent. Common combinations:
@@ -175,3 +201,5 @@ Multiple patterns can be combined in a single agent. Common combinations:
 - **RAI Error Handling + Teams Production Hardening** → handle RAI subcodes first in OnError, then fall through to the generic diagnostic card from Pattern 7
 - **Knowledge Hold Message + Chain of Thought Logging** → use hold messages for knowledge-heavy agents and CoT logging for multi-tool agents; both reduce perceived latency but solve different problems
 - **Teams Production Hardening + JIT User Context** → Pattern 4 sets `Global.UserContext` cross-channel; replace hard-coded values with the JIT User Context connector call for real profile data
+- **NL to Query Compilation + OpenAPI HTTP API Tools** → the OpenAPI pattern gets the tool uploaded and pulled, then the NL to Query pattern fills its `modelDescription`
+- **Data Visualization + NL to Query Compilation** → the tool returns the data, the visualization option draws it; keep sensitive data on the Adaptive Card option

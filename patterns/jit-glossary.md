@@ -64,7 +64,7 @@ beginDialog:
       value: =Topic.GlossaryResult
 ```
 
-**Agent instructions** (in `settings.mcs.yml`):
+**Agent instructions** (in `agent.mcs.yml`):
 
 ```yaml
 instructions: |

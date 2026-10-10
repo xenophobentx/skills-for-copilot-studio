@@ -78,7 +78,7 @@ Configure suggested prompts at the **agent** level, not the topic level:
 3. Add 3 or 4 prompts aligned to the agent's core capabilities.
 4. Save the changes at agent level.
 
-In YAML, this shows up as the `conversationStarters` block in `agent.mcs.yml` or `settings.mcs.yml`.
+In YAML, this shows up as the `conversationStarters` block in `agent.mcs.yml`.
 
 ### Validation checklist
 

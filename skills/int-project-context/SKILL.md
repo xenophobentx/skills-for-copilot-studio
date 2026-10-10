@@ -14,8 +14,8 @@ You are working inside a Copilot Studio agent project. All YAML files have the `
 
 ```
 <agent-dir>/           # Auto-discover via Glob: **/agent.mcs.yml
-├── agent.mcs.yml      # Agent metadata (display name, schema version)
-├── settings.mcs.yml   # Agent settings (schemaName, GenerativeActionsEnabled, instructions)
+├── agent.mcs.yml      # Agent metadata (display name, instructions, conversation starters, AI settings)
+├── settings.mcs.yml   # Agent settings (schemaName, GenerativeActionsEnabled, authentication, recognizer)
 ├── topics/            # Conversation topics (AdaptiveDialog YAML files)
 ├── actions/           # Connector-based actions (TaskDialog YAML files)
 ├── knowledge/         # Knowledge sources (KnowledgeSourceConfiguration YAML files)

@@ -253,9 +253,9 @@ beginDialog:
       variable: System.SearchResults
       value: "=ForAll(Topic.EventItems.value,
         {
-          snippet: ThisRecord.Description & \" | Date: \" & Text(ThisRecord.Date, \"yyyy-mm-dd\") & \" | Location: \" & ThisRecord.Location,
-          title: ThisRecord.Title,
-          url: \"https://contoso.sharepoint.com/sites/HR/Lists/Events/DispForm.aspx?ID=\" & Text(ThisRecord.ID)
+          Content: ThisRecord.Description & \" | Date: \" & Text(ThisRecord.Date, \"yyyy-mm-dd\") & \" | Location: \" & ThisRecord.Location,
+          Title: ThisRecord.Title,
+          ContentLocation: \"https://contoso.sharepoint.com/sites/HR/Lists/Events/DispForm.aspx?ID=\" & Text(ThisRecord.ID)
         }
       )"
 ```
@@ -264,14 +264,14 @@ beginDialog:
 1. User asks: "What company events are coming up?"
 2. Orchestrator detects knowledge intent → invokes `UniversalSearchTool` → `OnKnowledgeRequested` fires
 3. The topic calls the SharePoint connector to fetch list items
-4. Results are transformed into `{snippet, title, url}` records and written to `System.SearchResults`
+4. Results are transformed into `{Content, ContentLocation, Title}` records and written to `System.SearchResults`
 5. The orchestrator receives these results alongside any standard knowledge source results, grounds the LLM response on them, and includes citations linking back to the list items
 
 **Key points:**
-- The `System.SearchResults` format is always the same: `{snippet, title, url}` — regardless of where the data comes from
+- The `System.SearchResults` format is always the same: `{Content, ContentLocation, Title}`, whatever the source. `ContentLocation` (the URL) and `Title` are optional. Copilot Studio uses up to 15 results in total across all `OnKnowledgeRequested` topics
 - Results written to `System.SearchResults` are merged with results from the standard knowledge sources (unless all sources use `triggerCondition: =false`)
 - Use `System.SearchQuery` or `System.KeywordSearchQuery` to pass the user's query to your external source for server-side filtering when the source supports it
-- This pattern works with any connector action (SharePoint, HTTP, Dataverse, custom connectors) — the only requirement is transforming the response into the `{snippet, title, url}` format
+- This pattern works with any connector action (SharePoint, HTTP, Dataverse, custom connectors). The only requirement is transforming the response into the `{Content, ContentLocation, Title}` format
 
 #### Special System Variables (only available in `OnKnowledgeRequested` topics)
 
@@ -281,7 +281,7 @@ These variables are **exclusively available** inside topics with an `OnKnowledge
 |---|---|---|
 | `System.SearchQuery` | String | A rewritten version of the user's query optimized for **semantic/vector search**. Produced by the orchestrator using intent recognition and the agent's `instructions`. You can read it, inspect it, and override it if the rewrite is insufficient for your use case. |
 | `System.KeywordSearchQuery` | String | A rewritten query optimized for **lexical/keyword-based search**. Use this when calling a search API that relies on keyword matching (e.g. Azure AI Search with keyword mode). |
-| `System.SearchResults` | Object | The output variable where you write your custom search results. It starts empty — you must populate it with results in the required format for the orchestrator to use them in its response. |
+| `System.SearchResults` | Table | The output variable where you write your custom search results. It starts empty. You must populate it with results in the required format for the orchestrator to use them in its response. |
 
 **Query rewriting includes conversation history.** The orchestrator automatically incorporates context from previous messages when rewriting the query — so `System.SearchQuery` is already context-aware. For example, if the user previously asked "What is the WFH policy?" and then says "And for contractors?", the rewritten query will include the understood subject, not just the word "contractors".
 
@@ -291,13 +291,7 @@ These variables are **exclusively available** inside topics with an `OnKnowledge
 - kind: SetVariable
   id: setResults_abc123
   variable: System.SearchResults
-  value: =Table(
-    {
-      snippet: "The retrieved text content of the result",
-      title: "Document or page title",
-      url: "https://link-to-the-source-document"
-    }
-  )
+  value: "=Table({ Content: \"The retrieved text content of the result\", Title: \"Document or page title\", ContentLocation: \"https://link-to-the-source-document\" })"
 ```
 
 ```yaml

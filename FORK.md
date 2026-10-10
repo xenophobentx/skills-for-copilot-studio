@@ -72,6 +72,20 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - The Claude Code version in the `validate-plugin` job is pinned by hand. Use a release that is at least 7 days old.
 - `new-release.yml` is kept for clean upstream merges but only runs in microsoft/skills-for-copilot-studio.
 
+## Taken from other forks
+
+I looked through all forks of the upstream repo. Three had something I wanted. Each change keeps its author.
+
+- Andrew Coates (@coatsy), `coatsy/skills-for-copilot-studio@3c9288b6`: four files still pointed at `/run-tests` after the skill was renamed to `run-tests-kit`. Cherry-picked with `-x`, author unchanged.
+- KarimaKT, `KarimaKT/skills-for-copilot-studio@366e2fd3` and `@4b6138b8` (upstream PR #154, closed): three pattern files, `openapi-http-api-tools.md`, `nl-to-query-compilation.md` and `data-visualization.md`, with entries in `int-patterns`. I rewrote them for the `patterns/` layout. What changed against the original:
+  - "Pull can't create new files" is gone. In my test a pull wrote back a topic that was missing from the local folder and from the base snapshot. I tested a topic only, in a simulated server-only state.
+  - The multi-line `modelDescription` warning stays. `validate` accepts block scalars, but that says nothing about a push, and upstream issue #91 reports an MCP tool that went blank after its `modelDescription` became multi-line. The pattern says to keep one line, as `edit-action` does.
+  - The ECB key for the marginal lending rate was wrong in the original (`MLF_FR` returns 404). It is `MLFR` now. I called the ECB data API for every key in the example.
+  - The glossary example was invalid YAML (an unquoted value with `: `). It is quoted, and the pattern explains why.
+  - The chart text starts with the Adaptive Card, answers only on request, carries a data guard and one fixed host in the instruction blocks, and says that DLP policies do not cover image URLs and that data in URLs can be steered by prompt injection.
+  - Agent instructions are in `agent.mcs.yml`. The patterns `date-context`, `jit-glossary`, `jit-user-context`, `prevent-child-agent-responses`, `prevent-tool-call-leaks` and `channel-aware-behavior` said `settings.mcs.yml`, and `int-project-context` listed `instructions` under `settings.mcs.yml`. All seven are fixed, and `teams-production-hardening` now puts `conversationStarters` in `agent.mcs.yml` only.
+- Eric Scherlinger (@ericsche), `microsoft/skills-for-copilot-studio@d643a041` (the `Ericcherrypick` branch): the system variables of `OnKnowledgeRequested` (`System.SearchQuery`, `System.KeywordSearchQuery`, `System.SearchResults`). They were already in `knowledge-guide.md` through the earlier upstream merge, so I took nothing. I checked the names against the Microsoft Learn page on custom knowledge sources and corrected the result fields there to `Content`, `ContentLocation` and `Title` (the guide had `snippet`, `title` and `url`), and the example now parses as YAML.
+
 ## Not taken from upstream PRs
 
 - #129 (Enhanced Task Completion). `SmartTaskCompletionEnabled` is not in the bundled schema, not on Microsoft Learn and not in the 1.9.14 language server, and the PR turns on generative actions without asking.

@@ -29,7 +29,7 @@ body:
         - lookup-schema
         - list-kinds
         - list-topics
-        - run-tests
+        - run-tests-kit
         - chat-with-agent
         - int-project-context
         - int-reference
