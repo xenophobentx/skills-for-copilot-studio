@@ -43,6 +43,12 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - MCP and connector requests go to the portal flow first.
 - run-tests-kit installs its dependencies from the plugin folder.
 
+## CI
+
+- `.github/workflows/ci.yml` runs on push and pull requests to `main` and `xeno/**`. It runs every `tests/*.test.js` on ubuntu, macOS and Windows (Node 22, plus Node 18 on ubuntu), rebuilds the bundles and fails when they differ from the committed ones, and runs `claude plugin validate`. No secrets are used.
+- `.gitattributes` checks text files out with LF. On a Windows runner with `core.autocrlf=true` several tests read the script sources by line and fail on CRLF.
+- `new-release.yml` is kept for clean upstream merges but only runs in microsoft/skills-for-copilot-studio.
+
 ## Not taken from upstream PRs
 
 - #129 (Enhanced Task Completion). `SmartTaskCompletionEnabled` is not in the bundled schema, not on Microsoft Learn and not in the 1.9.14 language server, and the PR turns on generative actions without asking.
