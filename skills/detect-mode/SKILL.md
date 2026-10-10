@@ -13,7 +13,7 @@ Query the Dataverse `bots` entity to determine whether the agent uses DirectLine
 
 `$ARGUMENTS` is the text the user gave with this skill. If your client does not fill it in, use the user's request instead.
 
-**Sandbox.** The commands below sign in, call the network and write to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (Codex with the default `workspace-write`), run them outside it, with the user's permission. If there is a sandbox and the client cannot ask (Codex with `approval_policy = "never"`), say which commands need network access and stop. With full access (`--yolo`), run them directly.
+**Sandbox.** `chat-with-agent.bundle.js --detect-only` signs in, queries Dataverse and writes to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (for example Codex without `--yolo`), run it outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run it directly.
 
 ## Locate the plugin files
 
