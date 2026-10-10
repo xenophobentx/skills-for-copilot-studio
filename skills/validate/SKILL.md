@@ -25,7 +25,9 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
    ```
    This validates all `.mcs.yml` files in the workspace using the LSP binary's full diagnostics: YAML structure, Power Fx expressions, schema validation, cross-file references, and environment-specific checks.
 
-   The language server does not catch every YAML syntax error (an unclosed quote still comes back as valid), so validate also parses each file itself. A file that does not parse shows up as an error with `source: "yaml-syntax"`, and the line and column are in the message and in `range` (zero-based, like the other diagnostics). The reported line is where the parser gave up, which can be below the real mistake, for example after an unclosed quote.
+   The language server does not catch every YAML syntax error (a quote closed by a later quote, or text after a closing quote, still comes back as valid), so validate also parses each file itself. A file that does not parse shows up as an error with `source: "yaml-syntax"`, and the line and column are in the message and in `range` (zero-based, like the other diagnostics). The reported line is where the parser gave up, which can be below the real mistake, for example after an unclosed quote.
+
+   Some unquoted values are warnings: a value that contains `: ` (for example `description: Text: more text`), ends with a colon, or starts with `@`, a backtick, `%`, `*`, `!` or `- `. The service keeps them and returns them from a clone, and the language server reads them as the literal text, but a strict YAML parser rejects them. They show up with `severity: "warning"` and `source: "yaml-lenient"`, the file stays valid, and push goes ahead. Quote the value if the file is also read by other YAML tools. If the same file has a real error, only the error is reported until it is fixed.
 
    validate also checks that `instructions` in the agent's root `agent.mcs.yml` is a string, because the language server drops an object or a list there without a diagnostic. The result is an error with `source: "instructions-shape"`. Child agents in `agents/` are not checked.
 

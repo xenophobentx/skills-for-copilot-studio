@@ -642,30 +642,149 @@ function formatConflicts(conflicts) {
   return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
 }
 
-// The LSP accepts files that do not parse as YAML (an unclosed quote still
-// comes back as "valid"), so parse every file here. Returns one entry per file
-// that fails: [{ file, line, column, message }], line and column 1-based.
-function findYamlSyntaxErrors(agentDir) {
+// A "key: value" line whose value is an unquoted (plain) scalar. The service
+// keeps such values and returns them from a clone, for example `description:
+// Text: more text` in the tool files of a CLI agent, and the language server
+// reads them as the literal text. A strict YAML parser rejects them. Groups:
+// indent and list dashes, key, colon and spaces, value.
+const PLAIN_VALUE_LINE_RE = /^(\s*(?:-[ \t]+)*)([^\s"'#\[\]{}|>&*!%@`,?:-][^#]*?)(:[ \t]+)([^\s"'#\[{|>].*)$/;
+
+// Why a plain value is a problem for a strict parser, or null when it is not
+// one of the shapes measured against the service (round trip, 2026-10-10):
+// ": " inside the value, a trailing ":", or a first character that YAML
+// reserves (@ ` % * ! or "- ").
+function plainValueProblem(value) {
+  const text = value.replace(/\s+#.*$/, "");
+  if (/^[@`%*!]/.test(text)) return `starts with "${text[0]}"`;
+  if (/^-(\s|$)/.test(text)) return 'starts with "- "';
+  if (/:\s/.test(text)) return 'contains ": "';
+  if (/:$/.test(text)) return 'ends with ":"';
+  return null;
+}
+
+// Block scalar header after the optional key, dashes and node properties:
+// `|`, `>`, with indicators and a comment.
+const BLOCK_HEADER_RE = /^\s*(?:-[ \t]+)*(?:(?:[^\s"'#\[\]{}|>&*!%@`,?:-][^#]*?|"[^"]*"|'[^']*'):[ \t]+)?(?:[&!]\S*[ \t]+)*[|>][+-]?[0-9]?[+-]?[ \t]*(?:#.*)?$/;
+
+// Column where the key starts (indent plus list dashes) of a line.
+function keyColumn(line) {
+  return /^\s*(?:-[ \t]+)*/.exec(line)[0].length;
+}
+
+// Is there a quoted value that opens on a line and is not closed on it? The
+// language server calls such a file valid when a later quote closes it, and a
+// push empties the topic, so the lenient reading must not hide that mistake
+// behind a tolerated line. Anchors and tags may stand before the quote. The
+// content of `|` and `>` blocks is text and is skipped.
+function hasUnclosedQuoteLine(lines) {
+  const open = /^\s*(?:-[ \t]+)*(?:[^\s"'#\[\]{}|>&*!%@`,?:-][^#]*?:[ \t]+)?(?:[&!]\S*[ \t]+)*(["'])/;
+  let blockKey = -1;
+  for (const line of lines) {
+    if (blockKey >= 0) {
+      if (line.trim() === "" || keyColumn(line) > blockKey) continue;
+      blockKey = -1;
+    }
+    if (BLOCK_HEADER_RE.test(line)) { blockKey = keyColumn(line); continue; }
+    const m = open.exec(line);
+    if (!m) continue;
+    const rest = line.slice(m[0].length);
+    let closed = false;
+    for (let i = 0; i < rest.length && !closed; i++) {
+      if (m[1] === '"') {
+        if (rest[i] === "\\") i++;
+        else if (rest[i] === '"') closed = true;
+      } else if (rest[i] === "'") {
+        if (rest[i + 1] === "'") i++;
+        else closed = true;
+      }
+    }
+    if (!closed) return true;
+  }
+  return false;
+}
+
+// Does the line at index i stand right below a block scalar header without
+// being indented under it? The block is empty and the line is the next entry,
+// for example `description: |` followed by `Note: see: x` at the left margin.
+// The service then takes the line as the content of the block and the topic
+// comes back corrupted (measured), so such a line stays an error.
+function belowEmptyBlock(lines, i) {
+  for (let j = i - 1; j >= 0; j--) {
+    if (lines[j].trim() === "") continue;
+    return BLOCK_HEADER_RE.test(lines[j]) && keyColumn(lines[i]) <= keyColumn(lines[j]);
+  }
+  return false;
+}
+
+// Parses one file. A line that fails only because of an unquoted value that
+// the service keeps is quoted and the parse is repeated, and reported as a
+// warning. Anything else that fails is an error. Returns
+// { error: { line, column, message } | null, warnings: [{ line, column, reason, message }] },
+// line and column 1-based. A file with an error returns no warnings.
+function checkYamlText(text) {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+  const warnings = [];
+  let relax = null;
+  for (let round = 0; round <= lines.length; round++) {
+    try {
+      // json: true lets a repeated key through; the LSP already reports those.
+      yaml.load(lines.join("\n"), { json: true });
+      return { error: null, warnings };
+    } catch (e) {
+      const failure = {
+        line: e.mark ? e.mark.line + 1 : 1,
+        column: e.mark ? e.mark.column + 1 : 1,
+        message: e.reason || e.message,
+      };
+      if (relax === null) relax = !hasUnclosedQuoteLine(lines);
+      const i = e.mark ? e.mark.line : -1;
+      const m = relax && i >= 0 && i < lines.length ? PLAIN_VALUE_LINE_RE.exec(lines[i]) : null;
+      const problem = m && !belowEmptyBlock(lines, i) ? plainValueProblem(m[4]) : null;
+      if (!problem) return { error: failure, warnings: [] };
+      const comment = /\s+#.*$/.exec(m[4]);
+      const value = comment ? m[4].slice(0, comment.index) : m[4];
+      warnings.push({
+        line: i + 1,
+        column: m[1].length + m[2].length + m[3].length + 1,
+        reason: problem,
+        message: `Unquoted value ${problem}. The service keeps it as plain text, but a strict YAML parser rejects it. Put the value in quotes to make the file valid YAML.`,
+      });
+      lines[i] = `${m[1]}${m[2]}: ${JSON.stringify(value.trimEnd())}${comment ? " " + comment[0].trim() : ""}`;
+    }
+  }
+  return { error: { line: 1, column: 1, message: "too many unquoted values" }, warnings: [] };
+}
+
+// The LSP accepts files that do not parse as YAML (a quote closed by a later
+// quote, or text after a closing quote, comes back as "valid"; an unclosed
+// quote that runs to the end of the file it reports itself), so parse every
+// file here. Returns
+// { errors, warnings }, one entry per problem: { file, line, column, message },
+// line and column 1-based. Errors are files that fail; warnings are unquoted
+// values that only a strict parser rejects.
+function scanYamlFiles(agentDir) {
   const errors = [];
+  const warnings = [];
   for (const file of findMcsYmlFiles(agentDir).sort()) {
     let text;
     try { text = fs.readFileSync(file, "utf8"); }
     catch { continue; }
     // A file with merge markers is reported as that, not as a parse error.
     if (conflictMarkerLines(text).length > 0) continue;
-    try {
-      // json: true lets a repeated key through; the LSP already reports those.
-      yaml.load(text, { json: true });
-    } catch (e) {
-      errors.push({
-        file: path.relative(agentDir, file).split(path.sep).join("/"),
-        line: e.mark ? e.mark.line + 1 : 1,
-        column: e.mark ? e.mark.column + 1 : 1,
-        message: e.reason || e.message,
-      });
-    }
+    const rel = path.relative(agentDir, file).split(path.sep).join("/");
+    const result = checkYamlText(text);
+    if (result.error) errors.push({ file: rel, ...result.error });
+    for (const w of result.warnings) warnings.push({ file: rel, ...w });
   }
-  return errors;
+  return { errors, warnings };
+}
+
+function findYamlSyntaxErrors(agentDir) {
+  return scanYamlFiles(agentDir).errors;
+}
+
+function findYamlLenientWarnings(agentDir) {
+  return scanYamlFiles(agentDir).warnings;
 }
 
 function formatYamlSyntaxErrors(errors) {
@@ -702,7 +821,7 @@ function findInstructionsShapeErrors(agentDir) {
 // What validate adds to the LSP diagnostics: one merge marker error per file,
 // then YAML syntax errors (files with markers are not parsed), then the
 // instructions shape error.
-function findLocalErrors(agentDir) {
+function findLocalErrors(agentDir, scan = scanYamlFiles(agentDir)) {
   const errors = [];
   for (const c of findConflictMarkers(agentDir)) {
     errors.push({
@@ -710,7 +829,7 @@ function findLocalErrors(agentDir) {
       message: `Unresolved merge conflict markers at line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")}. Keep the right version between the markers and delete the marker lines.`,
     });
   }
-  for (const e of findYamlSyntaxErrors(agentDir)) {
+  for (const e of scan.errors) {
     errors.push({
       file: e.file, line: e.line, column: e.column, source: "yaml-syntax",
       message: `YAML syntax error (line ${e.line}, column ${e.column}): ${e.message}`,
@@ -720,6 +839,16 @@ function findLocalErrors(agentDir) {
     errors.push({ file: e.file, line: e.line, column: 1, source: "instructions-shape", message: e.message });
   }
   return errors;
+}
+
+// Unquoted values that validate reports as warnings: the service keeps them,
+// a strict YAML parser rejects them. scan is the result of scanYamlFiles, so
+// validate parses the files once.
+function findLocalWarnings(agentDir, scan = scanYamlFiles(agentDir)) {
+  return scan.warnings.map((w) => ({
+    file: w.file, line: w.line, column: w.column, source: "yaml-lenient",
+    message: `YAML warning (line ${w.line}, column ${w.column}): ${w.message}`,
+  }));
 }
 
 // Returns the files that could not be read (and so were not opened): [{ filePath, error }]
@@ -813,7 +942,7 @@ function waitForDiagnostics(client, filePaths, settleMs = 500, timeoutMs = 15000
 
 const SEVERITY_NAMES = { 1: "error", 2: "warning", 3: "information", 4: "hint" };
 
-function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, localErrors = []) {
+function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, localErrors = [], localWarnings = []) {
   let errorCount = 0, warningCount = 0, infoCount = 0;
   const files = [];
 
@@ -846,11 +975,11 @@ function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, loc
     files.push({ file: filePath, diagnostics: mapped });
   }
 
-  // Errors found locally (merge markers, YAML syntax); the LSP does not report them.
-  for (const e of localErrors) {
-    errorCount++;
+  // Problems found locally (merge markers, YAML syntax, unquoted values); the
+  // LSP does not report them.
+  const addLocal = (e, severity) => {
     const diagnostic = {
-      severity: "error",
+      severity,
       message: e.message,
       source: e.source,
       range: {
@@ -863,7 +992,9 @@ function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, loc
     const entry = files.find((f) => f.file === native);
     if (entry) entry.diagnostics.push(diagnostic);
     else files.push({ file: native, diagnostics: [diagnostic] });
-  }
+  };
+  for (const e of localErrors) { errorCount++; addLocal(e, "error"); }
+  for (const e of localWarnings) { warningCount++; addLocal(e, "warning"); }
 
   const output = {
     status: errorCount > 0 ? "error" : incomplete ? "incomplete" : "ok",
@@ -944,7 +1075,8 @@ async function runValidation(client, args, tokens) {
     log(`[validate] ${incomplete.message}`);
   }
 
-  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete, findLocalErrors(agentDir));
+  const yamlScan = scanYamlFiles(agentDir);
+  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete, findLocalErrors(agentDir, yamlScan), findLocalWarnings(agentDir, yamlScan));
   output.fileCount = filePaths.length;
   return output;
 }
@@ -1218,12 +1350,14 @@ async function cmdWithLsp(args, method) {
     }
   }
 
-  // Same for files that do not parse as YAML. validate calls such a file valid
-  // (measured with an unclosed quote), and pushing it with pac emptied the
-  // topic on the server. --force is for validation false positives, not for
-  // broken syntax.
+  // Same for files that do not parse as YAML. validate calls a file valid
+  // when a later quote closes an open quote, or when text follows a closing
+  // quote, and pushing such a file emptied the topic on the server (measured
+  // with this script). --force is for validation false positives, not for
+  // broken syntax. Unquoted values that the service keeps (`description:
+  // Text: more text`) are not errors; they are logged.
   if (method === "powerplatformls/syncPush") {
-    const syntaxErrors = findYamlSyntaxErrors(agentDir);
+    const { errors: syntaxErrors, warnings: yamlWarnings } = scanYamlFiles(agentDir);
     if (syntaxErrors.length > 0) {
       process.stdout.write(
         JSON.stringify({
@@ -1234,6 +1368,9 @@ async function cmdWithLsp(args, method) {
       );
       process.exitCode = 1;
       return;
+    }
+    if (yamlWarnings.length > 0) {
+      log(`[push] ${yamlWarnings.length} unquoted value(s) that a strict YAML parser rejects, pushing anyway: ${yamlWarnings.map((w) => `${w.file} line ${w.line} (${w.reason})`).join("; ")}`);
     }
   }
 

@@ -19111,8 +19111,90 @@ function findConflictMarkers(agentDir) {
 function formatConflicts(conflicts) {
   return conflicts.map((c) => `${c.file} (line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")})`).join("; ");
 }
-function findYamlSyntaxErrors(agentDir) {
+var PLAIN_VALUE_LINE_RE = /^(\s*(?:-[ \t]+)*)([^\s"'#\[\]{}|>&*!%@`,?:-][^#]*?)(:[ \t]+)([^\s"'#\[{|>].*)$/;
+function plainValueProblem(value) {
+  const text = value.replace(/\s+#.*$/, "");
+  if (/^[@`%*!]/.test(text)) return `starts with "${text[0]}"`;
+  if (/^-(\s|$)/.test(text)) return 'starts with "- "';
+  if (/:\s/.test(text)) return 'contains ": "';
+  if (/:$/.test(text)) return 'ends with ":"';
+  return null;
+}
+var BLOCK_HEADER_RE = /^\s*(?:-[ \t]+)*(?:(?:[^\s"'#\[\]{}|>&*!%@`,?:-][^#]*?|"[^"]*"|'[^']*'):[ \t]+)?(?:[&!]\S*[ \t]+)*[|>][+-]?[0-9]?[+-]?[ \t]*(?:#.*)?$/;
+function keyColumn(line) {
+  return /^\s*(?:-[ \t]+)*/.exec(line)[0].length;
+}
+function hasUnclosedQuoteLine(lines) {
+  const open2 = /^\s*(?:-[ \t]+)*(?:[^\s"'#\[\]{}|>&*!%@`,?:-][^#]*?:[ \t]+)?(?:[&!]\S*[ \t]+)*(["'])/;
+  let blockKey = -1;
+  for (const line of lines) {
+    if (blockKey >= 0) {
+      if (line.trim() === "" || keyColumn(line) > blockKey) continue;
+      blockKey = -1;
+    }
+    if (BLOCK_HEADER_RE.test(line)) {
+      blockKey = keyColumn(line);
+      continue;
+    }
+    const m = open2.exec(line);
+    if (!m) continue;
+    const rest = line.slice(m[0].length);
+    let closed = false;
+    for (let i = 0; i < rest.length && !closed; i++) {
+      if (m[1] === '"') {
+        if (rest[i] === "\\") i++;
+        else if (rest[i] === '"') closed = true;
+      } else if (rest[i] === "'") {
+        if (rest[i + 1] === "'") i++;
+        else closed = true;
+      }
+    }
+    if (!closed) return true;
+  }
+  return false;
+}
+function belowEmptyBlock(lines, i) {
+  for (let j = i - 1; j >= 0; j--) {
+    if (lines[j].trim() === "") continue;
+    return BLOCK_HEADER_RE.test(lines[j]) && keyColumn(lines[i]) <= keyColumn(lines[j]);
+  }
+  return false;
+}
+function checkYamlText(text) {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+  const warnings = [];
+  let relax = null;
+  for (let round = 0; round <= lines.length; round++) {
+    try {
+      yaml.load(lines.join("\n"), { json: true });
+      return { error: null, warnings };
+    } catch (e) {
+      const failure = {
+        line: e.mark ? e.mark.line + 1 : 1,
+        column: e.mark ? e.mark.column + 1 : 1,
+        message: e.reason || e.message
+      };
+      if (relax === null) relax = !hasUnclosedQuoteLine(lines);
+      const i = e.mark ? e.mark.line : -1;
+      const m = relax && i >= 0 && i < lines.length ? PLAIN_VALUE_LINE_RE.exec(lines[i]) : null;
+      const problem = m && !belowEmptyBlock(lines, i) ? plainValueProblem(m[4]) : null;
+      if (!problem) return { error: failure, warnings: [] };
+      const comment = /\s+#.*$/.exec(m[4]);
+      const value = comment ? m[4].slice(0, comment.index) : m[4];
+      warnings.push({
+        line: i + 1,
+        column: m[1].length + m[2].length + m[3].length + 1,
+        reason: problem,
+        message: `Unquoted value ${problem}. The service keeps it as plain text, but a strict YAML parser rejects it. Put the value in quotes to make the file valid YAML.`
+      });
+      lines[i] = `${m[1]}${m[2]}: ${JSON.stringify(value.trimEnd())}${comment ? " " + comment[0].trim() : ""}`;
+    }
+  }
+  return { error: { line: 1, column: 1, message: "too many unquoted values" }, warnings: [] };
+}
+function scanYamlFiles(agentDir) {
   const errors = [];
+  const warnings = [];
   for (const file of findMcsYmlFiles(agentDir).sort()) {
     let text;
     try {
@@ -19121,18 +19203,12 @@ function findYamlSyntaxErrors(agentDir) {
       continue;
     }
     if (conflictMarkerLines(text).length > 0) continue;
-    try {
-      yaml.load(text, { json: true });
-    } catch (e) {
-      errors.push({
-        file: path2.relative(agentDir, file).split(path2.sep).join("/"),
-        line: e.mark ? e.mark.line + 1 : 1,
-        column: e.mark ? e.mark.column + 1 : 1,
-        message: e.reason || e.message
-      });
-    }
+    const rel = path2.relative(agentDir, file).split(path2.sep).join("/");
+    const result = checkYamlText(text);
+    if (result.error) errors.push({ file: rel, ...result.error });
+    for (const w of result.warnings) warnings.push({ file: rel, ...w });
   }
-  return errors;
+  return { errors, warnings };
 }
 function formatYamlSyntaxErrors(errors) {
   return errors.map((e) => `${e.file} (line ${e.line}, column ${e.column}: ${e.message})`).join("; ");
@@ -19159,7 +19235,7 @@ function findInstructionsShapeErrors(agentDir) {
     message: "instructions must be a string. An object or a list under it is dropped without an error and the agent runs with empty instructions. Write the text as a block scalar (instructions: |)."
   }];
 }
-function findLocalErrors(agentDir) {
+function findLocalErrors(agentDir, scan = scanYamlFiles(agentDir)) {
   const errors = [];
   for (const c of findConflictMarkers(agentDir)) {
     errors.push({
@@ -19170,7 +19246,7 @@ function findLocalErrors(agentDir) {
       message: `Unresolved merge conflict markers at line${c.lines.length > 1 ? "s" : ""} ${c.lines.join(", ")}. Keep the right version between the markers and delete the marker lines.`
     });
   }
-  for (const e of findYamlSyntaxErrors(agentDir)) {
+  for (const e of scan.errors) {
     errors.push({
       file: e.file,
       line: e.line,
@@ -19183,6 +19259,15 @@ function findLocalErrors(agentDir) {
     errors.push({ file: e.file, line: e.line, column: 1, source: "instructions-shape", message: e.message });
   }
   return errors;
+}
+function findLocalWarnings(agentDir, scan = scanYamlFiles(agentDir)) {
+  return scan.warnings.map((w) => ({
+    file: w.file,
+    line: w.line,
+    column: w.column,
+    source: "yaml-lenient",
+    message: `YAML warning (line ${w.line}, column ${w.column}): ${w.message}`
+  }));
 }
 function openFilesForDiagnostics(client, filePaths) {
   const fileEvents = filePaths.map((filePath) => ({
@@ -19255,7 +19340,7 @@ function waitForDiagnostics(client, filePaths, settleMs = 500, timeoutMs = 15e3)
   });
 }
 var SEVERITY_NAMES = { 1: "error", 2: "warning", 3: "information", 4: "hint" };
-function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, localErrors = []) {
+function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, localErrors = [], localWarnings = []) {
   let errorCount = 0, warningCount = 0, infoCount = 0;
   const files = [];
   for (const [uri, diags] of diagnosticsMap) {
@@ -19282,10 +19367,9 @@ function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, loc
     });
     files.push({ file: filePath, diagnostics: mapped });
   }
-  for (const e of localErrors) {
-    errorCount++;
+  const addLocal = (e, severity) => {
     const diagnostic = {
-      severity: "error",
+      severity,
       message: e.message,
       source: e.source,
       range: {
@@ -19297,6 +19381,14 @@ function formatValidationOutput(diagnosticsMap, agentDir, incomplete = null, loc
     const entry = files.find((f) => f.file === native);
     if (entry) entry.diagnostics.push(diagnostic);
     else files.push({ file: native, diagnostics: [diagnostic] });
+  };
+  for (const e of localErrors) {
+    errorCount++;
+    addLocal(e, "error");
+  }
+  for (const e of localWarnings) {
+    warningCount++;
+    addLocal(e, "warning");
   }
   const output = {
     status: errorCount > 0 ? "error" : incomplete ? "incomplete" : "ok",
@@ -19364,7 +19456,8 @@ async function runValidation(client, args, tokens) {
     };
     log(`[validate] ${incomplete.message}`);
   }
-  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete, findLocalErrors(agentDir));
+  const yamlScan = scanYamlFiles(agentDir);
+  const output = formatValidationOutput(diagnosticsMap, agentDir, incomplete, findLocalErrors(agentDir, yamlScan), findLocalWarnings(agentDir, yamlScan));
   output.fileCount = filePaths.length;
   return output;
 }
@@ -19574,7 +19667,7 @@ async function cmdWithLsp(args, method) {
     }
   }
   if (method === "powerplatformls/syncPush") {
-    const syntaxErrors = findYamlSyntaxErrors(agentDir);
+    const { errors: syntaxErrors, warnings: yamlWarnings } = scanYamlFiles(agentDir);
     if (syntaxErrors.length > 0) {
       process.stdout.write(
         JSON.stringify({
@@ -19585,6 +19678,9 @@ async function cmdWithLsp(args, method) {
       );
       process.exitCode = 1;
       return;
+    }
+    if (yamlWarnings.length > 0) {
+      log(`[push] ${yamlWarnings.length} unquoted value(s) that a strict YAML parser rejects, pushing anyway: ${yamlWarnings.map((w) => `${w.file} line ${w.line} (${w.reason})`).join("; ")}`);
     }
   }
   if (!args.environmentUrl || !args.agentMgmtUrl) {

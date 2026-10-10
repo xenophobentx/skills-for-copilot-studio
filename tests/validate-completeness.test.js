@@ -131,6 +131,13 @@ assertEqual([mergedClean.valid, mergedClean.summary.errors], [true, 0], "no loca
 const mergedIncomplete = formatValidationOutput(new Map(), agentDir, incomplete, [localErr("agent.mcs.yml", "yaml-syntax")]);
 assertEqual([mergedIncomplete.status, mergedIncomplete.incomplete], ["error", true], "local errors with an incomplete run stay flagged incomplete");
 
+// Local warnings (unquoted values) are counted as warnings and do not make the result invalid
+const warnOnly = formatValidationOutput(new Map(), agentDir, null, [], [localErr("topics/New.mcs.yml", "yaml-lenient")]);
+assertEqual([warnOnly.status, warnOnly.valid, warnOnly.summary], ["ok", true, { errors: 0, warnings: 1, info: 0 }], "a local warning leaves the result valid");
+assertEqual(warnOnly.files[0].diagnostics[0].severity, "warning", "local warning has severity warning");
+const warnAndErr = formatValidationOutput(new Map([[uriOf(files[0]), [err]]]), agentDir, null, [localErr("agent.mcs.yml", "yaml-syntax")], [localErr("agent.mcs.yml", "yaml-lenient")]);
+assertEqual([warnAndErr.valid, warnAndErr.summary.errors, warnAndErr.summary.warnings, warnAndErr.files[0].diagnostics.length], [false, 2, 1, 3], "warnings and errors of one file share an entry");
+
 // ---------------------------------------------------------------------------
 // Unreadable files are reported separately and are not waited for
 // ---------------------------------------------------------------------------
