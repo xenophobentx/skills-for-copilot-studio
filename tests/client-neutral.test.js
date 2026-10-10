@@ -73,6 +73,24 @@ for (const name of fs.readdirSync(path.join(ROOT, "skills"))) {
   check(`${name}: the sandbox paragraph comes before the locate section`, !paragraph || text.indexOf(paragraph) < text.indexOf("## Locate the plugin files"));
 }
 
+// Long commands and device-code sign-in: a foreground call blocks until the command ends,
+// so the code line would reach the user too late. One paragraph, names each client's way.
+const LONG_RUN =
+  "A foreground call returns its output only when the command ends, so start the command so that it streams or yields, and keep its handle. " +
+  "Claude Code: `run_in_background: true`, then keep the task ID. GitHub Copilot CLI: bash `mode: \"async\"`. " +
+  "Codex: `exec_command` returns after a short wait with a `session_id` while the process still runs, and `write_stdin` with that `session_id`, empty `chars` and a `yield_time_ms` of 30000 polls it until the result has an `exit_code` (checked with Codex 0.162.1). " +
+  "Read the output after a few seconds. When it has a `{\"status\":\"device_code\",...}` line, show the user the `verificationUri` and `userCode` in your message right away, before you poll again. Then poll until the command exits.";
+for (const f of ["skills/manage-agent/SKILL.md", "skills/clone-agent/SKILL.md", "skills/test-auth/SKILL.md", "agents/copilot-studio-manage.md"]) {
+  const text = fs.readFileSync(path.join(ROOT, f), "utf8").replace(/\r\n/g, "\n");
+  check(`${f}: long-run / device-code paragraph, once`, text.split(LONG_RUN).length === 2);
+  check(`${f}: no Claude-only background wording left`, !/start it in the background \(Claude Code/.test(text));
+}
+{
+  const kit = fs.readFileSync(path.join(ROOT, "skills/run-tests-kit/SKILL.md"), "utf8");
+  check("run-tests-kit: names run_in_background, async and the Codex session poll", /run_in_background: true/.test(kit) && /mode: "async"/.test(kit) && /exec_command/.test(kit) && /write_stdin/.test(kit));
+  check("run-tests-kit: no unconditional run_in_background", !/Use `run_in_background: true` for this command/.test(kit));
+}
+
 const prompt = fs.readFileSync(path.join(ROOT, "hooks", "system-prompt.md"), "utf8");
 check("prompt: sub-agent fallback names agents/<file>.md", prompt.includes("<pluginRoot>/agents/<file>.md"));
 for (const a of fs.readdirSync(path.join(ROOT, "agents"))) check(`prompt: lists ${a}`, prompt.includes("`" + a + "`"));

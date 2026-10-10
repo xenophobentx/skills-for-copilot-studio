@@ -95,7 +95,7 @@ No `--client-id` is needed. The script uses VS Code's first-party client ID and 
 
 ## Phase 1: Select Environment
 
-Tell the user: **"A browser window may open for Microsoft sign-in (tokens are cached after first login)."** Over SSH or without a display the script prints a device code instead. A foreground Bash call returns its output only when the command ends, so start it in the background (Claude Code: `run_in_background: true`; GitHub Copilot CLI: bash `mode: "async"`), check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.
+Tell the user: **"A browser window may open for Microsoft sign-in (tokens are cached after first login)."** Over SSH or without a display the script prints a device code instead. A foreground call returns its output only when the command ends, so start the command so that it streams or yields, and keep its handle. Claude Code: `run_in_background: true`, then keep the task ID. GitHub Copilot CLI: bash `mode: "async"`. Codex: `exec_command` returns after a short wait with a `session_id` while the process still runs, and `write_stdin` with that `session_id`, empty `chars` and a `yield_time_ms` of 30000 polls it until the result has an `exit_code` (checked with Codex 0.162.1). Read the output after a few seconds. When it has a `{"status":"device_code",...}` line, show the user the `verificationUri` and `userCode` in your message right away, before you poll again. Then poll until the command exits.
 
 Run the list-envs command:
 

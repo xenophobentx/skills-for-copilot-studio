@@ -94,9 +94,9 @@ The user must have:
    ```bash
    node "<pluginRoot>/tests/run-tests.js" --config-dir ./tests
    ```
-   Use `run_in_background: true` for this command. Save the returned task ID.
+   The run is long, so start it so that it yields and keep its handle. Claude Code: `run_in_background: true`, then keep the task ID. GitHub Copilot CLI: bash `mode: "async"`. Codex: `exec_command` returns after a short wait with a `session_id` while the process still runs, and `write_stdin` with that `session_id`, empty `chars` and a `yield_time_ms` of 30000 polls it until the result has an `exit_code` (checked with Codex 0.162.1).
 
-4. **Wait 10 seconds**, then check the background task output (non-blocking check).
+4. **Wait 10 seconds**, then read the output so far without blocking (Claude Code: the task output; Codex: one `write_stdin` poll).
 
 5. **Detect the authentication state** from the output:
 
@@ -115,7 +115,7 @@ The user must have:
 
    - If the output is empty or incomplete: Wait another 10 seconds and check again (retry up to 3 times).
 
-6. **Wait for the background task to complete** (blocking). The script polls every 20 seconds until all tests finish and downloads results as a CSV.
+6. **Wait for the run to complete** (Codex: keep polling the session). The script polls every 20 seconds until all tests finish and downloads results as a CSV.
 
 7. **Read the final output** to get the success rate and CSV filename.
 

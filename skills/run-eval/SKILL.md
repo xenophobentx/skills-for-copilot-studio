@@ -30,7 +30,7 @@ Check that the file you need exists under `<pluginRoot>` before you use it. In c
 
 The caller (test agent) must provide `--client-id` and `--workspace`. If you don't have the client ID, return immediately and tell the caller to run `test-auth` first.
 
-All eval-api commands run in the **foreground**. NEVER use `run_in_background`.
+All eval-api commands run in the **foreground**. NEVER use `run_in_background`. If your client returns before the command ends (Codex: `exec_command` returns a `session_id`), poll that session with `write_stdin` until the result has an `exit_code`, and do not start the command a second time.
 
 ## Step 1: List test sets and let the user choose
 
