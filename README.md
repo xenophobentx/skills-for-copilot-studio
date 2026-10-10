@@ -1,36 +1,52 @@
-# Skills for Copilot Studio
+# Skills for Copilot Studio (xeno fork)
 
-> This is my fork of [microsoft/skills-for-copilot-studio](https://github.com/microsoft/skills-for-copilot-studio) with my fixes and a few open community PRs merged in. Some of the fixes are also open as PRs upstream. I merge upstream changes in from time to time. [FORK.md](FORK.md) lists what differs from upstream.
->
-> To install from this fork:
->
-> ```bash
-> /plugin marketplace add xenophobentx/skills-for-copilot-studio
-> /plugin install copilot-studio@xeno-skills-for-copilot-studio
-> ```
->
-> Don't install it next to the upstream plugin. Both are called `copilot-studio` and have the same commands.
+This is a maintained fork of [microsoft/skills-for-copilot-studio](https://github.com/microsoft/skills-for-copilot-studio). It is a plugin for authoring, syncing and testing classic (topic-based) [Copilot Studio](https://aka.ms/CopilotStudio) agents as YAML files from [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [GitHub Copilot CLI](https://docs.github.com/en/copilot). Since 1.0.11-xeno.4 it also runs in [OpenAI Codex CLI](https://developers.openai.com/codex).
 
-A plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), [Codex](https://developers.openai.com/codex), and [VS Code](https://code.visualstudio.com/) that enables authoring, testing, and troubleshooting [Microsoft Copilot Studio](https://aka.ms/CopilotStudio) **STANDARD** agents through YAML files, directly from your terminal or editor.
+Agents built with the newer Copilot Studio CLI (`template: cliagent-*` or `authoringModel: CliCopilot` in `settings.mcs.yml`) belong to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). If you open one here, the plugin will read and describe it and point you to that plugin. It won't edit, pull, push or publish it.
 
-Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft Copilot Studio Plugin](https://github.com/microsoft/copilot-studio-plugin). If you open a CLI agent workspace here (`template: cliagent-*` or `authoringModel: CliCopilot` in its `settings.mcs.yml`), the plugin is instructed to detect it, only read and describe it (no edits, pull, push or publish), and point you to that plugin.
+## Why use the fork
 
-## Prerequisites
+Things that fail upstream today:
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), [Codex](https://developers.openai.com/codex), or [VS Code](https://code.visualstudio.com/)
-- [Node.js](https://nodejs.org/) 20 or later
-- [VS Code](https://code.visualstudio.com/) with the [Copilot Studio Extension](https://github.com/microsoft/vscode-copilotstudio) (required for push/pull/clone operations)
+- On macOS, the Copilot Studio extension 1.9 and later keeps the language server in `lspOut/osx-arm64`. Upstream reports "extension not found" and can't sync. The fork finds it there. Unit tested, and run with extension 1.9.14 on all three of my machines.
+- npm 12 blocks dependency install scripts by default, so keytar never gets its native binary and the first sign-in fails. I reproduced that on macOS and Windows. The fork lists keytar in `allowScripts`, and if install scripts are turned off it runs keytar's own downloader once. Tested live with npm 12.2.0.
+- With microsoft/copilot-studio-plugin installed as well, both plugins use `CLAUDE_PLUGIN_DATA` and `plugin-paths.json`, and upstream's scripts can load the other plugin's folder and fail with `Cannot find module 'vscode-jsonrpc/node'`. I reproduced that on macOS. The fork has its own names (`SFCS_PLUGIN_DATA`, `sfcs-plugin-paths.json`). The fix is unit tested.
+- A workspace copied through git has no `.mcs/botdefinition.json`, because `.mcs/.gitignore` excludes everything. Upstream then fails with a `CdsBotId` error or a 400 (issue #155). The fork says what is missing before it touches the network. I saw the upstream error live; the fix is unit tested.
 
-## Installation
+Places where upstream can lose work without telling you:
 
-### From marketplace (Claude Code / GitHub Copilot CLI)
+- When a pull writes conflict markers into a topic, upstream calls it a success, and `push --force` uploads the markers to the server byte for byte. I measured that live on macOS. Here pull exits 1 with `"status":"conflict"`, and push refuses any file with markers, with or without `--force`, before it signs in. I tried that guard on all three machines.
+- For a topic with an unclosed quote, the language server says `valid: true` (measured live), and a `pac copilot push` of such a topic emptied it on the server. Here validate and push parse every `.mcs.yml` as YAML first, and push sends nothing if a file fails. I haven't pushed a broken file with the script itself, so that refusal is a precaution.
+- When the language server returns no diagnostics for some files, upstream reports the agent as valid. Here the result is `incomplete` and push is blocked. Unit tested.
+- A classic `agent.mcs.yml` whose `instructions` is an object or a list loads as empty instructions, and nothing reports it (upstream issue #175). Here validate fails it. Unit tested.
+
+Day to day:
+
+- `--workspace` is enough for validate, push, pull, changes, remote-changes, verify and publish. The tenant, environment, agent and URLs come from `.mcs/conn.json`, the log shows the target, and a URL outside the known Microsoft hosts is refused. I ran validate and push this way live on macOS and Windows.
+- `manage-agent remote-changes` (or `pull --dry-run`) shows what the server changed, which of those files you changed too, and whether a pull would write conflict markers. It writes nothing.
+- Pull copies the agent folder to `.mcs/backups/<UTC timestamp>/` first and keeps the last five. Unit tested.
+- After a push, the script clones the agent into a temp folder and compares it with yours. A difference is a warning, and `push --verify` turns it into exit 1. I only tested this on small agents with topics and nothing else, so on bigger agents it may report differences that aren't real.
+- `manage-agent doctor` checks node, the language server, the native modules, the data folder, the sign-in mode, pac and the workspace, and tells you what to fix. It reads no secrets and changes nothing.
+- Over SSH, or on Linux without a display, sign-in uses a device code. I got to the code prompt over SSH on all three machines but didn't finish the sign-in.
+
+[FORK.md](FORK.md) has the full list, with what I took from other forks and from open upstream PRs.
+
+## Install
+
+You need Node.js 20 or later and the [Copilot Studio extension for VS Code](https://github.com/microsoft/vscode-copilotstudio). Clone, push and pull use the language server that ships with the extension. VS Code itself doesn't have to be running.
+
+Don't install the fork next to the upstream plugin. Both are called `copilot-studio` and have the same commands.
+
+### Claude Code
 
 ```bash
-/plugin marketplace add xenophobentx/skills-for-copilot-studio
-/plugin install copilot-studio@xeno-skills-for-copilot-studio
+claude plugin marketplace add xenophobentx/skills-for-copilot-studio
+claude plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
 
-On Windows, `marketplace add` can fail with `EPERM: operation not permitted, rename ...` and `Failed to finalize marketplace cache`. Seen on Claude Code 2.1.295, on every attempt and also for other large marketplaces. If you get it, clone the repository and add the clone as the marketplace:
+Inside a session, `/plugin marketplace add xenophobentx/skills-for-copilot-studio` and `/plugin install copilot-studio@xeno-skills-for-copilot-studio` do the same.
+
+On Windows, `marketplace add` can fail with `EPERM: operation not permitted, rename ...` and `Failed to finalize marketplace cache`. I saw it on Claude Code 2.1.295 on every attempt, and with other large marketplaces too. Clone the repository and add the clone as the marketplace instead:
 
 ```powershell
 git clone https://github.com/xenophobentx/skills-for-copilot-studio.git C:\tools\skills-for-copilot-studio
@@ -38,30 +54,31 @@ claude plugin marketplace add C:\tools\skills-for-copilot-studio
 claude plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
 
-The plugin then runs from that clone, so keep the folder. `git pull` in it updates the plugin. Claude Code does not install npm packages into a plugin it loads in place; the plugin's own session hook installs them into its data folder.
+The plugin then runs from that clone, so keep the folder. `git pull` in it updates the plugin. Claude Code doesn't install npm packages into a plugin it loads in place, so the plugin's session hook installs them into its data folder.
 
-### From VS Code Extensions Store (GitHub Copilot)
-
-The VS Code store installs the upstream plugin, not this fork. To use this fork in VS Code, install it from a local clone (below).
-
-Search for **Skills for Copilot Studio** in the VS Code Extensions using the **@agentPlugins** filter to view and click **Install**.
-
-![VS Code Extensions Store](./img/VSCodeStore.png)
-
-### From a local clone
+To load a clone without the marketplace:
 
 ```bash
 git clone https://github.com/xenophobentx/skills-for-copilot-studio.git
 
-# Load for a single session
+# one session
 claude --plugin-dir /path/to/skills-for-copilot-studio
 
-# Or install persistently (user-wide)
+# or install it for your user, or for one project
 claude plugin install /path/to/skills-for-copilot-studio --scope user
-
-# Or install for a specific project
 claude plugin install /path/to/skills-for-copilot-studio --scope project
 ```
+
+### GitHub Copilot CLI
+
+```bash
+copilot plugin marketplace add xenophobentx/skills-for-copilot-studio
+copilot plugin install copilot-studio@xeno-skills-for-copilot-studio
+```
+
+The `/plugin` commands work in an interactive session as well.
+
+The VS Code extensions store only has the upstream plugin. To use the fork in VS Code, install it from a local clone.
 
 ### Codex
 
@@ -70,125 +87,172 @@ codex plugin marketplace add xenophobentx/skills-for-copilot-studio
 codex plugin add copilot-studio@xeno-skills-for-copilot-studio
 ```
 
-Codex reads the same manifest as Claude Code, so there is nothing else to package. The skills are listed as `copilot-studio:<skill>`. Ask in plain words or pick one with `/skills`.
+Codex reads the same manifest as Claude Code. The skills show up as `copilot-studio:<skill>`. Ask in plain words or pick one with `/skills`.
 
-What has been tested: Codex 0.160 on macOS, installed from a local copy of this branch, with `--yolo` and with the default sandbox. That covers skill routing and authoring, `validate` on a cloned agent, and the setup without a hook described below. The plugin also installs and lists its skills in Codex on Linux and Windows, and the unit tests pass there. Not yet tested: a full Codex run on Linux and Windows, the `/hooks` trust screen, the sub-agent fallback described below, approving a command interactively, installing from GitHub with the commands above, and GitHub Copilot CLI after this change. Claude Code was smoke-tested with `claude -p`. Codex 0.162.1 on macOS (`--yolo`) was also run with the plugin in a folder with a space in its path, with a clone into an empty folder, and with a stand-in command for the device-code sign-in; the sandbox runs are described below.
+What I tested: Codex 0.160 on macOS, installed from a local copy of the branch, with `--yolo` and with the default sandbox. That covered skill routing and authoring, `validate` on a cloned agent, and the setup without a hook described below. With Codex 0.162.1 on macOS (`--yolo`) I also ran the plugin from a folder with a space in its path, a clone into an empty folder, and the device code sign-in with a stand-in command. Claude Code got a smoke test with `claude -p` after the change.
 
-The plugin also has a SessionStart hook. Codex does not run a plugin hook until you trust it (`/hooks`), and `codex exec` skips an untrusted hook without saying so. The hook adds the routing prompt and installs the native modules (keytar, msal-node-extensions, vscode-jsonrpc) for sign-in and push/pull. I ran it with `--dangerously-bypass-hook-trust`; the trust screen itself and what an update does to the trust are untested.
+Codex doesn't run a plugin's SessionStart hook until you trust it in `/hooks`, and `codex exec` skips an untrusted hook silently. The hook adds the routing prompt and installs the native modules (keytar, msal-node-extensions, vscode-jsonrpc) that sign-in, push and pull need. I ran it with `--dangerously-bypass-hook-trust`. The trust screen itself, and what an update does to the trust, are untested.
 
 The skills also work without the hook:
 
 - Every skill that changes files checks for a CLI agent workspace on its own and stops.
-- Native modules: run `node "<pluginRoot>/hooks/setup.js" --ensure` once, with `<pluginRoot>` replaced by the absolute plugin folder (keep the quotes, the path may contain spaces). A skill that hits `Cannot find module` says so. It installs into `SFCS_PLUGIN_DATA`, or into the folder in `sfcs-plugin-paths.json` if that file was written by this copy of the plugin, otherwise into `~/.copilot-studio-cli/sfcs-data`. That folder is per user. It never installs into the folder named by `CLAUDE_PLUGIN_DATA` or `plugin-paths.json`, because another plugin can own those, and it does not write them. `manage-agent doctor` shows which folder is in use. The command waits for the install and stops after 110 seconds with a message, so a tool call with a two minute limit is enough; run it again if it ran out of time (`SFCS_ENSURE_TIMEOUT_MS` changes the limit). It needs the network and write access to the folder it installs into. Run it, and if the sandbox denies the network or the write, allow only that (see Sandbox below).
-- Codex has no agent type for the plugin's agents. With the hook, the routing prompt tells Codex to start a general-purpose sub-agent from the agent file. I have not run that path. Without the hook, the skills run in the main session.
+- For the native modules, run this once, with `<pluginRoot>` replaced by the absolute plugin folder. Keep the quotes, the path may contain spaces.
 
-Sandbox: in my runs `codex exec` started with a read-only workspace, so the authoring skills could not write files until I passed `-s workspace-write`. Sign-in, clone, push, pull, validate and chat need the network and write to `~/.copilot-studio-cli`, and neither `codex exec` mode allowed that. The skills run the command first. On a concrete sandbox error (network unreachable, permission denied, read-only file system) they ask for only the access that is missing, and where Codex cannot ask (`approval_policy = "never"`) they say which access is missing and stop. On macOS I tried a profile with `sandbox_workspace_write.network_access = true` and `~/.copilot-studio-cli` in `sandbox_workspace_write.writable_roots`: `validate` still failed with `UNIX Operation not permitted`, at the token cache's credential persistence, which I take to be the keychain. On macOS use full access (`--yolo` or `--sandbox danger-full-access`), the option I tested. On Linux and Windows a narrower profile may be enough; I did not test one. Approving a command in an interactive session is untested.
+  ```bash
+  node "<pluginRoot>/hooks/setup.js" --ensure
+  ```
 
-macOS: a problem with the Codex install itself (for example every shell command timing out) is not caused by this plugin. Try reinstalling Codex first (`brew reinstall --cask codex`).
+  A skill that hits `Cannot find module` tells you to run it. It installs into `SFCS_PLUGIN_DATA`, or into the folder in `sfcs-plugin-paths.json` if this copy of the plugin wrote that file, otherwise into `~/.copilot-studio-cli/sfcs-data` (one folder per user). It never installs into the folder named by `CLAUDE_PLUGIN_DATA` or `plugin-paths.json`, because another plugin can own those, and it doesn't write them. `manage-agent doctor` shows which folder is in use. The command waits for the install and gives up after 110 seconds with a message, so a tool call with a two minute limit is enough. Run it again if it ran out of time (`SFCS_ENSURE_TIMEOUT_MS` changes the limit). It needs the network and write access to the folder it installs into.
+- Codex has no agent type for the plugin's agents. With the hook, the routing prompt tells Codex to start a general-purpose sub-agent from the agent file. I haven't run that path. Without the hook, the skills run in the main session.
 
-Windows: in PowerShell 5.1, send chat messages that contain quotes through `--message-file`.
+In my runs `codex exec` started with a read-only workspace, so the authoring skills couldn't write files until I passed `-s workspace-write`. Sign-in, clone, push, pull, validate and chat need the network and write access to `~/.copilot-studio-cli`, and neither `codex exec` mode allowed that. The skills run the command first. On a specific sandbox error (network unreachable, permission denied, read-only file system) they ask for just the access that is missing. Where Codex can't ask (`approval_policy = "never"`) they say what is missing and stop.
+
+On macOS I tried a profile with `sandbox_workspace_write.network_access = true` and `~/.copilot-studio-cli` in `sandbox_workspace_write.writable_roots`. `validate` still failed with `UNIX Operation not permitted` at the token cache's credential store, which I take to be the keychain. So on macOS use full access (`--yolo` or `--sandbox danger-full-access`), which is what I tested. On Linux and Windows a narrower profile may be enough; I haven't tried one.
+
+A broken Codex install on macOS (every shell command timing out, for example) can look like a plugin problem. Try `brew reinstall --cask codex` first.
+
+## Quick start
+
+With the plugin's agents:
+
+```text
+/copilot-studio:copilot-studio-manage clone
+/copilot-studio:copilot-studio-author Create a topic that handles IT service requests
+/copilot-studio:copilot-studio-manage push
+```
+
+The same cycle with the script. `<pluginRoot>` is the plugin folder, and a clone of this repository works. Clone needs the tenant and the agent's Copilot Studio URL. After that, every command takes `--workspace` and reads the rest from `.mcs/conn.json`.
+
+```bash
+node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
+  --workspace ./my-agent \
+  --tenant-id "<tenantId>" \
+  --url "https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>/overview"
+
+# edit the files in ./my-agent, by hand or with the author agent
+
+node "<pluginRoot>/scripts/manage-agent.bundle.js" validate --workspace ./my-agent
+node "<pluginRoot>/scripts/manage-agent.bundle.js" remote-changes --workspace ./my-agent
+node "<pluginRoot>/scripts/manage-agent.bundle.js" pull --workspace ./my-agent
+node "<pluginRoot>/scripts/manage-agent.bundle.js" push --workspace ./my-agent
+```
+
+Pull before you push, or the push fails with `ConcurrencyVersionMismatch`. A push creates a draft. Publish it in Copilot Studio, or with the manage agent, before you test it with `/copilot-studio:copilot-studio-test`. If a sync command fails in a way you don't understand, start with `node "<pluginRoot>/scripts/manage-agent.bundle.js" doctor`.
+
+The five agents:
+
+```
+/copilot-studio:copilot-studio-manage       Clone, push, pull and sync agent content between local files and the cloud
+/copilot-studio:copilot-studio-author       Create and edit YAML (topics, actions, knowledge, triggers, variables)
+/copilot-studio:copilot-studio-test         Test published agents: point tests, batch suites, evaluation analysis
+/copilot-studio:copilot-studio-advisor      Design guidance, agent review and troubleshooting
+/copilot-studio:copilot-studio-describer    Read-only descriptions and reports of existing agents
+```
+
+In Windows PowerShell 5.1, send chat messages that contain quotes with `--message-file`. [SETUP_GUIDE.md](SETUP_GUIDE.md) goes through the whole cycle, including the test options and troubleshooting.
 
 ## Updating
 
-The update process depends on how you installed the plugin:
+Claude Code installs a new copy only when the plugin version changes, so a commit on `main` alone doesn't reach you.
 
-| Interface | Update Method | Details |
-|-----------|--------------|--------|
-| **Claude Code CLI** | Manual, or background auto-update once you turn it on | Claude Code leaves auto-update off for third-party marketplaces, and this is one. See below. |
-| **GitHub Copilot CLI** | Manual | Run `copilot plugin update copilot-studio@xeno-skills-for-copilot-studio` from the terminal, or `/plugin update copilot-studio@xeno-skills-for-copilot-studio` in an interactive session. `copilot plugin marketplace update xeno-skills-for-copilot-studio` refreshes the catalog first. |
-| **VS Code** | Extension auto-update | VS Code handles updates automatically when extension auto-update is enabled in settings. |
-| **Codex** | Manual | Run `codex plugin marketplace upgrade xeno-skills-for-copilot-studio`, then `codex plugin add copilot-studio@xeno-skills-for-copilot-studio` again. Check `/hooks` afterwards, because an updated hook may need trusting again (untested). |
-
-To remove the plugin from Codex:
-
-```bash
-codex plugin remove copilot-studio@xeno-skills-for-copilot-studio
-codex plugin marketplace remove xeno-skills-for-copilot-studio
-```
-
-This leaves `~/.copilot-studio-cli`, which holds your sign-in cache and the installed native modules, alone. Delete it yourself if you want it gone.
-
-### Claude Code
-
-Claude Code turns auto-update on by default only for Anthropic's own marketplaces. For any other marketplace it is off until you enable it. To update by hand, run these in a terminal and then restart Claude Code (or run `/reload-plugins` in a session):
+Claude Code leaves auto-update off for marketplaces that aren't Anthropic's. To update by hand, run these and restart Claude Code (or run `/reload-plugins` in a session):
 
 ```bash
 claude plugin marketplace update xeno-skills-for-copilot-studio
 claude plugin update copilot-studio@xeno-skills-for-copilot-studio
 ```
 
-To have Claude Code do it in the background, run `/plugin`, open the **Marketplaces** tab, select `xeno-skills-for-copilot-studio` and choose **Enable auto-update**. It runs within about ten minutes after you send your first message in a session.
+For background updates, run `/plugin`, open the Marketplaces tab, select `xeno-skills-for-copilot-studio` and choose Enable auto-update. It runs within about ten minutes after your first message in a session. If you added the marketplace from a local clone (the Windows workaround), `git pull` in the clone is the update. See [Claude Code: keep plugins updated](https://code.claude.com/docs/en/discover-plugins#keep-plugins-updated).
 
-Claude Code installs a new copy only when the plugin version changes, so a commit on `main` alone does not reach you. If you added the marketplace from a local clone (the Windows workaround above), `git pull` in the clone is the update. See [Claude Code: keep plugins updated](https://code.claude.com/docs/en/discover-plugins#keep-plugins-updated).
+GitHub Copilot CLI (the first command refreshes the catalog):
+
+```bash
+copilot plugin marketplace update xeno-skills-for-copilot-studio
+copilot plugin update copilot-studio@xeno-skills-for-copilot-studio
+```
+
+In a session, `/plugin update copilot-studio@xeno-skills-for-copilot-studio` does the same.
+
+Codex:
+
+```bash
+codex plugin marketplace upgrade xeno-skills-for-copilot-studio
+codex plugin add copilot-studio@xeno-skills-for-copilot-studio
+```
+
+Check `/hooks` afterwards. An updated hook may need trusting again; I haven't tested that.
 
 ## Uninstalling
 
-For Claude Code:
+Claude Code:
 
 ```bash
 claude plugin uninstall copilot-studio@xeno-skills-for-copilot-studio
 claude plugin marketplace remove xeno-skills-for-copilot-studio
 ```
 
-Uninstall removes the plugin's data folder (`~/.claude/plugins/data/copilot-studio-xeno-skills-for-copilot-studio`) unless you pass `--keep-data`. It does not remove the file the session hook writes outside the plugin folders:
+Uninstall removes the data folder (`~/.claude/plugins/data/copilot-studio-xeno-skills-for-copilot-studio`) unless you pass `--keep-data`. If it is still there, delete it by hand. Claude Code keeps the old copy under `~/.claude/plugins/cache/xeno-skills-for-copilot-studio` for a while and removes it itself after 14 days.
 
-- `~/.copilot-studio-cli/sfcs-plugin-paths.json` (Windows: `%USERPROFILE%\.copilot-studio-cli\sfcs-plugin-paths.json`). It holds the plugin's data and root paths, which are gone after the uninstall. Delete only this file. `plugin-paths.json` in the same folder belongs to other Copilot Studio plugins.
-
-In PowerShell: `Remove-Item "$env:USERPROFILE\.copilot-studio-cli\sfcs-plugin-paths.json"`. On macOS and Linux: `rm ~/.copilot-studio-cli/sfcs-plugin-paths.json`.
-
-If the data folder is still there, delete it by hand. Claude Code keeps the old copy of the plugin under `~/.claude/plugins/cache/xeno-skills-for-copilot-studio` for a while after an uninstall and removes it itself after 14 days.
-
-For GitHub Copilot CLI:
+GitHub Copilot CLI:
 
 ```bash
 copilot plugin uninstall copilot-studio@xeno-skills-for-copilot-studio
 copilot plugin marketplace remove xeno-skills-for-copilot-studio
 ```
 
-Copilot CLI leaves the plugin's data folder, `~/.copilot/plugin-data/xeno-skills-for-copilot-studio/copilot-studio` (under `$COPILOT_HOME` if you set it). Delete that folder, and the `sfcs-plugin-paths.json` file above, if you want the plugin gone completely. If you used the local clone, delete the clone as well.
+Copilot CLI leaves its data folder, `~/.copilot/plugin-data/xeno-skills-for-copilot-studio/copilot-studio` (under `$COPILOT_HOME` if you set it). Delete it yourself if you want it gone.
 
-## Usage
-
-The plugin provides five sub-agents, each backed by a specialized agent:
-
-```
-/copilot-studio:copilot-studio-manage       Clone, push, pull, and sync agent content between local files and the cloud
-/copilot-studio:copilot-studio-author       Create and edit YAML (topics, actions, knowledge, triggers, variables)
-/copilot-studio:copilot-studio-test         Test published agents — point-tests, batch suites, or evaluation analysis
-/copilot-studio:copilot-studio-advisor      Design guidance, agent review, and troubleshooting
-/copilot-studio:copilot-studio-describer    Read-only descriptions and detailed reports of existing agents
-```
-
-## Quick Start
+Codex:
 
 ```bash
-# Clone an agent from the cloud (guided flow, signs in with a browser or a device code over SSH)
-/copilot-studio:copilot-studio-manage clone
-
-# Design and build topics
-/copilot-studio:copilot-studio-author Create a topic that handles IT service requests
-
-# Pull latest, push your changes
-/copilot-studio:copilot-studio-manage pull
-/copilot-studio:copilot-studio-manage push
-
-# Publish in Copilot Studio UI, then test
-/copilot-studio:copilot-studio-test Send "How do I request a new laptop?" to the published agent
-
-# Get design advice and review
-/copilot-studio:copilot-studio-advisor Review my agent for improvements and known pitfalls
-
-# Generate a read-only behavior report
-/copilot-studio:copilot-studio-describer Describe everything this agent does
+codex plugin remove copilot-studio@xeno-skills-for-copilot-studio
+codex plugin marketplace remove xeno-skills-for-copilot-studio
 ```
 
-See [SETUP_GUIDE.md](SETUP_GUIDE.md) for a full end-to-end walkthrough including validation, testing options, and troubleshooting.
+None of these touch `~/.copilot-studio-cli` (Windows: `%USERPROFILE%\.copilot-studio-cli`), which holds your sign-in cache. The fork's own files in it are `sfcs-plugin-paths.json`, which the session hook writes and which points at folders that are gone after an uninstall, and `sfcs-data` if you ran `setup.js --ensure`. Delete those. `plugin-paths.json` in the same folder belongs to other Copilot Studio plugins, so leave it.
 
+```bash
+rm ~/.copilot-studio-cli/sfcs-plugin-paths.json
+```
 
-## Disclaimer
+```powershell
+Remove-Item "$env:USERPROFILE\.copilot-studio-cli\sfcs-plugin-paths.json"
+```
 
-This plugin is an experimental research project, not an officially supported Microsoft product. The Copilot Studio YAML schema may change without notice. Always review and validate generated YAML before pushing to your environment — AI-generated output may contain errors or unsupported patterns.
+If you installed from a local clone, delete the clone as well.
 
-## Contributing
+## How I test
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, building bundled scripts, and project structure.
+Every change runs on macOS, Ubuntu 24.04 and Windows 11 with PowerShell 5.1 before it goes into `main`, with Copilot Studio extension 1.9.14 on all three. Sync changes also run against a throwaway agent in my own environment, which I restore afterwards.
+
+CI runs every `tests/*.test.js` on ubuntu, macOS and Windows with Node 22 and 24, and on ubuntu with Node 20. It rebuilds the script bundles from the committed lockfile and fails if they differ from the committed ones, and it runs `claude plugin validate`. It uses no secrets.
+
+Before a branch is merged into `main`, the whole branch gets a separate review written from the point of view of an upstream Microsoft maintainer.
+
+## Relationship to upstream
+
+I merge upstream `main` in from time to time. FORK.md lists the open upstream PRs I took, with their authors, among them the describer agent (#173), the disambiguation check (#157) and skill `name` fields (#179).
+
+Two of my fixes are open upstream: [#192](https://github.com/microsoft/skills-for-copilot-studio/pull/192) makes validate report paths relative to the agent folder, and [#193](https://github.com/microsoft/skills-for-copilot-studio/pull/193) quotes the `argument-hint` values so Copilot CLI loads every skill. I'm not opening more for now.
+
+Upstream PRs I left out:
+
+- #129 (Enhanced Task Completion): `SmartTaskCompletionEnabled` isn't in the schema, on Microsoft Learn or in the 1.9.14 language server, and the PR turns on generative actions without asking.
+- #165 (Modern Agent support): it writes a folder layout the 1.9.14 language server no longer uses. I took only its `clone --cluster-category` option.
+- #136 (GCC): it is built on the old sign-in code, so the device code path would sign in against the wrong authority, and I have no GCC tenant to test on.
+- #98 (VS Code extension): a maintainer suggested it live in its own repository, and the VSIX it builds doesn't run.
+
+## Limits and untested parts
+
+- Codex on Linux and Windows: the plugin installs and lists its skills there and the unit tests pass, but I haven't done a model run on either.
+- Codex: installing from GitHub with the commands above, interactive approval of a command, and the sub-agent fallback are untested.
+- GitHub Copilot CLI hasn't been tested since the Codex change.
+- Government clouds (cluster categories 6 to 8) are not supported. Sign-in fails even with `--environment-url` and `--agent-mgmt-url`.
+- `clone --cluster-category` was tested live with 4 and 5. Categories 0 to 3 are unit tested only, because I have no test or preprod tenant.
+- The check after push was only tried on small agents that hold topics and nothing else.
+
+This is an experimental project, and Microsoft doesn't support it. The Copilot Studio YAML schema can change without notice. Review generated YAML and run validate before you push, because the model can write errors or unsupported patterns.
+
+## License and security
+
+MIT, see [LICENSE](LICENSE). Report security problems in code this fork changed privately through this repository's security advisories, and problems that also exist upstream through [Microsoft's process](https://aka.ms/SECURITY.md). [SECURITY.md](SECURITY.md) has the details. [CONTRIBUTING.md](CONTRIBUTING.md) covers local development and building the bundles.
