@@ -69,7 +69,7 @@ beginDialog:
 
 The single change from a naive implementation: `StartsWith(Lower(System.Activity.ChannelId), "msteams")` instead of `Lower(...) = "msteams"`. That one line is the difference between catching every Teams surface and silently breaking inside M365 Copilot in Teams.
 
-**Optional — surface the channel to the orchestrator** (in `settings.mcs.yml`):
+**Optional — surface the channel to the orchestrator** (in `agent.mcs.yml`):
 
 ```yaml
 instructions: |

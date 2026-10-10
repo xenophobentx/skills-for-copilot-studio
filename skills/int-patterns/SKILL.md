@@ -185,7 +185,7 @@ Spec rules for uploading a public REST API as a tool: response `type: object`, J
 
 ### Data Visualization in Chat → [data-visualization.md](${CLAUDE_SKILL_DIR}/../../patterns/data-visualization.md)
 
-Charts and diagrams in agent replies through QuickChart or Mermaid.ink image URLs, or tables and fact sets through Adaptive Cards. The URL options send the chart data to a third-party service.
+Tables and fact sets in agent replies through Adaptive Cards (the default), or charts and diagrams through QuickChart or Mermaid.ink image URLs on explicit request. The URL options send the chart data to a third-party service.
 
 **Read this pattern when:**
 - The user wants charts, graphs or diagrams in agent replies

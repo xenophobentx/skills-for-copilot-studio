@@ -63,7 +63,7 @@ modelDescription: 'Retrieves ECB monetary and exchange rate data via SDMX. GLOSS
 3. When one term needs several parameters, list them together: `flowRef=FM key=B.U2...`.
 4. Give format hints for dates and times: `YYYY-MM`, `YYYY`, `ISO-8601`.
 5. List fixed defaults, such as `format=jsondata`.
-6. Quote the whole value. A glossary contains `: ` (after `GLOSSARY`), and a strict YAML parser rejects an unquoted value with that sequence. The service keeps such a value as plain text, so a push can still work, and `validate` reports a `yaml-lenient` warning ("Unquoted value contains ': '") instead of an error. Other tools that read the file will fail on it, so quote it anyway. Single quotes work with the double quotes inside the glossary. Double an apostrophe inside the text (`don''t`).
+6. Quote the whole value. A glossary contains `: ` (after `GLOSSARY`), and a strict YAML parser rejects an unquoted value with that sequence. The service keeps such a value as plain text, so a push can still work, and `validate` reports a `yaml-lenient` warning (`Unquoted value contains ": "`) instead of an error. Other tools that read the file will fail on it, so quote it anyway. Single quotes work with the double quotes inside the glossary. Double an apostrophe inside the text (`don''t`).
 
 ## Keep modelDescription on one line
 
