@@ -29,7 +29,7 @@ This is a new capability under active development. The manage-agent scripts (`ma
 
 ## Phase 0: Resolve Configuration
 
-Search for `.mcs/conn.json` in the workspace and nearby directories to find existing connection details. The script auto-reads environment details from `conn.json`. If no `conn.json` is found, ask the user for the required parameters.
+Find the agent folder (the one with `.mcs/conn.json`) and pass it as `--workspace`. `validate`, `push`, `pull`, `changes` and `publish` read the tenant ID, environment ID, agent ID, environment URL and agent management URL from that `conn.json`, so `--workspace` is the only option you need for them. Do not open `conn.json` to copy the values into flags. A flag you do pass wins over the file, and the script prints a warning when it differs from the file. Only when the folder has no `conn.json` (it was copied without `.mcs`, or the agent was never cloned), ask the user for the tenant ID and environment ID and pass them as flags.
 
 ## Phase 1: Authenticate
 
@@ -101,7 +101,7 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 **Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin).
 
-All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`) and read connection details from it.
+All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`). `validate`, `push`, `pull`, `changes` and `publish` read the connection details from it, so the examples below show `--workspace` only. `clone` has no `conn.json` yet and needs the flags shown in its section. If `--workspace` points at a folder without `conn.json`, the script says so and names the flags to pass.
 
 ### Pull (download remote changes)
 
@@ -109,11 +109,7 @@ All commands auto-detect the agent directory (finds the subfolder with `.mcs/con
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
-  --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-id "<envId>" \
-  --environment-url "<envUrl>" \
-  --agent-mgmt-url "<mgmtUrl>"
+  --workspace "<path-to-agent-folder>"
 ```
 
 If the same line of a file was changed both locally and on the server, pull writes git-style conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) into that `.mcs.yml` file. The command then prints `"status":"conflict"` with a `conflicts` list (`file` and `lines`) and exits non-zero. **Do not report this as a successful pull.** Tell the user which files and lines are affected, ask which version between the markers is the right one (or propose one), remove the marker lines, run `validate`, and only then push. Pull does not resolve conflicts itself.
@@ -138,11 +134,7 @@ If the user declines, proceed with push. Do NOT block on this — it's advisory.
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js push \
-  --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-id "<envId>" \
-  --environment-url "<envUrl>" \
-  --agent-mgmt-url "<mgmtUrl>"
+  --workspace "<path-to-agent-folder>"
 ```
 
 ### Validate (check YAML before pushing)
@@ -151,11 +143,7 @@ Validates all `.mcs.yml` files in the workspace using the LSP binary's full diag
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js validate \
-  --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-id "<envId>" \
-  --environment-url "<envUrl>" \
-  --agent-mgmt-url "<mgmtUrl>"
+  --workspace "<path-to-agent-folder>"
 ```
 
 Returns JSON: `{ "status": "ok"|"error"|"incomplete", "valid": true|false, "summary": { "errors": N, "warnings": N }, "files": [...] }`
@@ -187,7 +175,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
   --url "https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>/overview"
 ```
 
-When `--url` is provided, the script extracts `environmentId` and `agentId` from the URL and resolves `environmentUrl` and `agentMgmtUrl` automatically via the BAP API. The `--url` flag also works with `push`, `pull`, `changes`, and `validate` commands.
+When `--url` is provided, the script extracts `environmentId` and `agentId` from the URL and resolves `environmentUrl` and `agentMgmtUrl` automatically via the BAP API. The `--url` flag also works with `push`, `pull`, `changes`, and `validate` commands, but a cloned workspace does not need it.
 
 `clone` also takes `--cluster-category N`. It sets the cluster category for the Island API token and for the environment lookup, and it is written to `.mcs/conn.json`, where push and pull read it later. Without the option, `clone` takes it from the `--url` host (`copilotstudio.preview.microsoft.com` is 4, `.preprod.` is 3, `.test.` is 2) and uses 5 (Prod) for everything else. Set it by hand only for a non-Prod environment that you reached without a URL. Accepted values are 0 to 8; anything else stops with an error. Other commands ignore the option and warn. Only 4 and 5 were tested. For 0 to 3 (test and preprod) the plugin picks the same BAP host as the VS Code extension, which was not tested. Categories 6 to 8 are government clouds, which this plugin does not support: it has no environment lookup and no sign-in for them, so passing `--environment-url` and `--agent-mgmt-url` gets past the lookup but sign-in still fails.
 
@@ -197,11 +185,7 @@ When `--url` is provided, the script extracts `environmentId` and `agentId` from
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js changes \
-  --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-id "<envId>" \
-  --environment-url "<envUrl>" \
-  --agent-mgmt-url "<mgmtUrl>"
+  --workspace "<path-to-agent-folder>"
 ```
 
 ### Publish (make draft agent live)
@@ -215,8 +199,6 @@ The command polls the `publishedon` field on the bot entity until the timestamp 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js publish \
   --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-url "<envUrl>" \
   [--timeout <ms>]
 ```
 

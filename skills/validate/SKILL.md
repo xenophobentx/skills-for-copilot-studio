@@ -17,11 +17,7 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
 2. **Run LSP-based validation**:
    ```bash
    node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js validate \
-     --workspace "<path-to-agent-folder>" \
-     --tenant-id "<tenantId>" \
-     --environment-id "<envId>" \
-     --environment-url "<envUrl>" \
-     --agent-mgmt-url "<mgmtUrl>"
+     --workspace "<path-to-agent-folder>"
    ```
    This validates all `.mcs.yml` files in the workspace using the LSP binary's full diagnostics: YAML structure, Power Fx expressions, schema validation, cross-file references, and environment-specific checks.
 
@@ -33,7 +29,7 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
 
    Files that still contain merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`, left by a conflicted pull) are reported with `source: "conflict-markers"`, one error per file that lists the marker lines, and are not parsed further. Resolve the markers first, then validate again.
 
-   Connection details come from `.mcs/conn.json` — read it to get tenant-id, environment-id, environment-url, and agent-mgmt-url.
+   The script reads tenant ID, environment ID and the URLs from `.mcs/conn.json` in the workspace, so `--workspace` is enough. Do not read `conn.json` to copy them into flags. Pass them only when the folder has no `conn.json`: `--tenant-id` and `--environment-id`.
 
 3. **Parse the JSON output**:
    - `status: "ok"` / `valid: true` → all files pass (may still have warnings)
