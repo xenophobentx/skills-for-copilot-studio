@@ -18633,6 +18633,96 @@ var require_doctor = __commonJS({
   }
 });
 
+// src/conn-defaults.js
+var require_conn_defaults = __commonJS({
+  "src/conn-defaults.js"(exports2, module2) {
+    var fs7 = require("fs");
+    var path3 = require("path");
+    var WORKSPACE_COMMANDS = ["validate", "push", "pull", "changes", "publish"];
+    var TENANT_OPTION = "tenantId";
+    var AGENT_OPTION = "agentId";
+    var ENVIRONMENT_ID_OPTION = "environmentId";
+    var ENVIRONMENT_BOUND = [
+      ["environmentUrl", "DataverseEndpoint"],
+      ["agentMgmtUrl", "AgentManagementEndpoint"],
+      ["environmentName", "EnvironmentDisplayName"]
+    ];
+    function str(value) {
+      return typeof value === "string" && value.trim() ? value.trim() : null;
+    }
+    function sameId(a, b) {
+      return String(a).toLowerCase() === String(b).toLowerCase();
+    }
+    function readConnJson(agentDir, fsImpl = fs7) {
+      try {
+        const text = fsImpl.readFileSync(path3.join(agentDir, ".mcs", "conn.json"), "utf8");
+        const conn = JSON.parse(text.replace(/^﻿/, ""));
+        return conn && typeof conn === "object" && !Array.isArray(conn) ? conn : null;
+      } catch {
+        return null;
+      }
+    }
+    function storedClusterCategory(conn) {
+      const value = conn && conn.AccountInfo && conn.AccountInfo.clusterCategory;
+      return Number.isInteger(value) ? value : null;
+    }
+    function applyConnDefaults(args, conn) {
+      const result = { used: [], mismatches: [], clusterCategory: storedClusterCategory(conn) };
+      if (!conn) return result;
+      const take = (option, value, from) => {
+        if (args[option] == null || args[option] === "") {
+          if (!value) return false;
+          args[option] = value;
+          result.used.push({ option, from });
+          return true;
+        }
+        return false;
+      };
+      const compare = (option, value, label) => {
+        if (value && args[option] && !sameId(args[option], value) && !result.used.some((u) => u.option === option)) {
+          result.mismatches.push(`${label} ${args[option]} differs from ${value} in .mcs/conn.json; using ${args[option]}`);
+        }
+      };
+      const tenant = str(conn.AccountInfo && conn.AccountInfo.TenantId) || str(conn.TenantId);
+      const envId = str(conn.EnvironmentId);
+      const agentId = str(conn.AgentId);
+      take(TENANT_OPTION, tenant, "AccountInfo.TenantId");
+      take(AGENT_OPTION, agentId, "AgentId");
+      take(ENVIRONMENT_ID_OPTION, envId, "EnvironmentId");
+      compare(TENANT_OPTION, tenant, "Tenant");
+      compare(AGENT_OPTION, agentId, "Agent");
+      compare(ENVIRONMENT_ID_OPTION, envId, "Environment");
+      const sameEnvironment = !args.environmentId || !envId || sameId(args.environmentId, envId);
+      if (sameEnvironment) {
+        for (const [option, field] of ENVIRONMENT_BOUND) take(option, str(conn[field]), field);
+      }
+      return result;
+    }
+    function resolveConnDefaults2(args, { findAgentDir: findAgentDir2, log: log2, warn: warn2, fsImpl = fs7 }) {
+      if (!WORKSPACE_COMMANDS.includes(args.command) || !args.workspace) return null;
+      const conn = readConnJson(findAgentDir2(args.workspace, true), fsImpl);
+      const result = applyConnDefaults(args, conn);
+      if (!conn && (!args.tenantId || !args.environmentId)) {
+        warn2(
+          `No .mcs/conn.json found under ${args.workspace}, so tenant and environment cannot be read from it. Point --workspace at a cloned agent folder, or pass --tenant-id and --environment-id.`
+        );
+      }
+      if (result.used.length > 0) {
+        log2(`From .mcs/conn.json: ${result.used.map((u) => u.option).join(", ")}`);
+      }
+      for (const m of result.mismatches) warn2(m);
+      return result;
+    }
+    module2.exports = {
+      WORKSPACE_COMMANDS,
+      readConnJson,
+      storedClusterCategory,
+      applyConnDefaults,
+      resolveConnDefaults: resolveConnDefaults2
+    };
+  }
+});
+
 // src/manage-agent.js
 var { spawn } = require("child_process");
 var { randomUUID } = require("crypto");
@@ -18658,6 +18748,7 @@ var {
   getOrAcquireIslandToken
 } = require_shared_auth();
 var doctor = require_doctor();
+var { resolveConnDefaults } = require_conn_defaults();
 function warn(msg) {
   process.stderr.write("[WARN] " + msg + "\n");
 }
@@ -19520,7 +19611,7 @@ function buildSyncRequest(args, tokens) {
   const accountInfo = {
     accountId: connAccount && connAccount.AccountId || args.accountId || tokens.copilotStudio.account?.homeAccountId || "unknown",
     accountEmail: connAccount && connAccount.AccountEmail || args.accountEmail || tokens.copilotStudio.account?.username || void 0,
-    tenantId: connAccount && connAccount.TenantId || args.tenantId,
+    tenantId: args.tenantId || connAccount && connAccount.TenantId,
     clusterCategory: connAccount && connAccount.clusterCategory
   };
   const request = {
@@ -19622,7 +19713,7 @@ async function acquireLspTokens(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
   const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
+  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
   if (clusterCategory != null) {
@@ -19893,7 +19984,7 @@ async function cmdPublish(args) {
   if (!args.workspace) die("--workspace is required");
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
-  const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
+  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
   if (!tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   const envUrl = (args.environmentUrl || conn?.DataverseEndpoint || "").replace(/\/+$/, "");
   if (!envUrl) die("--environment-url (or CPS_ENVIRONMENT_URL) is required");
@@ -19975,7 +20066,7 @@ async function cmdChanges(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
   const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
+  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
   if (clusterCategory != null) {
@@ -20151,6 +20242,7 @@ function cmdDoctor(args) {
 }
 async function main() {
   const args = parseArgs();
+  resolveConnDefaults(args, { findAgentDir, log, warn });
   try {
     switch (args.command) {
       case "auth":

@@ -53,6 +53,7 @@ const {
   getOrAcquireIslandToken,
 } = require("./shared-auth");
 const doctor = require("./doctor");
+const { resolveConnDefaults } = require("./conn-defaults");
 
 // ---------------------------------------------------------------------------
 // Logging helpers
@@ -1161,7 +1162,7 @@ function buildSyncRequest(args, tokens) {
   const accountInfo = {
     accountId: (connAccount && connAccount.AccountId) || args.accountId || tokens.copilotStudio.account?.homeAccountId || "unknown",
     accountEmail: (connAccount && connAccount.AccountEmail) || args.accountEmail || tokens.copilotStudio.account?.username || undefined,
-    tenantId: (connAccount && connAccount.TenantId) || args.tenantId,
+    tenantId: args.tenantId || (connAccount && connAccount.TenantId),
     clusterCategory: connAccount && connAccount.clusterCategory,
   };
 
@@ -1296,7 +1297,7 @@ async function acquireLspTokens(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
   const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
+  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
 
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
@@ -1645,7 +1646,7 @@ async function cmdPublish(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
 
-  const tenantId = (conn?.AccountInfo?.TenantId) || args.tenantId;
+  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
   if (!tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
 
   const envUrl = (args.environmentUrl || conn?.DataverseEndpoint || "").replace(/\/+$/, "");
@@ -1745,7 +1746,7 @@ async function cmdChanges(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
   const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = conn?.AccountInfo?.TenantId || args.tenantId;
+  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
 
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
@@ -1966,6 +1967,9 @@ function cmdDoctor(args) {
 
 async function main() {
   const args = parseArgs();
+  // validate, push, pull, changes and publish take tenant, environment, agent and
+  // URLs from the workspace's .mcs/conn.json when they were not given.
+  resolveConnDefaults(args, { findAgentDir, log, warn });
 
   try {
     switch (args.command) {
