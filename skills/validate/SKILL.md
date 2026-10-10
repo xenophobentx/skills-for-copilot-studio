@@ -10,7 +10,7 @@ allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(node *manage-agent.bun
 
 Validate Copilot Studio agent YAML files using the LanguageServerHost binary's full diagnostics — the same validation engine used by the VS Code Copilot Studio extension.
 
-**Sandbox.** `manage-agent.bundle.js validate` signs in, calls the network and writes to `~/.copilot-studio-cli`. `schema-lookup.bundle.js` is local. If your client runs commands in a sandbox (for example Codex without `--yolo`), run it outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run it directly.
+**Sandbox.** `manage-agent.bundle.js validate` signs in, calls the network and writes to `~/.copilot-studio-cli`. `schema-lookup.bundle.js` is local. Run the command and do not assume it is blocked: a sandbox can allow the network and the folders it needs. If the command fails with a concrete sandbox error (network unreachable, `EPERM`, permission denied, read-only file system), ask for only the access that is missing (the network, write access to the folder in the error, or on macOS the keychain) and run it again. If you cannot ask (Codex with `approval_policy = "never"`), say which access is missing and stop.
 
 ## Locate the plugin files
 

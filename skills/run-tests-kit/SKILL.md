@@ -15,7 +15,7 @@ agent: copilot-studio-test
 
 Run a batch test suite against a **published** Copilot Studio agent using the [Power CAT Copilot Studio Kit](https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit).
 
-**Sandbox.** The `npm install` in Phase 2 and `run-tests.js` call the network, and `run-tests.js` signs in. If your client runs commands in a sandbox (for example Codex without `--yolo`), run them outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run them directly.
+**Sandbox.** The `npm install` in Phase 2 and `run-tests.js` call the network, and `run-tests.js` signs in. Run the command and do not assume it is blocked: a sandbox can allow the network and the folders it needs. If the command fails with a concrete sandbox error (network unreachable, `EPERM`, permission denied, read-only file system), ask for only the access that is missing (the network, write access to the folder in the error, or on macOS the keychain) and run it again. If you cannot ask (Codex with `approval_policy = "never"`), say which access is missing and stop.
 
 ## Locate the plugin files
 

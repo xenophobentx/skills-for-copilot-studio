@@ -12,7 +12,7 @@ agent: copilot-studio-test
 
 **This skill has been merged into `/copilot-studio:chat-with-agent`**, which now auto-detects the agent's authentication mode and uses DirectLine automatically for no-auth and manual-auth agents.
 
-**Sandbox.** `directline-chat.bundle.js` calls the network. It does not sign in. If your client runs commands in a sandbox (for example Codex without `--yolo`), run it outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run it directly.
+**Sandbox.** `directline-chat.bundle.js` calls the network. It does not sign in. Run the command and do not assume it is blocked: a sandbox can allow the network and the folders it needs. If the command fails with a concrete sandbox error (network unreachable, `EPERM`, permission denied, read-only file system), ask for only the access that is missing (the network, write access to the folder in the error, or on macOS the keychain) and run it again. If you cannot ask (Codex with `approval_policy = "never"`), say which access is missing and stop.
 
 ## Locate the plugin files
 

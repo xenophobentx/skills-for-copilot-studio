@@ -16,7 +16,7 @@ Push and pull Copilot Studio agent content by calling the VS Code extension's La
 
 **Cloning.** There is no local `settings.mcs.yml` to check before a download. Clone into an empty folder, never into a folder that already holds an agent (check that agent as above). Right after the download, search the new folder's `settings.mcs.yml` for the same two markers. On a match it is a CLI agent: do not edit, pull, push or publish it, tell the user the path of the downloaded folder and that it is a CLI agent workspace, point to https://github.com/microsoft/copilot-studio-plugin, and leave the folder for the user to keep or delete.
 
-**Sandbox.** The `manage-agent.bundle.js` commands below sign in, call the network and write to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (for example Codex without `--yolo`), run them outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run them directly.
+**Sandbox.** The `manage-agent.bundle.js` commands below sign in, call the network and write to `~/.copilot-studio-cli`. Run the command and do not assume it is blocked: a sandbox can allow the network and the folders it needs. If the command fails with a concrete sandbox error (network unreachable, `EPERM`, permission denied, read-only file system), ask for only the access that is missing (the network, write access to the folder in the error, or on macOS the keychain) and run it again. If you cannot ask (Codex with `approval_policy = "never"`), say which access is missing and stop.
 
 ## Locate the plugin files
 
