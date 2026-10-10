@@ -6,5 +6,9 @@
     "@azure/msal-node-extensions": "^1.5.32",
     "keytar": "7.9.0",
     "vscode-jsonrpc": "^8.2.1"
+  },
+  "allowScripts": {
+    "keytar": true,
+    "@azure/msal-node-extensions": false
   }
 }

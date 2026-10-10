@@ -50,7 +50,12 @@ function install() {
   const stage = p.join(d, '.install-' + process.pid);
   fs.mkdirSync(stage);
   fs.copyFileSync(src, p.join(stage, 'package.json'));
+  // keytar fetches its native binary in an install script. npm 12 blocks install
+  // scripts unless package.json lists the package in allowScripts (the manifest
+  // does). npm 10 and 11 ignore the field or only warn about it. A user who turned
+  // install scripts off keeps that setting; fetchKeytarBinary covers keytar then.
   cp.execSync('npm install --no-audit --no-fund --fetch-retries=0', { cwd: stage, stdio: 'inherit', windowsHide: true });
+  fetchKeytarBinary(stage);
   // Load every module the way the scripts will; a package extracted without its
   // native binary (killed install, failed build) fails here, not at first use.
   const deps = Object.keys(JSON.parse(fs.readFileSync(src, 'utf8')).dependencies);
@@ -79,6 +84,38 @@ function install() {
   try {
     fs.rmSync(old, rm);
   } catch {}
+}
+
+// If npm skipped keytar's install script anyway (the user turned install scripts
+// off, or a policy the manifest does not cover), get the binary the way that
+// script would have. First `npm rebuild keytar`, which passes npm's config
+// (proxy, mirror) on to the download. If install scripts are off that does
+// nothing, so then prebuild-install runs directly; it honours HTTP_PROXY and
+// HTTPS_PROXY from the environment, but not settings that live only in .npmrc.
+// Does nothing when the binary is there.
+function fetchKeytarBinary(dir) {
+  const kt = p.join(dir, 'node_modules', 'keytar');
+  const have = () => fs.existsSync(p.join(kt, 'build', 'Release', 'keytar.node'));
+  if (!fs.existsSync(kt) || have()) return;
+  console.log('keytar has no native binary, running npm rebuild keytar');
+  try {
+    cp.execSync('npm rebuild keytar --no-audit --no-fund', { cwd: dir, stdio: 'inherit', windowsHide: true });
+  } catch (err) {
+    console.log('npm rebuild keytar failed: ' + err.message);
+  }
+  if (have()) return;
+  let bin;
+  try {
+    bin = require.resolve('prebuild-install/bin.js', { paths: [kt] });
+  } catch {
+    return console.log('prebuild-install is not installed');
+  }
+  console.log('keytar still has no native binary, running prebuild-install');
+  try {
+    cp.execFileSync(process.execPath, [bin], { cwd: kt, stdio: 'inherit', windowsHide: true });
+  } catch (err) {
+    console.log('prebuild-install failed: ' + err.message);
+  }
 }
 
 function alive(pid) {
