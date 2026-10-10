@@ -18696,7 +18696,8 @@ function parseArgs() {
     // default: 5 minutes for publish polling
     force: false,
     clusterCategory: null,
-    url: null
+    url: null,
+    out: null
   };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -18751,6 +18752,9 @@ function parseArgs() {
       case "--url":
         parsed.url = args[++i];
         break;
+      case "--out":
+        parsed.out = args[++i];
+        break;
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
         break;
@@ -18763,7 +18767,7 @@ function parseArgs() {
   }
   if (!parsed.command) {
     die(
-      "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
+      "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor, pack-copy"
     );
   }
   if (parsed.clusterCategory != null && parsed.command !== "clone") {
@@ -19949,6 +19953,59 @@ async function cmdChanges(args) {
     await client.stop();
   }
 }
+function planPackCopy(agentDir) {
+  const copy = [];
+  const skipped = [];
+  for (const entry of fs6.readdirSync(agentDir, { withFileTypes: true })) {
+    const name = entry.name;
+    if (entry.isDirectory() && name === ".mcs") copy.push(name);
+    else if (entry.isDirectory() && name === "topics") {
+      for (const t of fs6.readdirSync(path2.join(agentDir, name), { withFileTypes: true })) {
+        const rel = `${name}/${t.name}`;
+        if (t.isFile() && t.name.endsWith(".mcs.yml")) copy.push(rel);
+        else skipped.push(t.isDirectory() ? `${rel}/` : rel);
+      }
+    } else if (entry.isFile() && ["agent.mcs.yml", "settings.mcs.yml", "icon.png"].includes(name)) copy.push(name);
+    else skipped.push(entry.isDirectory() ? `${name}/` : name);
+  }
+  return { copy: copy.sort(), skipped: skipped.sort() };
+}
+function cmdPackCopy(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.out) die("--out <new folder> is required");
+  const agentDir = findAgentDir(args.workspace);
+  const out = path2.resolve(args.out);
+  if (fs6.existsSync(out) && fs6.readdirSync(out).length > 0) {
+    die(`${out} already exists and is not empty. Give --out a new folder.`);
+  }
+  const rel = path2.relative(agentDir, out);
+  if (rel === "" || !rel.startsWith("..") && !path2.isAbsolute(rel)) {
+    die("--out must be outside the agent folder.");
+  }
+  const { copy, skipped } = planPackCopy(agentDir);
+  for (const required of ["agent.mcs.yml", "settings.mcs.yml"]) {
+    if (!copy.includes(required)) die(`${required} is missing in ${agentDir}`);
+  }
+  fs6.mkdirSync(out, { recursive: true });
+  for (const item of copy) {
+    const dest = path2.join(out, item);
+    fs6.mkdirSync(path2.dirname(dest), { recursive: true });
+    fs6.cpSync(path2.join(agentDir, item), dest, { recursive: true });
+  }
+  process.stdout.write(
+    JSON.stringify(
+      {
+        status: "ok",
+        out,
+        copied: copy,
+        skipped,
+        message: skipped.length > 0 ? `Copied the ${copy.length} entries pac copilot pack accepts. Left out: ${skipped.join(", ")}. The packed solution will not contain them.` : `Copied the ${copy.length} entries pac copilot pack accepts.`
+      },
+      null,
+      2
+    ) + "\n"
+  );
+}
 var SOLUTION_NAMES = [
   "msft_AIPlatformExtensionsComponents",
   "msdyn_RelevanceSearch",
@@ -20103,6 +20160,9 @@ async function main() {
         break;
       case "doctor":
         cmdDoctor(args);
+        break;
+      case "pack-copy":
+        cmdPackCopy(args);
         break;
       default:
         die(`Unknown command: ${args.command}`);
