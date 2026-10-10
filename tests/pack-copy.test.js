@@ -143,6 +143,73 @@ function listAll(dir, base = dir) {
   assertEqual(fs.existsSync(out), false, "no output folder is created for a refused source");
 }
 
+// --out inside the agent folder: a name that only starts with two dots is inside, not a parent.
+{
+  const ws = makeWorkspace();
+  const r = run(["--workspace", ws, "--out", path.join(ws, "..backup")]);
+  assertEqual(r.status, 1, "--out named ..backup inside the agent folder is refused");
+  assertEqual(fs.existsSync(path.join(ws, "..backup")), false, "no ..backup folder is created in the agent folder");
+}
+
+// A folder next to the agent whose name starts with two dots is outside and fine.
+{
+  const ws = makeWorkspace();
+  const out = path.join(root, "..outside");
+  const r = run(["--workspace", ws, "--out", out]);
+  assertEqual(r.status, 0, "--out named ..outside next to the agent folder is accepted");
+  assertEqual(fs.existsSync(path.join(out, "agent.mcs.yml")), true, "and the files are copied there");
+}
+
+// Symlinks: tried only where the OS lets this user create them.
+function trySymlink(target, link) {
+  try {
+    fs.symlinkSync(target, link, "junction");
+    return true;
+  } catch {
+    try {
+      fs.symlinkSync(target, link);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+{
+  const ws = makeWorkspace();
+  const inner = path.join(ws, "inner");
+  fs.mkdirSync(inner);
+  const link = path.join(root, `link-${++counter}`);
+  if (trySymlink(inner, link)) {
+    const r = run(["--workspace", ws, "--out", link]);
+    assertEqual(r.status, 1, "--out that is a symlink into the agent folder is refused");
+    assertEqual(fs.readdirSync(inner), [], "nothing is written through the symlink");
+
+    const r2 = run(["--workspace", ws, "--out", path.join(link, "new")]);
+    assertEqual(r2.status, 1, "--out below a symlink into the agent folder is refused");
+    assertEqual(fs.existsSync(path.join(inner, "new")), false, "nothing is created below the symlink");
+  } else {
+    console.log("SKIP: cannot create symlinks here, symlinked --out cases not run");
+  }
+}
+
+{
+  const ws = makeWorkspace();
+  const outside = path.join(root, `real-topics-${++counter}`);
+  fs.mkdirSync(outside);
+  write(path.join(outside, "Greeting.mcs.yml"));
+  fs.rmSync(path.join(ws, "topics"), { recursive: true, force: true });
+  if (trySymlink(outside, path.join(ws, "topics"))) {
+    const out = path.join(root, `out-${++counter}`);
+    const r = run(["--workspace", ws, "--out", out]);
+    assertEqual(r.status, 1, "a symlinked topics folder is refused");
+    assertEqual(fs.existsSync(out), false, "no output folder is created for it");
+    assertEqual(/symbolic link/.test((r.json && r.json.error) || ""), true, "the error names the symbolic link");
+  } else {
+    console.log("SKIP: cannot create symlinks here, symlinked topics case not run");
+  }
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

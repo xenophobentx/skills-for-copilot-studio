@@ -19,10 +19,11 @@ function extract(name) {
   if (start === -1) throw new Error(`function ${name} not found in manage-agent.js`);
   return src.slice(start, src.indexOf("\n}\n", start) + 3);
 }
+const doctor = require("../scripts/src/doctor.js");
 const mod = new Function(
-  "fs", "path",
-  `${src.match(/^const CLI_AGENT_RE = .*;$/m)[0]}\n${extract("isCliAgentWorkspace")}\nreturn { isCliAgentWorkspace };`
-)(fs, path);
+  "fs", "path", "doctor",
+  `${extract("isCliAgentWorkspace")}\nreturn { isCliAgentWorkspace };`
+)(fs, path, doctor);
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-guard-test-"));
 const home = path.join(root, "home");
@@ -80,17 +81,40 @@ for (const cmd of ["pull", "push"]) {
   assertEqual(r.status, 1, `${cmd} on a CLI agent exits 1`);
   assertEqual(r.json && r.json.status, "error", `${cmd} on a CLI agent prints status error`);
   assertEqual(/CLI agent workspace/.test((r.json && r.json.error) || "") && /copilot-studio-plugin/.test((r.json && r.json.error) || ""), true, `${cmd} names the CLI agent and the other plugin`);
+  assertEqual(/allow-cli-agent/.test((r.json && r.json.error) || ""), false, `${cmd} does not offer the override flag in its message`);
+  assertEqual(/reported to cut the tail/.test((r.json && r.json.error) || ""), true, `${cmd} says the loss was reported, not that it happens`);
 }
+
+// The refusal comes first, before the checks for tenant and environment.
+for (const cmd of ["pull", "push"]) {
+  const res = spawnSync(process.execPath, [bundle, cmd, "--workspace", makeWorkspace(CLI_TEMPLATE)], {
+    encoding: "utf8",
+    timeout: 20000,
+    env: { PATH: path.dirname(process.execPath), HOME: home, USERPROFILE: home, SystemRoot: process.env.SystemRoot },
+  });
+  let json = null;
+  try {
+    json = JSON.parse(res.stdout);
+  } catch {}
+  assertEqual(/CLI agent workspace/.test((json && json.error) || ""), true, `${cmd} refuses before it asks for --tenant-id`);
+}
+
+// A long, classic settings.mcs.yml with the words in a comment or a value is not refused.
+assertEqual(
+  mod.isCliAgentWorkspace(makeWorkspace("displayName: Cli\nconfiguration:\n  instructions: talk about the cliagent template\n# template: cliagent\ntemplate: default-2.1.0\n")),
+  false,
+  "words in a value or after a hash do not count"
+);
 
 // With the override the guard steps aside. Run in-process with a stub for die(), so
 // nothing signs in.
 {
   const guard = new Function(
-    "fs", "path", "die", "findAgentDir",
-    `${src.match(/^const CLI_AGENT_RE = .*;$/m)[0]}\n${extract("isCliAgentWorkspace")}\n${extract("requireClassicWorkspace")}\nreturn requireClassicWorkspace;`
+    "fs", "path", "doctor", "die", "findAgentDir",
+    `${extract("isCliAgentWorkspace")}\n${extract("requireClassicWorkspace")}\nreturn requireClassicWorkspace;`
   );
   const messages = [];
-  const require_ = guard(fs, path, (m) => messages.push(m), (w) => w);
+  const require_ = guard(fs, path, doctor, (m) => messages.push(m), (w) => w);
   const cli = makeWorkspace(CLI_TEMPLATE);
   require_({ workspace: cli, allowCliAgent: true }, "Pull");
   assertEqual(messages.length, 0, "--allow-cli-agent skips the refusal");

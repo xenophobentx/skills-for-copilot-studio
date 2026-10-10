@@ -2,6 +2,10 @@
  * Tests that manage-agent recognizes the LanguageServerHost fault from
  * microsoft/skills-for-copilot-studio#178 and turns it into a hint.
  *
+ * The log line here is synthetic. The real crash was not reproduced (extension
+ * 1.9.14), so whether LanguageServerHost reports it through window/logMessage,
+ * as in the issue, is taken from the issue text.
+ *
  * Run: node tests/lsp-fault-hint.test.js
  */
 
@@ -37,7 +41,8 @@ const crash =
   "[LspLogger] [null]\nSystem.InvalidOperationException: Can't read file outside of client workspace\r\n   at Microsoft.PowerPlatformLS.Impl.Core.IO.ClientWorkspaceFileProvider.GetFileProvider(DirectoryPath directoryPath)";
 
 check(/#178/.test(lspFaultHint(crash) || ""), "the crash message gives a hint that names the issue");
-check(/Update the extension/.test(lspFaultHint(crash) || ""), "the hint says what to do");
+check(/real case/.test(lspFaultHint(crash) || "") && /update the extension/.test(lspFaultHint(crash) || ""), "the hint says what to do");
+check(!/not in your YAML/i.test(lspFaultHint(crash) || ""), "the hint does not claim the YAML is fine");
 check(lspFaultHint("[LspLogger] Document file:///x/a.mcs.yml, len=142, tracked in current workspace.") === null, "a normal log line gives no hint");
 check(lspFaultHint(undefined) === null, "a missing message gives no hint");
 check(lspFaultHint(42) === null, "a non-string message gives no hint");

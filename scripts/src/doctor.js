@@ -361,6 +361,12 @@ function checkPac(ctx, deps, add) {
   }
 }
 
+// Same pattern as the Grep check in skills/int-project-context. manage-agent
+// uses it too, to refuse pull and push.
+function isCliAgentSettings(text) {
+  return /^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im.test(text);
+}
+
 function looksLikeWorkspace(ctx, dir) {
   return ["agent.mcs.yml", "settings.mcs.yml", ".mcs"].some((n) => exists(ctx, path.join(dir, n)));
 }
@@ -420,7 +426,7 @@ function checkWorkspace(ctx, deps, add) {
   try {
     settings = ctx.fs.readFileSync(path.join(dir, "settings.mcs.yml"), "utf8");
   } catch {}
-  if (/^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im.test(settings)) {
+  if (isCliAgentSettings(settings)) {
     add("workspace-type", "WARN", "CLI agent workspace", "Do not pull, push or publish here, use microsoft/copilot-studio-plugin.");
   } else {
     add("workspace-type", "OK", "classic agent workspace");
@@ -512,4 +518,4 @@ function makeContext(args) {
   };
 }
 
-module.exports = { runDoctor, formatLine, makeContext, pluginData };
+module.exports = { runDoctor, formatLine, makeContext, pluginData, isCliAgentSettings };

@@ -386,10 +386,10 @@ function findBinary() {
 function lspFaultHint(message) {
   if (typeof message === "string" && /Can't read file outside of client workspace/i.test(message)) {
     return (
-      "LanguageServerHost threw \"Can't read file outside of client workspace\" " +
-      "(microsoft/skills-for-copilot-studio#178, seen with extension 1.5.57 on Windows and a workspace with many child agents). " +
-      "This is a fault inside the Copilot Studio VS Code extension, not in your YAML. " +
-      "Update the extension and try again. If it still happens, use the extension itself for this workspace."
+      "LanguageServerHost could not resolve a file inside the workspace (\"Can't read file outside of client workspace\", " +
+      "microsoft/skills-for-copilot-studio#178, seen with extension 1.5.57 on Windows on a workspace with many child agents). " +
+      "Check that --workspace is spelled with the real case of the folder, update the extension, " +
+      "and if it still happens, do this step in the extension."
     );
   }
   return null;
@@ -1224,14 +1224,12 @@ async function acquireLspTokens(args) {
 }
 
 // CLI agents (template cliagent-*, authoringModel CliCopilot) are not classic
-// agents. This plugin's sync is not made for them, and a user reported a pull
-// that cut the tail off settings.mcs.yml in one (upstream issue #180, not
-// reproduced here). Same pattern as the Grep check in int-project-context.
-const CLI_AGENT_RE = /^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im;
-
+// agents. This plugin's sync is not made for them, and a pull into one was
+// reported to cut the tail off settings.mcs.yml (upstream issue #180, not
+// reproduced here). The detection is the one doctor uses.
 function isCliAgentWorkspace(agentDir) {
   try {
-    return CLI_AGENT_RE.test(fs.readFileSync(path.join(agentDir, "settings.mcs.yml"), "utf8"));
+    return doctor.isCliAgentSettings(fs.readFileSync(path.join(agentDir, "settings.mcs.yml"), "utf8"));
   } catch {
     return false;
   }
@@ -1243,16 +1241,16 @@ function requireClassicWorkspace(args, what) {
     die(
       `${what} refused: this is a CLI agent workspace (template cliagent or authoringModel CliCopilot in settings.mcs.yml). ` +
         "This plugin syncs classic agents. Use microsoft/copilot-studio-plugin for CLI agents. " +
-        "Syncing one here can lose parts of settings.mcs.yml (upstream issue #180). Pass --allow-cli-agent to run anyway."
+        "A pull into one was reported to cut the tail off settings.mcs.yml (upstream issue #180)."
     );
   }
 }
 
 async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
+  requireClassicWorkspace(args, method === "powerplatformls/syncPush" ? "Push" : "Pull");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
-  requireClassicWorkspace(args, method === "powerplatformls/syncPush" ? "Push" : "Pull");
   requireBotDefinition(args);
 
   // Never upload unresolved merge markers. Checked before any network call and
@@ -1741,9 +1739,11 @@ async function cmdChanges(args) {
 function planPackCopy(agentDir) {
   const copy = [];
   const skipped = [];
+  const symlinks = [];
   for (const entry of fs.readdirSync(agentDir, { withFileTypes: true })) {
     const name = entry.name;
-    if (entry.isDirectory() && name === ".mcs") copy.push(name);
+    if (entry.isSymbolicLink() && name === "topics") symlinks.push(name);
+    else if (entry.isDirectory() && name === ".mcs") copy.push(name);
     else if (entry.isDirectory() && name === "topics") {
       for (const t of fs.readdirSync(path.join(agentDir, name), { withFileTypes: true })) {
         const rel = `${name}/${t.name}`;
@@ -1753,22 +1753,55 @@ function planPackCopy(agentDir) {
     } else if (entry.isFile() && ["agent.mcs.yml", "settings.mcs.yml", "icon.png"].includes(name)) copy.push(name);
     else skipped.push(entry.isDirectory() ? `${name}/` : name);
   }
-  return { copy: copy.sort(), skipped: skipped.sort() };
+  return { copy: copy.sort(), skipped: skipped.sort(), symlinks };
+}
+
+// The real path of p, or of its nearest existing parent plus the rest, so a
+// symlink in --out or in a parent of it cannot hide where the copy lands.
+function realPathOfNewPath(p) {
+  let cur = path.resolve(p);
+  const rest = [];
+  for (;;) {
+    try {
+      fs.lstatSync(cur);
+      break;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      rest.unshift(path.basename(cur));
+      cur = parent;
+    }
+  }
+  return path.join(fs.realpathSync.native(cur), ...rest);
+}
+
+function isInsideOrSame(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel));
 }
 
 function cmdPackCopy(args) {
   if (!args.workspace) die("--workspace is required");
   if (!args.out) die("--out <new folder> is required");
   const agentDir = findAgentDir(args.workspace);
-  const out = path.resolve(args.out);
+  let realAgent;
+  let out;
+  try {
+    realAgent = fs.realpathSync.native(agentDir);
+    out = realPathOfNewPath(args.out);
+  } catch (e) {
+    die(`Cannot resolve the folders: ${e.message}`);
+  }
+  if (isInsideOrSame(realAgent, out)) {
+    die("--out must be outside the agent folder (the real path is compared, a symlink into it counts as inside).");
+  }
   if (fs.existsSync(out) && fs.readdirSync(out).length > 0) {
     die(`${out} already exists and is not empty. Give --out a new folder.`);
   }
-  const rel = path.relative(agentDir, out);
-  if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
-    die("--out must be outside the agent folder.");
+  const { copy, skipped, symlinks } = planPackCopy(agentDir);
+  if (symlinks.length > 0) {
+    die(`${symlinks.join(", ")} in ${agentDir} is a symbolic link. pack-copy does not follow it, and a pack without topics would be empty. Use the real folder.`);
   }
-  const { copy, skipped } = planPackCopy(agentDir);
   for (const required of ["agent.mcs.yml", "settings.mcs.yml"]) {
     if (!copy.includes(required)) die(`${required} is missing in ${agentDir}`);
   }
