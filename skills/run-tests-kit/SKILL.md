@@ -15,7 +15,7 @@ agent: copilot-studio-test
 
 Run a batch test suite against a **published** Copilot Studio agent using the [Power CAT Copilot Studio Kit](https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit).
 
-**Sandbox.** The commands below sign in, call the network and write to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (Codex with the default `workspace-write`), run them outside it, with the user's permission. If there is a sandbox and the client cannot ask (Codex with `approval_policy = "never"`), say which commands need network access and stop. With full access (`--yolo`), run them directly.
+**Sandbox.** The `npm install` in Phase 2 and `run-tests.js` call the network, and `run-tests.js` signs in. If your client runs commands in a sandbox (for example Codex without `--yolo`), run them outside the sandbox, with the user's permission. If you cannot ask (Codex with `approval_policy = "never"`), say what needs network access and stop. With full access (`--yolo`), run them directly.
 
 ## Locate the plugin files
 
