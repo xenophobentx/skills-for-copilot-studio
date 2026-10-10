@@ -291,13 +291,7 @@ These variables are **exclusively available** inside topics with an `OnKnowledge
 - kind: SetVariable
   id: setResults_abc123
   variable: System.SearchResults
-  value: =Table(
-    {
-      Content: "The retrieved text content of the result",
-      Title: "Document or page title",
-      ContentLocation: "https://link-to-the-source-document"
-    }
-  )
+  value: "=Table({ Content: \"The retrieved text content of the result\", Title: \"Document or page title\", ContentLocation: \"https://link-to-the-source-document\" })"
 ```
 
 ```yaml
