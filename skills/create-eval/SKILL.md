@@ -11,6 +11,8 @@ context: fork
 
 Guide the user through creating eval test cases for a Copilot Studio plugin scenario. Evals test end-to-end scenarios with natural prompts — the request routes through sub-agents (e.g., Author agent) which invoke skills internally.
 
+`$ARGUMENTS` is the text the user gave with this skill. If your client does not fill it in, use the user's request instead.
+
 ## How the eval system works
 
 The eval harness (`evals/evaluate.py`) works by:
