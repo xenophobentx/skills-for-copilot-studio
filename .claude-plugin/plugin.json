@@ -1,6 +1,6 @@
 {
   "name": "copilot-studio",
-  "version": "1.0.11-xeno.1",
+  "version": "1.0.11-xeno.2",
   "description": "Microsoft Copilot Studio YAML authoring toolkit. Create, edit, validate, and test Copilot Studio agents using YAML files.",
   "author": {
     "name": "xenophobentx, based on the Microsoft Copilot Studio CAT Team plugin"
