@@ -542,7 +542,7 @@ test("withPersistenceLock: a win32 EBUSY from openSync is treated as contention,
   const realOpenSync = fs.openSync;
   let calls = 0;
   fs.openSync = (p, flags, mode) => {
-    if (p === lockPath) {
+    if (p === lockPath && flags === "wx") {
       calls++;
       if (calls === 1) {
         throw Object.assign(new Error("resource busy or locked"), { code: "EBUSY" });
@@ -634,7 +634,7 @@ test("withPersistenceLock: a win32 EACCES on open is contention while the lock f
   const realOpenSync = fs.openSync;
   let attempts = 0;
   fs.openSync = (p, flags, mode) => {
-    if (p === lockPath) {
+    if (p === lockPath && flags === "wx") {
       attempts++;
       if (attempts <= 2) {
         throw Object.assign(new Error("access is denied"), { code: "EACCES" });
@@ -666,7 +666,7 @@ test("withPersistenceLock: a win32 EACCES on open with no lock file present is n
   const lockPath = path.join(dir, ".persistence.lock"); // never created
   const realOpenSync = fs.openSync;
   fs.openSync = (p, flags, mode) => {
-    if (p === lockPath) {
+    if (p === lockPath && flags === "wx") {
       throw Object.assign(new Error("access is denied"), { code: "EACCES" });
     }
     return realOpenSync(p, flags, mode);
@@ -699,7 +699,7 @@ test("withPersistenceLock: a win32 EACCES on open with a stat that also fails EP
   const realStatSync = fs.statSync;
   let opens = 0;
   fs.openSync = (p, flags, mode) => {
-    if (p === lockPath) {
+    if (p === lockPath && flags === "wx") {
       opens++;
       throw Object.assign(new Error("access is denied"), { code: "EACCES" });
     }
