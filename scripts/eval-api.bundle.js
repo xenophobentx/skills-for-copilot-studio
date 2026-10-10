@@ -15112,6 +15112,41 @@ var require_shared_auth = __commonJS({
         `Invalid --cluster-category ${value == null ? "(missing value)" : JSON.stringify(String(value))}. Use one of ${known}. 5 is Prod and the default, 4 preview, 3 preprod, 2 test.`
       );
     }
+    var BAP_HOST_BY_CLUSTER = {
+      0: "test.api.bap.microsoft.com",
+      1: "test.api.bap.microsoft.com",
+      2: "test.api.bap.microsoft.com",
+      3: "preprod.api.bap.microsoft.com",
+      4: "api.bap.microsoft.com",
+      5: "api.bap.microsoft.com"
+    };
+    function getBapHost(clusterCategory) {
+      const host = BAP_HOST_BY_CLUSTER[clusterCategory];
+      if (!host) {
+        throw new Error(
+          `The environment lookup works for cluster categories 0 to 5 only, not ${clusterCategory}. Pass --environment-url and --agent-mgmt-url so no lookup is needed.`
+        );
+      }
+      return host;
+    }
+    function resolveClusterCategory({ option, stored, url } = {}) {
+      const urlCategory = url ? clusterCategoryFromUrl(url) : null;
+      let category, source;
+      if (option != null) {
+        category = option;
+        source = "option";
+      } else if (stored != null) {
+        category = stored;
+        source = "stored";
+      } else if (urlCategory != null) {
+        category = urlCategory;
+        source = "url";
+      } else {
+        category = DEFAULT_CLUSTER_CATEGORY;
+        source = "default";
+      }
+      return { category, source, urlCategory, conflict: urlCategory != null && urlCategory !== category };
+    }
     function clusterCategoryFromUrl(url) {
       let host;
       try {
@@ -15327,6 +15362,8 @@ var require_shared_auth = __commonJS({
       COPILOT_STUDIO_HOST_RE,
       parseClusterCategory,
       clusterCategoryFromUrl,
+      getBapHost,
+      resolveClusterCategory,
       createMsalApp,
       buildTokenInfo,
       acquireTokenDeviceCode,

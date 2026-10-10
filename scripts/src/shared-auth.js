@@ -71,6 +71,56 @@ function parseClusterCategory(value) {
   );
 }
 
+// BAP host that knows the environments of a cluster category, as the VS Code
+// extension 1.9.14 picks it (test and preprod have their own hosts). The token
+// scope is the same for all of them. Categories 6 to 8 are government clouds;
+// their hosts also need another sign-in authority, which this plugin does not have.
+const BAP_HOST_BY_CLUSTER = {
+  0: "test.api.bap.microsoft.com",
+  1: "test.api.bap.microsoft.com",
+  2: "test.api.bap.microsoft.com",
+  3: "preprod.api.bap.microsoft.com",
+  4: "api.bap.microsoft.com",
+  5: "api.bap.microsoft.com",
+};
+
+function getBapHost(clusterCategory) {
+  const host = BAP_HOST_BY_CLUSTER[clusterCategory];
+  if (!host) {
+    throw new Error(
+      `The environment lookup works for cluster categories 0 to 5 only, not ${clusterCategory}. ` +
+        "Pass --environment-url and --agent-mgmt-url so no lookup is needed."
+    );
+  }
+  return host;
+}
+
+/**
+ * Pick the cluster category. Order: the --cluster-category option, then the value
+ * stored in .mcs/conn.json, then the --url host, then Prod.
+ * Returns { category, source, urlCategory, conflict }; source is "option", "stored",
+ * "url" or "default", and conflict is true when the URL host implies another
+ * category than the one chosen.
+ */
+function resolveClusterCategory({ option, stored, url } = {}) {
+  const urlCategory = url ? clusterCategoryFromUrl(url) : null;
+  let category, source;
+  if (option != null) {
+    category = option;
+    source = "option";
+  } else if (stored != null) {
+    category = stored;
+    source = "stored";
+  } else if (urlCategory != null) {
+    category = urlCategory;
+    source = "url";
+  } else {
+    category = DEFAULT_CLUSTER_CATEGORY;
+    source = "default";
+  }
+  return { category, source, urlCategory, conflict: urlCategory != null && urlCategory !== category };
+}
+
 /**
  * Cluster category implied by a Copilot Studio web URL, or null when the URL is
  * not one (no URL, not parseable, other host).
@@ -364,6 +414,8 @@ module.exports = {
   COPILOT_STUDIO_HOST_RE,
   parseClusterCategory,
   clusterCategoryFromUrl,
+  getBapHost,
+  resolveClusterCategory,
   createMsalApp,
   buildTokenInfo,
   acquireTokenDeviceCode,
