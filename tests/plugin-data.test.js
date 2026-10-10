@@ -5,6 +5,8 @@
  * ~/.copilot-studio-cli/plugin-paths.json too, so this plugin must prefer its own
  * names and accept the shared ones only when the folder holds its own install.
  *
+ * Also covers `hooks/setup.js --ensure` (setup without a hook), with a fake npm.
+ *
  * Run: node tests/plugin-data.test.js
  */
 
@@ -136,6 +138,125 @@ check("setup.js works with COPILOT_PLUGIN_DATA and no env file", res2.status ===
 const sHome3 = dir("setup-home3");
 const res3 = setup({}, sHome3);
 check("setup.js without a data folder does nothing", res3.status === 0 && !fs.existsSync(path.join(sHome3, ".copilot-studio-cli")));
+
+// ---- the stable folder (~/.copilot-studio-cli/sfcs-data) and `setup.js --ensure`
+// It comes after SFCS_PLUGIN_DATA and sfcs-plugin-paths.json (what a hook sets up) and before
+// the shared names, which another plugin can fill. It exists only after --ensure ran.
+const stableOf = (h) => path.join(h, ".copilot-studio-cli", "sfcs-data");
+
+// fake npm: creates the three native modules, so --ensure can run offline
+const fake = dir("fake-bin");
+fs.writeFileSync(path.join(fake, "npm-fake.js"), `
+const fs = require("fs"), path = require("path");
+for (const n of ["keytar", "@azure/msal-node-extensions", "vscode-jsonrpc"]) {
+  const d = path.join("node_modules", n);
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, "index.js"), "module.exports = {};");
+}
+if (process.env.FAKE_NPM_LOG) fs.appendFileSync(process.env.FAKE_NPM_LOG, "run\\n");
+`);
+fs.writeFileSync(path.join(fake, "npm"), `#!/bin/sh\nexec node "${path.join(fake, "npm-fake.js")}" "$@"\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(fake, "npm.cmd"), `@node "${path.join(fake, "npm-fake.js")}" %*\r\n`);
+
+function ensure(env, h) {
+  const clean = { PATH: fake + path.delimiter + process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: h, USERPROFILE: h, SFCS_ENSURE_TIMEOUT_MS: "60000", ...env };
+  return cp.spawnSync(process.execPath, [SETUP, "--ensure"], { env: clean, encoding: "utf8" });
+}
+function complete(d) {
+  fs.mkdirSync(path.join(d, "node_modules"), { recursive: true });
+  fs.copyFileSync(path.join(SCRIPTS, "native-deps.json"), path.join(d, "native-deps.json"));
+}
+
+const eHome = dir("ensure-home");
+const eLog = path.join(root, "npm-runs.log");
+const r1 = ensure({ FAKE_NPM_LOG: eLog }, eHome);
+check("--ensure with nothing known installs into the stable folder", r1.status === 0 &&
+  fs.existsSync(path.join(stableOf(eHome), "node_modules", "keytar")) &&
+  fs.readFileSync(path.join(stableOf(eHome), "native-deps.json"), "utf8") === fs.readFileSync(path.join(SCRIPTS, "native-deps.json"), "utf8"), r1.stderr + r1.stdout);
+check("--ensure says where the modules are", r1.stdout.includes(stableOf(eHome)), r1.stdout);
+check("--ensure writes no paths file", !fs.existsSync(path.join(eHome, ".copilot-studio-cli", "sfcs-plugin-paths.json")) &&
+  !fs.existsSync(path.join(eHome, ".copilot-studio-cli", "plugin-paths.json")));
+check("after --ensure the banner finds the stable folder", (() => {
+  const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: eHome, USERPROFILE: eHome };
+  const r = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8" });
+  return r.stdout.trim().split(path.delimiter)[0] === nm(stableOf(eHome));
+})());
+const r2 = ensure({ FAKE_NPM_LOG: eLog }, eHome);
+check("--ensure again does not install again", r2.status === 0 && fs.readFileSync(eLog, "utf8").trim().split("\n").length === 1, r2.stderr);
+
+// Another plugin's folder, named by the shared names (CLAUDE_PLUGIN_DATA, plugin-paths.json),
+// can hold a marker with the same file name. --ensure must never install into it: a shell
+// started from a Claude Code session has CLAUDE_PLUGIN_DATA set to the folder of whatever
+// plugin that session ran last.
+const eHome2 = dir("ensure-home2");
+fs.mkdirSync(path.join(eHome2, ".copilot-studio-cli"));
+const other = dir("other-plugin-data", ["native-deps.json"]);
+fs.mkdirSync(path.join(other, "node_modules", "theirs"), { recursive: true });
+const snapshot = (d) => fs.readdirSync(d, { recursive: true }).sort().join("|") + fs.readFileSync(path.join(d, "native-deps.json"), "utf8");
+const before = snapshot(other);
+const shared = JSON.stringify({ pluginData: other, pluginRoot: "/other/root" });
+fs.writeFileSync(path.join(eHome2, ".copilot-studio-cli", "plugin-paths.json"), shared);
+const r3 = ensure({ CLAUDE_PLUGIN_DATA: other, COPILOT_PLUGIN_DATA: other, PLUGIN_DATA: other }, eHome2);
+check("--ensure installs into the stable folder, not into another plugin's folder", r3.status === 0 &&
+  r3.stdout.includes(stableOf(eHome2)) && fs.existsSync(path.join(stableOf(eHome2), "node_modules", "keytar")), r3.stderr + r3.stdout);
+check("--ensure leaves another plugin's folder untouched", snapshot(other) === before);
+check("--ensure leaves the shared plugin-paths.json alone", fs.readFileSync(path.join(eHome2, ".copilot-studio-cli", "plugin-paths.json"), "utf8") === shared);
+check("after --ensure the banner prefers the stable folder to that shared folder", (() => {
+  const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: eHome2, USERPROFILE: eHome2, CLAUDE_PLUGIN_DATA: other };
+  const r = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8" });
+  return r.stdout.trim().split(path.delimiter)[0] === nm(stableOf(eHome2));
+})());
+
+// a failing install: exit 1 and a message, the folder is not marked as done
+const eHome3 = dir("ensure-home3");
+const failBin = dir("fail-bin");
+fs.writeFileSync(path.join(failBin, "npm"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+fs.writeFileSync(path.join(failBin, "npm.cmd"), "@exit /b 1\r\n");
+const r4 = cp.spawnSync(process.execPath, [SETUP, "--ensure"], {
+  env: { PATH: failBin + path.delimiter + process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: eHome3, USERPROFILE: eHome3, SFCS_ENSURE_TIMEOUT_MS: "20000" },
+  encoding: "utf8",
+});
+check("--ensure with a failing npm exits 1 and names the log", r4.status === 1 && r4.stderr.includes("install.log") &&
+  !fs.existsSync(path.join(stableOf(eHome3), "native-deps.json")), r4.stderr);
+
+// After --ensure, the banner and doctor pick the folder it reported, whatever else is set.
+{
+  const { pluginData } = require("../scripts/src/doctor.js");
+  const fsCtx = (h, env) => ({ fs, env, home: h, scriptPath: path.join(SCRIPTS, "manage-agent.bundle.js") });
+  const mk = (n) => { const d = dir(n); complete(d); return d; };
+  const a = mk("agree-a"), b = mk("agree-b");
+  const foreignD = dir("agree-foreign", ["package.json"]);
+  // [label, env, files in ~/.copilot-studio-cli, stable folder already complete, expected folder or "stable"]
+  const cases = [
+    ["nothing known", {}, {}, false, "stable"],
+    ["SFCS env", { SFCS_PLUGIN_DATA: a }, { "plugin-paths.json": b }, false, a],
+    ["sfcs file", {}, { "sfcs-plugin-paths.json": a }, false, a],
+    ["CLAUDE_PLUGIN_DATA with a marker is not used for the install", { CLAUDE_PLUGIN_DATA: a }, {}, false, "stable"],
+    ["old shared file with a marker is not used for the install", {}, { "plugin-paths.json": b }, false, "stable"],
+    ["foreign shared names", { CLAUDE_PLUGIN_DATA: foreignD }, { "plugin-paths.json": foreignD }, false, "stable"],
+    ["stable folder complete", {}, {}, true, "stable"],
+    ["stable folder beats the shared names", { CLAUDE_PLUGIN_DATA: a }, { "plugin-paths.json": b }, true, "stable"],
+    ["sfcs file beats the stable folder", {}, { "sfcs-plugin-paths.json": a }, true, a],
+  ];
+  for (const [label, env, files, withStableDir, want] of cases) {
+    const h = dir("agree-home-" + label.replace(/\W+/g, "-"));
+    fs.mkdirSync(path.join(h, ".copilot-studio-cli"), { recursive: true });
+    for (const [f, data] of Object.entries(files)) fs.writeFileSync(path.join(h, ".copilot-studio-cli", f), JSON.stringify({ pluginData: data }));
+    if (withStableDir) complete(stableOf(h));
+    const res = ensure(env, h);
+    const m = /ready in (.*?)\r?\n/.exec(res.stdout);
+    const reported = m && m[1];
+    const expected = want === "stable" ? stableOf(h) : want;
+    const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: h, USERPROFILE: h, ...env };
+    const probe = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8" });
+    const first = probe.stdout.trim().split(path.delimiter)[0];
+    const fromBanner = first ? path.dirname(first) : null;
+    const fromDoctor = (pluginData(fsCtx(h, env)) || {}).dir || null;
+    check(`--ensure, the banner and doctor agree: ${label}`,
+      reported === expected && fromBanner === expected && fromDoctor === expected,
+      `expected=${expected} ensure=${reported} banner=${fromBanner} doctor=${fromDoctor} ${res.stderr}`);
+  }
+}
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);

@@ -338,9 +338,18 @@ try {
       ["old file of another plugin", {}, { "plugin-paths.json": foreign }],
       ["old file, folder gone", {}, { "plugin-paths.json": gone }],
       ["pluginData not a string", {}, { "sfcs-plugin-paths.json": 5, "plugin-paths.json": { a: 1 } }],
+      // the stable per-user folder that hooks/setup.js --ensure uses without a hook
+      ["stable folder with marker", {}, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder without marker", {}, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "node_modules", "x"), "")],
+      ["stable folder loses to the sfcs file", {}, { "sfcs-plugin-paths.json": own }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder beats CLAUDE_PLUGIN_DATA", { CLAUDE_PLUGIN_DATA: own }, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder beats the old file", {}, { "plugin-paths.json": own }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder beats a foreign marker folder", { CLAUDE_PLUGIN_DATA: own2 }, { "plugin-paths.json": own2 }, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}")],
+      ["stable folder without marker falls through to CLAUDE_PLUGIN_DATA", { CLAUDE_PLUGIN_DATA: own }, {}, (home) => writeFile(path.join(home, ".copilot-studio-cli", "sfcs-data", "node_modules", "x"), "")],
     ];
-    for (const [label, env, files] of cases) {
+    for (const [label, env, files, prepare] of cases) {
       const home = tmp("home");
+      if (prepare) prepare(home);
       for (const [n, v] of Object.entries(files)) writeFile(path.join(home, ".copilot-studio-cli", n), JSON.stringify({ pluginData: v }));
       const probe = spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], {
         env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, ...env },
@@ -350,6 +359,19 @@ try {
       const d = pluginData(makeCtx({ home, env }));
       assertEqual(d ? path.join(d.dir, "node_modules") : "", probe.status === 0 ? first : "banner failed: " + probe.stderr, `doctor and the banner agree: ${label}`);
     }
+  }
+
+  // ---- the stable folder is reported, and the missing-install hints name the --ensure command
+  {
+    const ctx = makeCtx();
+    writeFile(path.join(ctx.home, ".copilot-studio-cli", "sfcs-data", "native-deps.json"), "{}");
+    const pd = require("../scripts/src/doctor.js").pluginData(ctx);
+    assertEqual([pd.dir, pd.source], [path.join(ctx.home, ".copilot-studio-cli", "sfcs-data"), "stable folder"], "doctor finds the stable folder");
+    const line = run(ctx, null, "plugin-paths")[0];
+    assertEqual([line.level, /stable folder/.test(line.message)], ["OK", true], "no sfcs-plugin-paths.json is fine when the stable folder is used");
+    const bare = makeCtx();
+    const hint = run(bare, null, "plugin-paths")[0].hint;
+    assertEqual(/hooks[\\/]setup\.js" --ensure/.test(hint), true, "the hint without a hook names setup.js --ensure");
   }
 
   // ---- Secret Service (Linux only)

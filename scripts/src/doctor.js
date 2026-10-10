@@ -58,6 +58,16 @@ function cliDir(ctx) {
   return path.join(ctx.home, ".copilot-studio-cli");
 }
 
+// Per user: it sits under the home folder. Same name as in the banner and hooks/setup.js.
+function fallbackDir(ctx) {
+  return path.join(cliDir(ctx), "sfcs-data");
+}
+
+// The command that sets up the native dependencies without a session hook.
+function ensureCommand(ctx) {
+  return `node "${path.join(ownRoot(ctx), "hooks", "setup.js")}" --ensure`;
+}
+
 // Path file entry: pluginData as a string, only if the folder exists (same as the bundle banner).
 function pathFileData(ctx, name) {
   const r = readJson(ctx, path.join(cliDir(ctx), name));
@@ -70,14 +80,19 @@ function ours(ctx, dir) {
   return typeof dir === "string" && dir !== "" && exists(ctx, path.join(dir, "native-deps.json"));
 }
 
-// Same lookup, in the same order, as the banner in scripts/package.json. The shared
-// CLAUDE_PLUGIN_DATA and plugin-paths.json belong to whichever plugin wrote last, so they
-// count only when the folder holds this plugin's marker. tests/doctor.test.js runs the
-// banner and this function on the same fixtures.
+// Same lookup, in the same order, as the banner in scripts/package.json and
+// hooks/setup.js. The shared CLAUDE_PLUGIN_DATA and plugin-paths.json belong to whichever
+// plugin wrote last, so they count only when the folder holds this plugin's marker.
+// tests/doctor.test.js runs the banner and this function on the same fixtures.
 function pluginData(ctx) {
   if (ctx.env.SFCS_PLUGIN_DATA) return { dir: ctx.env.SFCS_PLUGIN_DATA, source: "SFCS_PLUGIN_DATA" };
   const own = pathFileData(ctx, "sfcs-plugin-paths.json");
   if (own) return { dir: own, source: "sfcs-plugin-paths.json" };
+  // The folder `hooks/setup.js --ensure` installs into when no hook has run (Codex without a
+  // trusted hook). It exists only after someone ran that, and it is ours, so it comes before
+  // the shared names: another plugin's folder can hold a marker with the same file name.
+  const fb = fallbackDir(ctx);
+  if (ours(ctx, fb)) return { dir: fb, source: "stable folder" };
   if (ours(ctx, ctx.env.CLAUDE_PLUGIN_DATA)) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
   const old = pathFileData(ctx, "plugin-paths.json");
   if (ours(ctx, old)) return { dir: old, source: "plugin-paths.json" };
@@ -185,7 +200,7 @@ function checkNative(ctx, deps, add) {
   const dirs = pd ? [path.join(pd.dir, "node_modules")] : [];
   const log = pd ? path.join(pd.dir, "install.log") : null;
   const logHint = log && exists(ctx, log) ? ` See ${log}.` : "";
-  const session = "Start a new session with this plugin loaded.";
+  const session = `Start a new session with this plugin loaded, or run ${ensureCommand(ctx)}`;
   let allLoad = true;
 
   for (const name of NATIVE_MODULES) {
@@ -206,7 +221,7 @@ function checkNative(ctx, deps, add) {
         "native",
         winKeytar ? "WARN" : "FAIL",
         `${name} does not load: ${firstLine(e)}${winKeytar ? " (Windows does not use it)" : ""}`,
-        winKeytar ? undefined : (pd ? session : "No plugin data folder is known, start a session with the plugin loaded.") + logHint
+        winKeytar ? undefined : (pd ? session : `No plugin data folder is known. Start a session with the plugin loaded, or run ${ensureCommand(ctx)}`) + logHint
       );
     }
   }
@@ -236,10 +251,13 @@ function checkPluginPaths(ctx, deps, add) {
   const file = path.join(cliDir(ctx), "sfcs-plugin-paths.json");
   const r = readJson(ctx, file);
   if (r.missing) {
+    const pd = pluginData(ctx);
     if (ctx.env.SFCS_PLUGIN_DATA) {
       add("plugin-paths", "OK", "no sfcs-plugin-paths.json, SFCS_PLUGIN_DATA is set");
+    } else if (pd && pd.source === "stable folder") {
+      add("plugin-paths", "OK", `no sfcs-plugin-paths.json, the scripts use the stable folder ${pd.dir} (set up with hooks/setup.js --ensure)`);
     } else {
-      add("plugin-paths", "WARN", `${file} not found`, "Start a session with the plugin loaded, the setup hook writes it.");
+      add("plugin-paths", "WARN", `${file} not found`, `Start a session with the plugin loaded, the setup hook writes it. Without a hook run ${ensureCommand(ctx)}`);
     }
   } else if (r.error || !r.value || typeof r.value !== "object" || Array.isArray(r.value)) {
     add("plugin-paths", "WARN", `${file} is not valid, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");

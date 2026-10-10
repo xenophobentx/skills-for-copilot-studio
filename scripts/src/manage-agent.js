@@ -36,7 +36,7 @@ const fs = require("fs");
 const os = require("os");
 const { fileURLToPath } = require("url");
 const yaml = require("js-yaml");
-const { log, die, sleep } = require("./shared-utils");
+const { log, die, sleep, requireNative } = require("./shared-utils");
 const {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
@@ -373,7 +373,7 @@ class LspClient {
     if (this.running) return;
 
     const net = require("net");
-    const { SocketMessageReader, SocketMessageWriter, createMessageConnection } = require("vscode-jsonrpc/node");
+    const { SocketMessageReader, SocketMessageWriter, createMessageConnection } = requireNative(() => require("vscode-jsonrpc/node"));
     const sessionId = randomUUID();
     const pipePath = os.platform() === "win32"
       ? `\\\\.\\pipe\\manage-agent-${sessionId}`

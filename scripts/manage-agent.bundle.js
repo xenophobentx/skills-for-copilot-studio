@@ -1,4 +1,4 @@
-var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{var v=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData;if(typeof v=='string'&&_sf.existsSync(v))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
+var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{var v=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData;if(typeof v=='string'&&_sf.existsSync(v))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(_sp.join(require('os').homedir(),'.copilot-studio-cli','sfcs-data'))||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -2832,12 +2832,26 @@ var require_js_yaml = __commonJS({
 var require_shared_utils = __commonJS({
   "src/shared-utils.js"(exports2, module2) {
     var readline = require("readline");
+    var fs7 = require("fs");
+    var path3 = require("path");
     function log2(msg) {
       process.stderr.write(msg + "\n");
     }
     function die2(msg) {
       process.stdout.write(JSON.stringify({ status: "error", error: msg }) + "\n");
       process.exit(1);
+    }
+    function requireNative2(load) {
+      try {
+        return load();
+      } catch (err) {
+        if (err && err.code === "MODULE_NOT_FOUND" && /keytar|msal-node-extensions|vscode-jsonrpc/.test(String(err.message))) {
+          const setup = [path3.join(__dirname, "..", "hooks", "setup.js"), path3.join(__dirname, "..", "..", "hooks", "setup.js")].find((f) => fs7.existsSync(f));
+          if (setup) err.message += `
+The native dependencies are not installed. Run: node "${setup}" --ensure`;
+        }
+        throw err;
+      }
     }
     var sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function httpGet(url, headers) {
@@ -2996,6 +3010,7 @@ var require_shared_utils = __commonJS({
       return { activities: allBotActivities, watermark };
     }
     module2.exports = {
+      requireNative: requireNative2,
       log: log2,
       die: die2,
       sleep: sleep2,
@@ -17579,7 +17594,7 @@ function detectPlatformBinary({ [platform]: platformBinary }, { wsl } = {}) {
   }
   return detectArchBinary(platformBinary);
 }
-var import_node_process7, import_node_path, import_node_url, import_node_child_process7, import_promises2, import_meta, fallbackAttemptSymbol, __dirname, localXdgOpenPath, platform, arch, tryEachApp, baseOpen, open, openApp, apps, open_default;
+var import_node_process7, import_node_path, import_node_url, import_node_child_process7, import_promises2, import_meta, fallbackAttemptSymbol, __dirname2, localXdgOpenPath, platform, arch, tryEachApp, baseOpen, open, openApp, apps, open_default;
 var init_open = __esm({
   "node_modules/open/index.js"() {
     import_node_process7 = __toESM(require("node:process"), 1);
@@ -17595,8 +17610,8 @@ var init_open = __esm({
     init_is_in_ssh();
     import_meta = {};
     fallbackAttemptSymbol = Symbol("fallbackAttempt");
-    __dirname = import_meta.url ? import_node_path.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url)) : "";
-    localXdgOpenPath = import_node_path.default.join(__dirname, "xdg-open");
+    __dirname2 = import_meta.url ? import_node_path.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url)) : "";
+    localXdgOpenPath = import_node_path.default.join(__dirname2, "xdg-open");
     ({ platform, arch } = import_node_process7.default);
     tryEachApp = async (apps2, opener) => {
       if (apps2.length === 0) {
@@ -17741,7 +17756,7 @@ var init_open = __esm({
         if (app) {
           command = app;
         } else {
-          const isBundled = !__dirname || __dirname === "/";
+          const isBundled = !__dirname2 || __dirname2 === "/";
           let exeLocalXdgOpen = false;
           try {
             await import_promises2.default.access(localXdgOpenPath, import_promises2.constants.X_OK);
@@ -17877,8 +17892,8 @@ var init_open = __esm({
 // src/shared-auth.js
 var require_shared_auth = __commonJS({
   "src/shared-auth.js"(exports2, module2) {
-    var { log: log2, die: die2 } = require_shared_utils();
-    var createCachePlugin = (...args) => require_msal_cache().createCachePlugin(...args);
+    var { log: log2, die: die2, requireNative: requireNative2 } = require_shared_utils();
+    var createCachePlugin = (...args) => requireNative2(() => require_msal_cache()).createCachePlugin(...args);
     var VSCODE_CLIENT_ID2 = "51f81489-12ee-4a9e-aaae-a2591f45987d";
     var ISLAND_RESOURCE_IDS = {
       0: "a522f059-bb65-47c0-8934-7db6e5286414",
@@ -18154,6 +18169,12 @@ var require_doctor = __commonJS({
     function cliDir(ctx) {
       return path3.join(ctx.home, ".copilot-studio-cli");
     }
+    function fallbackDir(ctx) {
+      return path3.join(cliDir(ctx), "sfcs-data");
+    }
+    function ensureCommand(ctx) {
+      return `node "${path3.join(ownRoot(ctx), "hooks", "setup.js")}" --ensure`;
+    }
     function pathFileData(ctx, name) {
       const r = readJson(ctx, path3.join(cliDir(ctx), name));
       const v = r.value && r.value.pluginData;
@@ -18166,10 +18187,15 @@ var require_doctor = __commonJS({
       if (ctx.env.SFCS_PLUGIN_DATA) return { dir: ctx.env.SFCS_PLUGIN_DATA, source: "SFCS_PLUGIN_DATA" };
       const own = pathFileData(ctx, "sfcs-plugin-paths.json");
       if (own) return { dir: own, source: "sfcs-plugin-paths.json" };
+      const fb = fallbackDir(ctx);
+      if (ours(ctx, fb)) return { dir: fb, source: "stable folder" };
       if (ours(ctx, ctx.env.CLAUDE_PLUGIN_DATA)) return { dir: ctx.env.CLAUDE_PLUGIN_DATA, source: "CLAUDE_PLUGIN_DATA" };
       const old = pathFileData(ctx, "plugin-paths.json");
       if (ours(ctx, old)) return { dir: old, source: "plugin-paths.json" };
       return null;
+    }
+    function ownRoot(ctx) {
+      return path3.resolve(path3.dirname(ctx.scriptPath), "..");
     }
     function samePath(ctx, a, b) {
       const real = (p) => {
@@ -18258,7 +18284,7 @@ var require_doctor = __commonJS({
       const dirs = pd ? [path3.join(pd.dir, "node_modules")] : [];
       const log2 = pd ? path3.join(pd.dir, "install.log") : null;
       const logHint = log2 && exists(ctx, log2) ? ` See ${log2}.` : "";
-      const session = "Start a new session with this plugin loaded.";
+      const session = `Start a new session with this plugin loaded, or run ${ensureCommand(ctx)}`;
       let allLoad = true;
       for (const name of NATIVE_MODULES) {
         try {
@@ -18278,7 +18304,7 @@ var require_doctor = __commonJS({
             "native",
             winKeytar ? "WARN" : "FAIL",
             `${name} does not load: ${firstLine(e)}${winKeytar ? " (Windows does not use it)" : ""}`,
-            winKeytar ? void 0 : (pd ? session : "No plugin data folder is known, start a session with the plugin loaded.") + logHint
+            winKeytar ? void 0 : (pd ? session : `No plugin data folder is known. Start a session with the plugin loaded, or run ${ensureCommand(ctx)}`) + logHint
           );
         }
       }
@@ -18308,10 +18334,13 @@ var require_doctor = __commonJS({
       const file = path3.join(cliDir(ctx), "sfcs-plugin-paths.json");
       const r = readJson(ctx, file);
       if (r.missing) {
+        const pd = pluginData(ctx);
         if (ctx.env.SFCS_PLUGIN_DATA) {
           add("plugin-paths", "OK", "no sfcs-plugin-paths.json, SFCS_PLUGIN_DATA is set");
+        } else if (pd && pd.source === "stable folder") {
+          add("plugin-paths", "OK", `no sfcs-plugin-paths.json, the scripts use the stable folder ${pd.dir} (set up with hooks/setup.js --ensure)`);
         } else {
-          add("plugin-paths", "WARN", `${file} not found`, "Start a session with the plugin loaded, the setup hook writes it.");
+          add("plugin-paths", "WARN", `${file} not found`, `Start a session with the plugin loaded, the setup hook writes it. Without a hook run ${ensureCommand(ctx)}`);
         }
       } else if (r.error || !r.value || typeof r.value !== "object" || Array.isArray(r.value)) {
         add("plugin-paths", "WARN", `${file} is not valid, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
@@ -18573,7 +18602,7 @@ var fs6 = require("fs");
 var os2 = require("os");
 var { fileURLToPath: fileURLToPath2 } = require("url");
 var yaml = require_js_yaml();
-var { log, die, sleep } = require_shared_utils();
+var { log, die, sleep, requireNative } = require_shared_utils();
 var {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
@@ -18839,7 +18868,7 @@ var LspClient = class {
   async start() {
     if (this.running) return;
     const net = require("net");
-    const { SocketMessageReader, SocketMessageWriter, createMessageConnection } = require("vscode-jsonrpc/node");
+    const { SocketMessageReader, SocketMessageWriter, createMessageConnection } = requireNative(() => require("vscode-jsonrpc/node"));
     const sessionId = randomUUID();
     const pipePath = os2.platform() === "win32" ? `\\\\.\\pipe\\manage-agent-${sessionId}` : path2.join(os2.tmpdir(), `manage-agent-${sessionId}.sock`);
     const server = net.createServer();

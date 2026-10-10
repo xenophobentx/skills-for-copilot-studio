@@ -1,4 +1,4 @@
-var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{var v=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData;if(typeof v=='string'&&_sf.existsSync(v))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
+var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{var v=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData;if(typeof v=='string'&&_sf.existsSync(v))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(_sp.join(require('os').homedir(),'.copilot-studio-cli','sfcs-data'))||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -37,12 +37,26 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var require_shared_utils = __commonJS({
   "src/shared-utils.js"(exports2, module2) {
     var readline = require("readline");
+    var fs7 = require("fs");
+    var path3 = require("path");
     function log2(msg) {
       process.stderr.write(msg + "\n");
     }
     function die2(msg) {
       process.stdout.write(JSON.stringify({ status: "error", error: msg }) + "\n");
       process.exit(1);
+    }
+    function requireNative(load) {
+      try {
+        return load();
+      } catch (err) {
+        if (err && err.code === "MODULE_NOT_FOUND" && /keytar|msal-node-extensions|vscode-jsonrpc/.test(String(err.message))) {
+          const setup = [path3.join(__dirname, "..", "hooks", "setup.js"), path3.join(__dirname, "..", "..", "hooks", "setup.js")].find((f) => fs7.existsSync(f));
+          if (setup) err.message += `
+The native dependencies are not installed. Run: node "${setup}" --ensure`;
+        }
+        throw err;
+      }
     }
     var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     async function httpGet(url, headers) {
@@ -201,6 +215,7 @@ var require_shared_utils = __commonJS({
       return { activities: allBotActivities, watermark };
     }
     module2.exports = {
+      requireNative,
       log: log2,
       die: die2,
       sleep,
@@ -14784,7 +14799,7 @@ function detectPlatformBinary({ [platform]: platformBinary }, { wsl } = {}) {
   }
   return detectArchBinary(platformBinary);
 }
-var import_node_process7, import_node_path, import_node_url, import_node_child_process7, import_promises2, import_meta, fallbackAttemptSymbol, __dirname, localXdgOpenPath, platform, arch, tryEachApp, baseOpen, open, openApp, apps, open_default;
+var import_node_process7, import_node_path, import_node_url, import_node_child_process7, import_promises2, import_meta, fallbackAttemptSymbol, __dirname2, localXdgOpenPath, platform, arch, tryEachApp, baseOpen, open, openApp, apps, open_default;
 var init_open = __esm({
   "node_modules/open/index.js"() {
     import_node_process7 = __toESM(require("node:process"), 1);
@@ -14800,8 +14815,8 @@ var init_open = __esm({
     init_is_in_ssh();
     import_meta = {};
     fallbackAttemptSymbol = Symbol("fallbackAttempt");
-    __dirname = import_meta.url ? import_node_path.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url)) : "";
-    localXdgOpenPath = import_node_path.default.join(__dirname, "xdg-open");
+    __dirname2 = import_meta.url ? import_node_path.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url)) : "";
+    localXdgOpenPath = import_node_path.default.join(__dirname2, "xdg-open");
     ({ platform, arch } = import_node_process7.default);
     tryEachApp = async (apps2, opener) => {
       if (apps2.length === 0) {
@@ -14946,7 +14961,7 @@ var init_open = __esm({
         if (app) {
           command = app;
         } else {
-          const isBundled = !__dirname || __dirname === "/";
+          const isBundled = !__dirname2 || __dirname2 === "/";
           let exeLocalXdgOpen = false;
           try {
             await import_promises2.default.access(localXdgOpenPath, import_promises2.constants.X_OK);
@@ -15082,8 +15097,8 @@ var init_open = __esm({
 // src/shared-auth.js
 var require_shared_auth = __commonJS({
   "src/shared-auth.js"(exports2, module2) {
-    var { log: log2, die: die2 } = require_shared_utils();
-    var createCachePlugin = (...args) => require_msal_cache().createCachePlugin(...args);
+    var { log: log2, die: die2, requireNative } = require_shared_utils();
+    var createCachePlugin = (...args) => requireNative(() => require_msal_cache()).createCachePlugin(...args);
     var VSCODE_CLIENT_ID2 = "51f81489-12ee-4a9e-aaae-a2591f45987d";
     var ISLAND_RESOURCE_IDS = {
       0: "a522f059-bb65-47c0-8934-7db6e5286414",
