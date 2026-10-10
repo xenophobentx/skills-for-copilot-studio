@@ -125,7 +125,7 @@ check("setup.js writes sfcs-plugin-paths.json", written.pluginData === sData);
 check("setup.js leaves the shared plugin-paths.json alone",
   fs.readFileSync(path.join(sHome, ".copilot-studio-cli", "plugin-paths.json"), "utf8") === legacy);
 const env = fs.readFileSync(envFile, "utf8");
-check("setup.js exports SFCS_PLUGIN_DATA and keeps earlier lines", env === `export KEEP=1\nexport SFCS_PLUGIN_DATA="${sData}"\n`, env);
+check("setup.js exports SFCS_PLUGIN_DATA and keeps earlier lines", env === `export KEEP=1\nexport SFCS_PLUGIN_DATA="${sData.replace(/[\\"$`]/g, "\\$&")}"\n`, env);
 check("setup.js does not export CLAUDE_ variables", !/CLAUDE_/.test(env));
 
 const sHome2 = dir("setup-home2");
