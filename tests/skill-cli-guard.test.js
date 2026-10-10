@@ -24,9 +24,9 @@ const GUARD =
 // A cloud agent has no local settings.mcs.yml before the download: clone into an empty folder
 // and check the new folder right after.
 const CLONE =
-  "**Cloning.** There is no local `settings.mcs.yml` to check before a download. Clone into an empty folder, never into a folder " +
-  "that already holds an agent (check that agent as above). Right after the download, search the new folder's `settings.mcs.yml` " +
-  "for the same two markers. On a match it is a CLI agent: do not edit, pull, push or publish it, tell the user the path of the " +
+  "**Cloning.** There is no local `settings.mcs.yml` to check before a download. The clone creates its own subfolder, named after the agent, " +
+  "so the workspace may hold other agents, but not a folder with that name: if one exists, clone into a new empty folder instead (and check the existing agent as above). " +
+  "Right after the download, search the new subfolder's `settings.mcs.yml` for the same two markers. On a match it is a CLI agent: do not edit, pull, push or publish it, tell the user the path of the " +
   "downloaded folder and that it is a CLI agent workspace, point to https://github.com/microsoft/copilot-studio-plugin, and leave " +
   "the folder for the user to keep or delete.";
 const CLONING = ["clone-agent", "manage-agent"];
@@ -73,7 +73,7 @@ for (const name of GUARDED) check(`${name} exists`, fs.existsSync(path.join(SKIL
 
 const prompt = fs.readFileSync(path.join(__dirname, "..", "hooks", "system-prompt.md"), "utf8");
 check("routing prompt: the first-tool-call search is for an agent that is on disk", prompt.includes("for an agent that is on disk (even one line), your first tool call"));
-check("routing prompt: a clone is checked right after the download", prompt.includes("clone it into an empty folder and run that search on the new folder's `settings.mcs.yml` right after the download"));
+check("routing prompt: a clone is checked right after the download", prompt.includes("clone it (the clone creates its own subfolder, so other agents in the workspace are fine, a folder with the same name is not) and run that search on the new subfolder's `settings.mcs.yml` right after the download"));
 check("routing prompt: no first-call search before a clone", !/published or cloned for an agent/.test(prompt));
 
 console.log(`${passed + failed} tests: ${passed} passed, ${failed} failed`);
