@@ -15,6 +15,8 @@ agent: copilot-studio-test
 
 Run evaluations against a Copilot Studio agent's **draft** — no publish needed.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 The caller (test agent) must provide `--client-id` and `--workspace`. If you don't have the client ID, return immediately and tell the caller to run `test-auth` first.
 
 All eval-api commands run in the **foreground**. NEVER use `run_in_background`.

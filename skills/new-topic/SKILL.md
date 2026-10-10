@@ -12,6 +12,8 @@ agent: copilot-studio-author
 
 Generate a new Copilot Studio topic YAML file based on user requirements.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 ## Instructions
 
 1. **Auto-discover the agent directory**:

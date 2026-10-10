@@ -12,6 +12,8 @@ agent: copilot-studio-manage
 
 Guided flow to clone a Copilot Studio agent from the cloud to a local workspace. Walks the user through environment selection, agent selection, and downloads the agent's YAML files.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 ## IMPORTANT: Do Not Modify Scripts
 
 This is a new capability under active development. If the manage-agent script fails, **do not attempt to fix, patch, or work around it**. Instead:

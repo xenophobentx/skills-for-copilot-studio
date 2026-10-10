@@ -12,6 +12,8 @@ agent: copilot-studio-author
 
 Add `SearchAndSummarizeContent` nodes to generate responses grounded in the agent's knowledge sources.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 ## Important: Do You Even Need a Topic?
 
 When knowledge sources are added to the agent (via `/add-knowledge`), the AI can **directly search them without any topic** if it recognizes a QnA-style query. A dedicated topic with `SearchAndSummarizeContent` is useful when:

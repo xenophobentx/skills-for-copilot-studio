@@ -15,6 +15,8 @@ agent: copilot-studio-test
 
 Analyze evaluation results exported from the Copilot Studio UI as CSV.
 
+**Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
+
 ## Phase 1: Get Results
 
 1. **Ask the user for the CSV file path** if not already provided. The file is typically exported from Copilot Studio's Evaluate tab and named `Evaluate <agent name> <date>.csv` in their Downloads folder.
