@@ -11,6 +11,8 @@ agent: copilot-studio-advisor
 
 Look up and explain a Copilot Studio YAML schema definition.
 
+`$ARGUMENTS` is the text the user gave with this skill. If your client does not fill it in, use the user's request instead.
+
 ## Locate the plugin files
 
 `<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.

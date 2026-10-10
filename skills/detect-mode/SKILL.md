@@ -11,6 +11,8 @@ agent: copilot-studio-test
 
 Query the Dataverse `bots` entity to determine whether the agent uses DirectLine (no auth / manual auth) or the Copilot Studio SDK (integrated auth / Entra ID SSO).
 
+`$ARGUMENTS` is the text the user gave with this skill. If your client does not fill it in, use the user's request instead.
+
 ## Locate the plugin files
 
 `<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.

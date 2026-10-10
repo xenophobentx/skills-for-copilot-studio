@@ -10,6 +10,8 @@ allowed-tools: Bash(node *schema-lookup.bundle.js *)
 
 List all available `kind` discriminator values from the schema, dynamically.
 
+`$ARGUMENTS` is the text the user gave with this skill. If your client does not fill it in, use the user's request instead.
+
 ## Locate the plugin files
 
 `<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.

@@ -11,6 +11,8 @@ agent: copilot-studio-test
 
 Send a single utterance to a published agent via the DirectLine v3 REST API. Use this for agents with **no authentication** (authenticationmode 1) or **manual authentication** (authenticationmode 3).
 
+`$ARGUMENTS` is the text the user gave with this skill. If your client does not fill it in, use the user's request instead.
+
 ## Locate the plugin files
 
 `<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
