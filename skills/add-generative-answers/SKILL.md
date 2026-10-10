@@ -14,6 +14,15 @@ Add `SearchAndSummarizeContent` nodes to generate responses grounded in the agen
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/add-generative-answers/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it.
+
 ## Important: Do You Even Need a Topic?
 
 When knowledge sources are added to the agent (via `/add-knowledge`), the AI can **directly search them without any topic** if it recognizes a QnA-style query. A dedicated topic with `SearchAndSummarizeContent` is useful when:
@@ -38,8 +47,8 @@ If the user just wants the agent to answer questions from its knowledge, adding 
 
 3. **Look up the schema** for both nodes:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve CreateSearchQuery
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve SearchAndSummarizeContent
+   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve CreateSearchQuery
+   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve SearchAndSummarizeContent
    ```
 
 4. **Read `settings.mcs.yml`** to check if `GenerativeActionsEnabled: true`. This determines the best pattern:

@@ -11,19 +11,28 @@ agent: copilot-studio-test
 
 Send a single utterance to a published agent via the DirectLine v3 REST API. Use this for agents with **no authentication** (authenticationmode 1) or **manual authentication** (authenticationmode 3).
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/chat-directline/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## Instructions
 
 1. Run the script with `--token-endpoint` (from detect-mode output) and the utterance from `$ARGUMENTS`:
 
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+   node <pluginRoot>/scripts/chat-with-agent.bundle.js \
      --token-endpoint "<tokenEndpoint>" "<utterance>"
    ```
 
    If the user provided a DirectLine secret instead:
 
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+   node <pluginRoot>/scripts/chat-with-agent.bundle.js \
      --directline-secret "<secret>" "<utterance>"
    ```
 
@@ -66,8 +75,8 @@ The agent requires the user to authenticate (manual auth agents):
 ```
 
 1. Show the `signin_url` to the user, ask for the validation code
-2. Send the code: `node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js <resume_command with code substituted>`
-3. Re-send the utterance: `node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js <followup_command>`
+2. Send the code: `node <pluginRoot>/scripts/chat-with-agent.bundle.js <resume_command with code substituted>`
+3. Re-send the utterance: `node <pluginRoot>/scripts/chat-with-agent.bundle.js <followup_command>`
 
 Use `resume_command` and `followup_command` exactly as given.
 
@@ -76,7 +85,7 @@ Use `resume_command` and `followup_command` exactly as given.
 On Windows PowerShell 5.1 a message that contains double quotes is split into several arguments, and the script stops with "separate message arguments". Write the message to a UTF-8 file and pass `--message-file` instead of the message:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+node <pluginRoot>/scripts/chat-with-agent.bundle.js \
   --token-endpoint "<tokenEndpoint>" --message-file "<path>"
 ```
 
@@ -85,7 +94,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
 Pass all three values from the previous response:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+node <pluginRoot>/scripts/chat-with-agent.bundle.js \
   --token-endpoint "<url>" "<follow-up>" \
   --conversation-id "<id>" --directline-token "<token>" --watermark "<watermark>"
 ```

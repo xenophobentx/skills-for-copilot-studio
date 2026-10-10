@@ -14,6 +14,15 @@ Push and pull Copilot Studio agent content by calling the VS Code extension's La
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/manage-agent/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## IMPORTANT: Do Not Modify Scripts
 
 This is a new capability under active development. The manage-agent scripts (`manage-agent.bundle.js`, `chat-with-agent.bundle.js`) are pre-built bundles that must not be modified, patched, or monkey-patched. If a script fails:
@@ -55,7 +64,7 @@ The `auth` command acquires a generic `api.powerplatform.com` token and a Datave
 Run with a **5-minute timeout**:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js auth \
+node <pluginRoot>/scripts/manage-agent.bundle.js auth \
   --tenant-id "<tenantId>" \
   --client-id "<clientId>" \
   --environment-url "<environmentUrl>"
@@ -110,7 +119,7 @@ All commands auto-detect the agent directory (finds the subfolder with `.mcs/con
 `--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
+node <pluginRoot>/scripts/manage-agent.bundle.js pull \
   --workspace "<path-to-agent-folder>" \
   --tenant-id "<tenantId>" \
   --environment-id "<envId>" \
@@ -137,7 +146,7 @@ Push also refuses (`"status":"error"`, non-zero exit, with a `syntaxErrors` list
 If the user declines, proceed with push. Do NOT block on this — it's advisory.
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js push \
+node <pluginRoot>/scripts/manage-agent.bundle.js push \
   --workspace "<path-to-agent-folder>" \
   --tenant-id "<tenantId>" \
   --environment-id "<envId>" \
@@ -150,7 +159,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js push \
 Validates all `.mcs.yml` files in the workspace using the LSP binary's full diagnostics (YAML structure, Power Fx, schema, cross-file references).
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js validate \
+node <pluginRoot>/scripts/manage-agent.bundle.js validate \
   --workspace "<path-to-agent-folder>" \
   --tenant-id "<tenantId>" \
   --environment-id "<envId>" \
@@ -169,7 +178,7 @@ Requires either `--agent-id` (the bot GUID from `list-agents`) **or** `--url` (a
 **With explicit IDs:**
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
+node <pluginRoot>/scripts/manage-agent.bundle.js clone \
   --workspace "<target-folder>" \
   --tenant-id "<tenantId>" \
   --environment-id "<envId>" \
@@ -181,7 +190,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
 **With a Copilot Studio URL (recommended shortcut):**
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
+node <pluginRoot>/scripts/manage-agent.bundle.js clone \
   --workspace "<target-folder>" \
   --tenant-id "<tenantId>" \
   --url "https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>/overview"
@@ -194,7 +203,7 @@ When `--url` is provided, the script extracts `environmentId` and `agentId` from
 `--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js changes \
+node <pluginRoot>/scripts/manage-agent.bundle.js changes \
   --workspace "<path-to-agent-folder>" \
   --tenant-id "<tenantId>" \
   --environment-id "<envId>" \
@@ -211,7 +220,7 @@ Publishes the agent so that the current draft becomes the live version reachable
 The command polls the `publishedon` field on the bot entity until the timestamp changes, confirming that publish has taken effect. Default timeout is 5 minutes.
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js publish \
+node <pluginRoot>/scripts/manage-agent.bundle.js publish \
   --workspace "<path-to-agent-folder>" \
   --tenant-id "<tenantId>" \
   --environment-url "<envUrl>" \
@@ -238,7 +247,7 @@ Optional: `--agent-id "<agentId>"` overrides the bot ID from `conn.json`.
 Uses Dataverse REST API directly (no LSP binary needed). `--client-id` is optional.
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js list-agents \
+node <pluginRoot>/scripts/manage-agent.bundle.js list-agents \
   --tenant-id "<tenantId>" \
   --environment-url "<envUrl>" \
   [--no-owner]
@@ -251,7 +260,7 @@ By default lists only agents owned by the current user. Add `--no-owner` to list
 Uses BAP REST API directly (no LSP binary needed). `--client-id` is optional.
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js list-envs \
+node <pluginRoot>/scripts/manage-agent.bundle.js list-envs \
   --tenant-id "<tenantId>"
 ```
 

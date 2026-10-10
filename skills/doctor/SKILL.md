@@ -10,10 +10,19 @@ allowed-tools: Bash(node *manage-agent.bundle.js doctor*), Read, Glob
 
 Read-only check of the machine and, if you give one, an agent workspace. It makes no network calls, does not sign in, and never opens token or keyring contents. It only looks at file names, sizes and dates.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/doctor/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## Run it
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js doctor [--workspace "<path>"]
+node <pluginRoot>/scripts/manage-agent.bundle.js doctor [--workspace "<path>"]
 ```
 
 Without `--workspace` it checks the current folder if it looks like an agent folder.

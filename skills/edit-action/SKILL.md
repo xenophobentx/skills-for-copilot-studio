@@ -14,6 +14,15 @@ Edit an existing action (`kind: TaskDialog`) in a Copilot Studio agent. Supports
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/edit-action/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it.
+
 ## Connector Lookup
 
 Help the user find the right connector and operation before they go to the UI. Use the connector lookup tool. Important: The connector lookup script only covers a subset of connectors (run `list` to see which ones). If the user's requested connector is not in the list, tell the user they need to find and add the connector action entirely through the Copilot Studio portal, then ask them to pull again the files locally. Once pulled, `/copilot-studio:edit-action` can still be used to customize the YAML.
@@ -21,19 +30,19 @@ Help the user find the right connector and operation before they go to the UI. U
 When the connector IS available, use the lookup tool to help the user before they go to the UI:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js list                              # List connectors
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js operations <connector>            # List operations
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js operation <connector> <opId>      # Full input/output details
-node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js search <keyword>                  # Search operations
+node <pluginRoot>/scripts/connector-lookup.bundle.js list                              # List connectors
+node <pluginRoot>/scripts/connector-lookup.bundle.js operations <connector>            # List operations
+node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <opId>      # Full input/output details
+node <pluginRoot>/scripts/connector-lookup.bundle.js search <keyword>                  # Search operations
 ```
 
 Use schema lookup for structural properties:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary TaskDialog
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary InvokeConnectorTaskAction
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary InvokeExternalAgentTaskAction
-node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary ModelContextProtocolMetadata
+node <pluginRoot>/scripts/schema-lookup.bundle.js summary TaskDialog
+node <pluginRoot>/scripts/schema-lookup.bundle.js summary InvokeConnectorTaskAction
+node <pluginRoot>/scripts/schema-lookup.bundle.js summary InvokeExternalAgentTaskAction
+node <pluginRoot>/scripts/schema-lookup.bundle.js summary ModelContextProtocolMetadata
 ```
 
 ## Instructions
@@ -54,13 +63,13 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary ModelCont
    - Read the action YAML to find `action.operationId` and the connector API name from `connectionreferences.mcs.yml`
    - Look up the full operation details (if the connector is available in the lookup script):
      ```bash
-     node ${CLAUDE_SKILL_DIR}/../../scripts/connector-lookup.bundle.js operation <connector> <operationId>
+     node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <operationId>
      ```
    - This gives you the complete list of available inputs and outputs for the operation
    - If the connector is not found, try broader terms. If still not found, inform the user and proceed with edits based on the existing action YAML and schema-lookup only
    - **If the connector is SharePoint (`shared_sharepointonline`)**, read the SharePoint-specific reference before making any edits:
      ```
-     Read: ${CLAUDE_SKILL_DIR}/sharepoint-actions.md
+     Read: <pluginRoot>/skills/edit-action/sharepoint-actions.md
      ```
      This covers OData filter syntax, the critical `"'$filter'"` quoting pattern, which inputs should be Manual vs Automatic, and dynamic output handling.
 
@@ -71,11 +80,11 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary ModelCont
 5. **Read the appropriate template** for structural reference:
    - Connector actions:
      ```
-     Read: ${CLAUDE_SKILL_DIR}/../../templates/actions/connector-action.mcs.yml
+     Read: <pluginRoot>/templates/actions/connector-action.mcs.yml
      ```
    - MCP actions:
      ```
-     Read: ${CLAUDE_SKILL_DIR}/../../templates/actions/mcp-action.mcs.yml
+     Read: <pluginRoot>/templates/actions/mcp-action.mcs.yml
      ```
    Use this alongside the connector-lookup output from step 3 to understand the YAML structure and available inputs/outputs.
 
@@ -163,7 +172,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js summary ModelCont
 
 7. **Validate the edited file**:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js validate <action-file-path>
+   node <pluginRoot>/scripts/schema-lookup.bundle.js validate <action-file-path>
    ```
 
 8. **Inform the user** about next steps:

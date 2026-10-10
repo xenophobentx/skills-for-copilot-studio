@@ -10,13 +10,22 @@ allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(node *schema-lookup.bu
 
 Validate Copilot Studio agent YAML files using the LanguageServerHost binary's full diagnostics — the same validation engine used by the VS Code Copilot Studio extension.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/validate/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## Instructions
 
 1. **Locate the agent workspace.** Find the directory containing `.mcs/conn.json`. If a specific file was requested, use the workspace that contains it.
 
 2. **Run LSP-based validation**:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js validate \
+   node <pluginRoot>/scripts/manage-agent.bundle.js validate \
      --workspace "<path-to-agent-folder>" \
      --tenant-id "<tenantId>" \
      --environment-id "<envId>" \
@@ -44,7 +53,7 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
 
 5. **For additional context on specific errors**, use schema lookup:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve <kind>
+   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve <kind>
    ```
 
 6. **Report findings**:

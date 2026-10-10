@@ -14,6 +14,15 @@ Guided flow to clone a Copilot Studio agent from the cloud to a local workspace.
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/clone-agent/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## IMPORTANT: Do Not Modify Scripts
 
 This is a new capability under active development. If the manage-agent script fails, **do not attempt to fix, patch, or work around it**. Instead:
@@ -62,7 +71,7 @@ https://copilotstudio.preview.microsoft.com/environments/<envId>/bots/<agentId>
 If the user provides a URL like this, you still need a `tenantId` (from a `conn.json` or by asking the user). Then **skip to Phase 3**, passing `--url` instead of `--agent-id` / `--environment-id` / `--environment-url` / `--agent-mgmt-url`:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
+node <pluginRoot>/scripts/manage-agent.bundle.js clone \
   --workspace "." \
   --tenant-id "<tenantId>" \
   --url "<copilotStudioUrl>"
@@ -83,7 +92,7 @@ Tell the user: **"A browser window may open for Microsoft sign-in (tokens are ca
 Run the list-envs command:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js list-envs \
+node <pluginRoot>/scripts/manage-agent.bundle.js list-envs \
   --tenant-id "<tenantId>"
 ```
 
@@ -109,7 +118,7 @@ First, ask the user: **"Do you want to list only agents you own, or all agents i
 - If **all agents** → add `--no-owner` flag
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js list-agents \
+node <pluginRoot>/scripts/manage-agent.bundle.js list-agents \
   --tenant-id "<tenantId>" \
   --environment-url "<environmentUrl>" \
   [--no-owner]
@@ -132,7 +141,7 @@ Ask the user to pick an agent. Extract the `agentId`.
 Run the clone command. The workspace should be the current directory (`.`). The `--agent-id` is required (from Phase 2):
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
+node <pluginRoot>/scripts/manage-agent.bundle.js clone \
   --workspace "." \
   --tenant-id "<tenantId>" \
   --agent-id "<agentId>" \

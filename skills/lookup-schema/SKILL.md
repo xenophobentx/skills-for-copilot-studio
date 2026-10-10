@@ -11,21 +11,30 @@ agent: copilot-studio-advisor
 
 Look up and explain a Copilot Studio YAML schema definition.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/lookup-schema/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it.
+
 ## Instructions
 
 1. Run the schema lookup script to find the definition:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js lookup $ARGUMENTS
+   node <pluginRoot>/scripts/schema-lookup.bundle.js lookup $ARGUMENTS
    ```
 
 2. If the definition is not found, search for similar definitions:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js search $ARGUMENTS
+   node <pluginRoot>/scripts/schema-lookup.bundle.js search $ARGUMENTS
    ```
 
 3. If the definition contains `$ref` references that need resolution, use:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve $ARGUMENTS
+   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve $ARGUMENTS
    ```
 
 4. Present the schema definition in a readable format, explaining:

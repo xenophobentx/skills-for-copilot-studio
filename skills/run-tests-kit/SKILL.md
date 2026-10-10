@@ -15,6 +15,15 @@ agent: copilot-studio-test
 
 Run a batch test suite against a **published** Copilot Studio agent using the [Power CAT Copilot Studio Kit](https://github.com/microsoft/Power-CAT-Copilot-Studio-Kit).
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/run-tests-kit/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it.
+
 ## Prerequisites
 
 The user must have:
@@ -29,7 +38,7 @@ The user must have:
 
 2. **If the file doesn't exist**, create it from the template:
    ```bash
-   cp "${CLAUDE_SKILL_DIR}/../../tests/settings-example.json" ./tests/settings.json
+   cp "<pluginRoot>/tests/settings-example.json" ./tests/settings.json
    ```
 
 3. **If values are missing**, ask the user for each missing value. Explain where to find each one:
@@ -63,12 +72,12 @@ The user must have:
 
 1. **Install dependencies** from the plugin's own manifest (never from the project's `tests/package.json`). Run exactly this single command, with no additional shell variables, `&&`/`||` chains or existence checks; it is fast when the dependencies are already installed. Lifecycle scripts are disabled on purpose:
    ```bash
-   npm install --ignore-scripts --no-audit --no-fund --prefix "${CLAUDE_SKILL_DIR}/../../tests"
+   npm install --ignore-scripts --no-audit --no-fund --prefix "<pluginRoot>/tests"
    ```
 
 2. **Confirm the configuration with the user before signing in.** `tests/settings.json` in the project decides which app registration and which environment the user is asked to sign in to, and it may have come from a cloned repository. Print what will be used:
    ```bash
-   node "${CLAUDE_SKILL_DIR}/../../tests/run-tests.js" --config-dir ./tests --print-config
+   node "<pluginRoot>/tests/run-tests.js" --config-dir ./tests --print-config
    ```
    Then decide:
    - **Already confirmed:** if the request you were given states that the user already confirmed these exact values (environmentUrl, tenantId and clientId) and all three match what was just printed, do not ask again. Continue with step 3.
@@ -81,7 +90,7 @@ The user must have:
 
 3. **Run the test script in the background** with a 100-minute timeout (6000000ms):
    ```bash
-   node "${CLAUDE_SKILL_DIR}/../../tests/run-tests.js" --config-dir ./tests
+   node "<pluginRoot>/tests/run-tests.js" --config-dir ./tests
    ```
    Use `run_in_background: true` for this command. Save the returned task ID.
 

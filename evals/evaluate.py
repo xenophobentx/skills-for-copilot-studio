@@ -84,7 +84,7 @@ def setup_mocks(workspace: Path, mock_scripts: list[str]) -> None:
         if not mock_src.exists():
             print(f"Warning: Mock not found: {mock_src}", file=sys.stderr)
             continue
-        # The skills reference scripts via ${CLAUDE_SKILL_DIR}/../../scripts/
+        # The skills reference scripts via <pluginRoot>/scripts/
         # In the workspace, we place them where they'd be found
         mock_dst = workspace / "scripts" / script_name
         mock_dst.parent.mkdir(parents=True, exist_ok=True)
