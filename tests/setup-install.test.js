@@ -41,8 +41,8 @@ check("manifest denies the msal-node-extensions install script (it only runs exi
 // stdout and stderr, and creates every dependency as a loadable module.
 // FAKE_NPM_KEYTAR picks what happens to keytar's native binary:
 //   unset      the install script ran, the binary is there
-//   rebuild    no binary after install; `npm rebuild keytar` creates it
-//   prebuild   no binary; `npm rebuild` does nothing, prebuild-install creates it
+//   rebuild    no binary after install (install scripts off); `npm rebuild keytar --ignore-scripts=false` runs keytar's script and creates it
+//   prebuild   no binary; the rebuild does not create it, prebuild-install does
 //   fail       no binary; neither creates it (prebuild-install exits 1)
 const bin = dir("bin");
 fs.writeFileSync(path.join(bin, "fake-npm.js"), `
@@ -123,7 +123,10 @@ const data2 = dir("data2");
 const res2 = runHook(data2, home2, { FAKE_NPM_LOG: npmLog, FAKE_NPM_KEYTAR: "rebuild" });
 const log2 = fs.readFileSync(path.join(data2, "install.log"), "utf8");
 check("skipped keytar script: hook exits 0", res2.status === 0, res2.stderr);
-check("skipped keytar script: npm rebuild keytar is tried first and is enough", log2.includes("running npm rebuild keytar") && !log2.includes("prebuild-install"));
+const rebuildCalls = fs.readFileSync(npmLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((c) => c.args[0] === "rebuild" && c.args.includes("keytar"));
+check("skipped keytar script: npm rebuild keytar runs keytar's script and is enough", log2.includes("running npm rebuild keytar") && !log2.includes("prebuild-install"));
+check("skipped keytar script: only the rebuild call gets --ignore-scripts=false", rebuildCalls.length >= 1 && rebuildCalls.every((c) => c.args.includes("--ignore-scripts=false")) &&
+  fs.readFileSync(npmLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((c) => c.args[0] !== "rebuild").every((c) => !c.args.some((a) => a.startsWith("--ignore-scripts"))));
 check("skipped keytar script: keytar binary is in place", fs.existsSync(path.join(data2, "node_modules", "keytar", "build", "Release", "keytar.node")));
 
 const data2b = dir("data2b");

@@ -87,19 +87,19 @@ function install() {
 }
 
 // If npm skipped keytar's install script anyway (the user turned install scripts
-// off, or a policy the manifest does not cover), get the binary the way that
-// script would have. First `npm rebuild keytar`, which passes npm's config
-// (proxy, mirror) on to the download. If install scripts are off that does
-// nothing, so then prebuild-install runs directly; it honours HTTP_PROXY and
-// HTTPS_PROXY from the environment, but not settings that live only in .npmrc.
-// Does nothing when the binary is there.
+// off), get the binary the way that script would have. First `npm rebuild keytar
+// --ignore-scripts=false`: for this one call only, it runs keytar's own script,
+// which the manifest allows, and npm passes its config (proxy, mirror) on to the
+// download. If that does not produce the binary, prebuild-install runs directly;
+// it honours HTTP_PROXY and HTTPS_PROXY from the environment, but not settings
+// that live only in .npmrc. Does nothing when the binary is there.
 function fetchKeytarBinary(dir) {
   const kt = p.join(dir, 'node_modules', 'keytar');
   const have = () => fs.existsSync(p.join(kt, 'build', 'Release', 'keytar.node'));
   if (!fs.existsSync(kt) || have()) return;
   console.log('keytar has no native binary, running npm rebuild keytar');
   try {
-    cp.execSync('npm rebuild keytar --no-audit --no-fund', { cwd: dir, stdio: 'inherit', windowsHide: true });
+    cp.execSync('npm rebuild keytar --ignore-scripts=false --no-audit --no-fund', { cwd: dir, stdio: 'inherit', windowsHide: true });
   } catch (err) {
     console.log('npm rebuild keytar failed: ' + err.message);
   }
