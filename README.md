@@ -30,7 +30,7 @@ Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft
 /plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
 
-On Windows, `marketplace add` can fail with `EPERM: operation not permitted, rename ...` and `Failed to finalize marketplace cache`. I saw it on Claude Code 2.1.295 on every attempt, also for other large marketplaces. If you get it, clone the repository and add the clone as the marketplace:
+On Windows, `marketplace add` can fail with `EPERM: operation not permitted, rename ...` and `Failed to finalize marketplace cache`. Seen on Claude Code 2.1.295, on every attempt and also for other large marketplaces. If you get it, clone the repository and add the clone as the marketplace:
 
 ```powershell
 git clone https://github.com/xenophobentx/skills-for-copilot-studio.git C:\tools\skills-for-copilot-studio
@@ -38,7 +38,7 @@ claude plugin marketplace add C:\tools\skills-for-copilot-studio
 claude plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
 
-The plugin then runs from that clone, so keep the folder. `git pull` in it updates the plugin.
+The plugin then runs from that clone, so keep the folder. `git pull` in it updates the plugin. Claude Code does not install npm packages into a plugin it loads in place; the plugin's own session hook installs them into its data folder.
 
 ### From VS Code Extensions Store (GitHub Copilot)
 
@@ -70,7 +70,7 @@ The update process depends on how you installed the plugin:
 | Interface | Update Method | Details |
 |-----------|--------------|--------|
 | **Claude Code CLI** | Manual, or background auto-update once you turn it on | Claude Code leaves auto-update off for third-party marketplaces, and this is one. See below. |
-| **GitHub Copilot CLI** | Manual | Run `/plugin update xeno-skills-for-copilot-studio` in an interactive session, or `copilot plugin update xeno-skills-for-copilot-studio` from the terminal. |
+| **GitHub Copilot CLI** | Manual | Run `copilot plugin update copilot-studio@xeno-skills-for-copilot-studio` from the terminal, or `/plugin update copilot-studio@xeno-skills-for-copilot-studio` in an interactive session. `copilot plugin marketplace update xeno-skills-for-copilot-studio` refreshes the catalog first. |
 | **VS Code** | Extension auto-update | VS Code handles updates automatically when extension auto-update is enabled in settings. |
 
 ### Claude Code
@@ -106,7 +106,7 @@ If the data folder is still there, delete it by hand. Claude Code keeps the old 
 For GitHub Copilot CLI:
 
 ```bash
-copilot plugin uninstall copilot-studio
+copilot plugin uninstall copilot-studio@xeno-skills-for-copilot-studio
 copilot plugin marketplace remove xeno-skills-for-copilot-studio
 ```
 

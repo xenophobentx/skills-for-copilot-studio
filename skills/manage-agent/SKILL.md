@@ -29,7 +29,9 @@ This is a new capability under active development. The manage-agent scripts (`ma
 
 ## Phase 0: Resolve Configuration
 
-Find the agent folder (the one with `.mcs/conn.json`) and pass it as `--workspace`. `validate`, `push`, `pull`, `changes` and `publish` read the tenant ID, environment ID, agent ID, environment URL and agent management URL from that `conn.json`, so `--workspace` is the only option you need for them. Do not open `conn.json` to copy the values into flags. A flag you do pass wins over the file, and the script prints a warning when it differs from the file. Only when the folder has no `conn.json` (it was copied without `.mcs`, or the agent was never cloned), ask the user for the tenant ID and environment ID and pass them as flags.
+Find the agent folder (the one with `.mcs/conn.json`) and pass it as `--workspace`. `validate`, `push`, `pull`, `changes` and `publish` read the tenant ID, environment ID, agent ID, environment URL and agent management URL from that `conn.json`, so `--workspace` is the only option you need for them. Do not open `conn.json` to copy the values into flags. A flag you do pass wins over the file, and the script prints a warning when it differs from the file. The script prints a `Target` line on stderr with the environment name and ID, agent ID, tenant and both hosts. Show it to the user before a `push`, `pull` or `publish`. If the folder holds several agents, the script stops and lists them; pass the one you mean. If you pass an environment that is not the one in `conn.json`, `push`, `pull` and `publish` refuse unless `--force` is given, and `validate` and `changes` warn. A URL in `conn.json` is used only when it is https on a known Microsoft host; otherwise the script looks the environment up.
+
+If the folder has no `conn.json` (copied without `.mcs`, or never cloned), it has no `.mcs/botdefinition.json` either, and `validate`, `push`, `pull` and `changes` stop on that. Do not ask the user for IDs for them: clone the agent again into a new folder, copy the edited YAML files over, and use the new folder. `publish` is the exception: it needs `--tenant-id`, `--environment-url` and `--agent-id` when there is no `conn.json`.
 
 ## Phase 1: Authenticate
 
@@ -101,7 +103,7 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 **Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin).
 
-All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`). `validate`, `push`, `pull`, `changes` and `publish` read the connection details from it, so the examples below show `--workspace` only. `clone` has no `conn.json` yet and needs the flags shown in its section. If `--workspace` points at a folder without `conn.json`, the script says so and names the flags to pass.
+All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`). `validate`, `push`, `pull`, `changes` and `publish` read the connection details from it, so the examples below show `--workspace` only. `clone` has no `conn.json` yet and needs the flags shown in its section. If `--workspace` points at a folder without `conn.json`, the script says so and what to do about it (see Phase 0).
 
 ### Pull (download remote changes)
 
@@ -204,7 +206,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js publish \
 
 **Timeout: 300000ms (5 minutes)** — set this on the Bash tool call.
 
-Optional: `--agent-id "<agentId>"` overrides the bot ID from `conn.json`.
+Optional: `--agent-id "<agentId>"` overrides the bot ID from `conn.json` (the script warns when it differs). Without a `conn.json`, publish needs `--tenant-id`, `--environment-url` and `--agent-id`.
 
 #### Publish output (success)
 ```json

@@ -29,7 +29,7 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
 
    Files that still contain merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`, left by a conflicted pull) are reported with `source: "conflict-markers"`, one error per file that lists the marker lines, and are not parsed further. Resolve the markers first, then validate again.
 
-   The script reads tenant ID, environment ID and the URLs from `.mcs/conn.json` in the workspace, so `--workspace` is enough. Do not read `conn.json` to copy them into flags. Pass them only when the folder has no `conn.json`: `--tenant-id` and `--environment-id`.
+   The script reads tenant ID, environment ID and the URLs from `.mcs/conn.json` in the workspace, so `--workspace` is enough. Do not read `conn.json` to copy them into flags. A folder without `conn.json` has no `.mcs/botdefinition.json` either and validate stops on that: clone the agent again into a new folder instead of asking the user for IDs. If the script lists several agents, run it again with the folder of the one you mean.
 
 3. **Parse the JSON output**:
    - `status: "ok"` / `valid: true` → all files pass (may still have warnings)
