@@ -55,6 +55,8 @@ Recognised URL formats:
 ```
 https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>/overview
 https://copilotstudio.preview.microsoft.com/environments/<envId>/bots/<agentId>
+https://copilotstudio.preprod.microsoft.com/environments/<envId>/bots/<agentId>
+https://copilotstudio.test.microsoft.com/environments/<envId>/bots/<agentId>
 ```
 
 If the user provides a URL like this, you still need a `tenantId` (from a `conn.json` or by asking the user). Then **skip to Phase 3**, passing `--url` instead of `--agent-id` / `--environment-id` / `--environment-url` / `--agent-mgmt-url`:
@@ -67,6 +69,8 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
 ```
 
 The script will parse the URL to extract the environment ID and agent ID, then resolve the remaining environment details (Dataverse URL, agent management URL) automatically via the BAP API.
+
+The URL host also sets the cluster category stored in `.mcs/conn.json` (preview 4, preprod 3, test 2, otherwise 5). For a non-Prod environment without a URL, add `--cluster-category N` to the clone command.
 
 ### 0c. Ask the user
 
