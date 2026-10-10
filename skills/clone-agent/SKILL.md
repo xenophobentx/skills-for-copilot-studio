@@ -70,7 +70,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
 
 The script will parse the URL to extract the environment ID and agent ID, then resolve the remaining environment details (Dataverse URL, agent management URL) automatically via the BAP API.
 
-The URL host also sets the cluster category stored in `.mcs/conn.json` (preview 4, preprod 3, test 2, otherwise 5). For a non-Prod environment without a URL, add `--cluster-category N` to the clone command.
+The URL host also sets the cluster category stored in `.mcs/conn.json` (preview 4, preprod 3, test 2, otherwise 5). For a non-Prod environment without a URL, add `--cluster-category N` to the clone command. Only 4 and 5 were tested. For a preprod or test URL, if the lookup fails, pass `--environment-url` and `--agent-mgmt-url` as well.
 
 ### 0c. Ask the user
 

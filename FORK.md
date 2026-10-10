@@ -13,7 +13,9 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - A push blocked by validation exits 1. Upstream exits 0.
 - Push and validate stop early with a clear message when `.mcs/botdefinition.json` is missing, instead of the `CdsBotId` error (upstream issue #155).
 - The language server no longer logs an error at the end of every command.
-- `clone --cluster-category N` sets the cluster category that is written to `.mcs/conn.json`, so a preview, preprod or test agent can be cloned and later pushed and pulled. Without it, clone reads the category from the agent URL host the way the Copilot Studio extension does (preview 4, preprod 3, test 2, otherwise 5). Anything outside 0 to 8 is refused with a message. Based on upstream PR #165 by @adilei.
+- `clone --cluster-category N` sets the cluster category that is stored in `.mcs/conn.json`, so an agent outside Prod can be cloned. Without it, clone reads the category from the agent URL host the way the Copilot Studio extension does (preview 4, preprod 3, test 2, otherwise 5), and picks the BAP host for the environment lookup by category as the extension does. Push and pull read the stored value. Anything outside 0 to 8 is refused with a message, and other commands warn that they ignore the option. Based on upstream PR #165 by @adilei.
+- Tested live with categories 4 and 5 against a Prod environment, including `changes` and `pull` on a category 4 workspace. Categories 0 to 3 are not tested, there is no test or preprod tenant here. Categories 6 to 8 (government clouds) need `--environment-url` and `--agent-mgmt-url`, and the sign-in for them is not there.
+- A clone from a preview URL now stores 4, where it stored 5 before. That is what the extension stores. 4 and 5 use the same Island resource, and existing workspaces keep their value.
 
 ## Sign-in
 
