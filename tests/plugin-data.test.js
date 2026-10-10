@@ -255,6 +255,108 @@ check("--ensure with a failing npm exits 1 and names the log", r4.status === 1 &
   check("setup.js ignores a bare PLUGIN_DATA", res.status === 0 && !fs.existsSync(path.join(h, ".copilot-studio-cli")), res.stderr);
 }
 
+// --ensure on a folder it cannot write to: one line, exit 1, no stack trace
+{
+  const h = dir("ensure-home-nowrite");
+  fs.mkdirSync(path.join(h, ".copilot-studio-cli"));
+  fs.writeFileSync(path.join(h, ".copilot-studio-cli", "sfcs-data"), "in the way"); // a file where the folder should be
+  const res = ensure({}, h);
+  const lines = res.stderr.trim().split(/\r?\n/);
+  check("--ensure with an unwritable data folder exits 1 with one line", res.status === 1 && lines.length === 1, res.stderr);
+  check("--ensure with an unwritable data folder names the folder and the sandbox", lines[0].includes("sfcs-data") && /outside the sandbox/.test(lines[0]), res.stderr);
+  check("--ensure with an unwritable data folder prints no stack trace", !/\n\s+at |node:internal/.test(res.stderr) && res.stdout.trim() === "", res.stderr + res.stdout);
+  if (process.platform !== "win32" && !(process.getuid && process.getuid() === 0)) {
+    const h2 = dir("ensure-home-readonly");
+    fs.mkdirSync(path.join(h2, ".copilot-studio-cli"));
+    fs.chmodSync(path.join(h2, ".copilot-studio-cli"), 0o555);
+    const r = ensure({}, h2);
+    fs.chmodSync(path.join(h2, ".copilot-studio-cli"), 0o755);
+    check("--ensure on a read-only home folder exits 1 with one line and no stack", r.status === 1 && r.stderr.trim().split(/\r?\n/).length === 1 &&
+      /EACCES|EPERM|EROFS/.test(r.stderr) && /outside the sandbox/.test(r.stderr), r.stderr);
+  }
+}
+
+// Another session's installer is simulated by a live process whose pid names the
+// .install-<pid> folder. It finishes the install after a delay (or never).
+const sleeper = path.join(fake, "installer-sim.js");
+fs.writeFileSync(sleeper, `
+const fs = require("fs"), path = require("path");
+const [d, manifest, delay] = process.argv.slice(2);
+setTimeout(() => {
+  if (!Number(delay)) return;
+  fs.mkdirSync(path.join(d, "node_modules"), { recursive: true });
+  fs.copyFileSync(manifest, path.join(d, "native-deps.json"));
+  process.exit(0);
+}, Number(delay) || 60000);
+`);
+function simulateInstaller(d, delayMs) {
+  fs.mkdirSync(d, { recursive: true });
+  const c = cp.spawn(process.execPath, [sleeper, d, path.join(SCRIPTS, "native-deps.json"), String(delayMs)], { stdio: "ignore" });
+  fs.mkdirSync(path.join(d, ".install-" + c.pid));
+  return c;
+}
+const logOf = (d) => { try { return fs.readFileSync(path.join(d, "install.log"), "utf8"); } catch { return ""; } };
+
+{
+  // while another installer runs, --ensure waits in its own process and starts no --install child
+  const h = dir("ensure-home-wait");
+  const npmLog = path.join(root, "npm-runs-wait.log");
+  const sim = simulateInstaller(stableOf(h), 2000);
+  const t0 = Date.now();
+  const res = ensure({ FAKE_NPM_LOG: npmLog }, h);
+  check("--ensure waits for another session's install and then succeeds", res.status === 0 && res.stdout.includes("ready in") && Date.now() - t0 >= 1500, res.stderr + res.stdout);
+  check("--ensure does not start --install while another installer runs", !fs.existsSync(npmLog) && !/pid \d+/.test(logOf(stableOf(h))), logOf(stableOf(h)));
+  sim.kill();
+}
+{
+  // it gives up at the timeout, says who was installing, and leaves their folder alone
+  const h = dir("ensure-home-wait-timeout");
+  const sim = simulateInstaller(stableOf(h), 0);
+  const res = ensure({ SFCS_ENSURE_TIMEOUT_MS: "2500" }, h);
+  check("--ensure times out while another installer runs", res.status === 1 && res.stderr.includes("another session is still installing") && res.stderr.includes(".install-" + sim.pid), res.stderr);
+  check("--ensure starts no --install child for a live installer even at the timeout", !/pid \d+/.test(logOf(stableOf(h))) &&
+    fs.existsSync(path.join(stableOf(h), ".install-" + sim.pid)), logOf(stableOf(h)));
+  sim.kill();
+}
+{
+  // leftovers: .old-<pid> and .install-<pid> of dead pids are removed, .old-<pid> of a live pid stays
+  const h = dir("ensure-home-old");
+  const d = stableOf(h);
+  const live = cp.spawn(process.execPath, ["-e", "setTimeout(function () {}, 60000)"], { stdio: "ignore" });
+  const dead = cp.spawnSync(process.execPath, ["-e", ""]).pid;
+  for (const n of [".old-" + live.pid, ".old-" + dead, ".install-" + dead]) {
+    fs.mkdirSync(path.join(d, n, "node_modules"), { recursive: true });
+  }
+  const res = ensure({}, h);
+  const left = fs.readdirSync(d).sort();
+  check("--ensure removes .old and .install folders of dead pids", res.status === 0 && !left.includes(".old-" + dead) && !left.includes(".install-" + dead), left.join(" ") + res.stderr);
+  check("--ensure keeps the .old folder of a live pid", left.includes(".old-" + live.pid), left.join(" "));
+  live.kill();
+}
+
+// A timeout kills the whole install: the --install child and the npm below it
+{
+  const slowBin = dir("slow-bin");
+  const pidFile = path.join(root, "slow-npm.pid");
+  fs.writeFileSync(path.join(slowBin, "npm-slow.js"), `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(function () {}, 60000);\n`);
+  fs.writeFileSync(path.join(slowBin, "npm"), `#!/bin/sh\nexec node "${path.join(slowBin, "npm-slow.js")}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(slowBin, "npm.cmd"), `@node "${path.join(slowBin, "npm-slow.js")}" %*\r\n`);
+  const h = dir("ensure-home-slow");
+  const res = cp.spawnSync(process.execPath, [SETUP, "--ensure"], {
+    env: { PATH: slowBin + path.delimiter + process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: h, USERPROFILE: h, SFCS_ENSURE_TIMEOUT_MS: "5000" },
+    encoding: "utf8",
+  });
+  const npmPid = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, "utf8")) : 0;
+  const installPid = Number((/pid (\d+)/.exec(logOf(stableOf(h))) || [])[1]);
+  const isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err.code === "EPERM"; } };
+  const t = Date.now();
+  while ((isAlive(npmPid) || isAlive(installPid)) && Date.now() - t < 3000) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  check("a timed-out --ensure exits 1 and says it stopped the install", res.status === 1 && /stopped/.test(res.stderr), res.stderr);
+  check("the slow install was running when the timeout hit", npmPid > 0 && installPid > 0, `npm=${npmPid} install=${installPid}`);
+  check("a timed-out --ensure kills the --install child and what it started", !isAlive(npmPid) && !isAlive(installPid), `npm alive=${isAlive(npmPid)} install alive=${isAlive(installPid)}`);
+  if (isAlive(npmPid)) process.kill(npmPid, "SIGKILL");
+}
+
 // After --ensure, the banner and doctor pick the folder it reported, whatever else is set.
 {
   const { pluginData } = require("../scripts/src/doctor.js");
