@@ -630,7 +630,8 @@ test("withPersistenceLock: an EEXIST from mkdirSync (syscall 'mkdir') is not con
 test("withPersistenceLock: a win32 EACCES on open is contention while the lock file is actually there", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "msal-lock-"));
   const lockPath = path.join(dir, ".persistence.lock");
-  fs.writeFileSync(lockPath, "999999:aaaaaaaaaaaaaaaa"); // a real lock file is present
+  // A live holder (this process), so the lock is not taken over as stale while the test polls.
+  fs.writeFileSync(lockPath, `${process.pid}:aaaaaaaaaaaaaaaa`);
   const realOpenSync = fs.openSync;
   let attempts = 0;
   fs.openSync = (p, flags, mode) => {
@@ -686,6 +687,71 @@ test("withPersistenceLock: a win32 EACCES on open with no lock file present is n
     assert.equal(ran, true);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Could not acquire the persistence lock/);
+  } finally {
+    fs.openSync = realOpenSync;
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("withPersistenceLock: a win32 EPERM on open whose stat then fails ENOENT (holder just released) is contention", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "msal-lock-"));
+  const lockPath = path.join(dir, ".persistence.lock"); // already deleted when we stat it
+  const realOpenSync = fs.openSync;
+  let opens = 0;
+  fs.openSync = (p, flags, mode) => {
+    if (p === lockPath && flags === "wx") {
+      opens++;
+      if (opens <= 2) {
+        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      }
+    }
+    return realOpenSync(p, flags, mode);
+  };
+  const warnings = [];
+  let ranUnderLock = false;
+  try {
+    const result = await withPersistenceLock(
+      lockPath,
+      async () => {
+        ranUnderLock = fs.existsSync(lockPath);
+        return "ok";
+      },
+      { platform: "win32", warn: (m) => warnings.push(m), pollMs: 1, sleep: async () => {} }
+    );
+    assert.equal(result, "ok");
+    assert.equal(opens, 3); // retried twice, then took the lock
+    assert.equal(ranUnderLock, true);
+    assert.deepEqual(warnings, []); // did not fall back to running unlocked
+  } finally {
+    fs.openSync = realOpenSync;
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("withPersistenceLock: a win32 EPERM on open that keeps failing with no lock file gives up after a few tries", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "msal-lock-"));
+  const lockPath = path.join(dir, ".persistence.lock"); // never created
+  const realOpenSync = fs.openSync;
+  let opens = 0;
+  fs.openSync = (p, flags, mode) => {
+    if (p === lockPath && flags === "wx") {
+      opens++;
+      throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    }
+    return realOpenSync(p, flags, mode);
+  };
+  const warnings = [];
+  try {
+    const result = await withPersistenceLock(lockPath, async () => "ok", {
+      platform: "win32",
+      warn: (m) => warnings.push(m),
+      pollMs: 1,
+      sleep: async () => {},
+    });
+    assert.equal(result, "ok");
+    assert.ok(opens > 1 && opens <= 20); // bounded, not the whole wait
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Could not acquire the persistence lock .*EPERM/);
   } finally {
     fs.openSync = realOpenSync;
   }

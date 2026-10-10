@@ -3102,14 +3102,18 @@ var require_msal_cache = __commonJS({
     } = {}) {
       const deadline = Date.now() + waitMs;
       const token = `${process.pid}:${crypto4.randomBytes(8).toString("hex")}`;
+      const MAX_VANISHED_RETRIES = 10;
+      let vanishedRetries = 0;
       const isContention = (e) => {
         if (e.code === "EEXIST") return e.syscall === "open";
         if (platform2 === "win32" && e.code === "EBUSY") return true;
         if (platform2 === "win32" && (e.code === "EPERM" || e.code === "EACCES")) {
           try {
             fs7.statSync(lockPath);
+            vanishedRetries = 0;
             return true;
           } catch (statErr) {
+            if (statErr.code === "ENOENT") return ++vanishedRetries <= MAX_VANISHED_RETRIES;
             return statErr.code === "EPERM";
           }
         }

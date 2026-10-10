@@ -146,14 +146,21 @@ async function withPersistenceLock(
   // EEXIST means the lock is held only when it comes from opening the lock file (mkdirSync can
   // also throw it when a file sits at the cache-dir path). On win32 an in-use lock can surface as
   // EBUSY, or as EPERM/EACCES, which count only once the lock file is confirmed to be there.
+  // A file in delete-pending state fails the open with EPERM and is gone by the time we stat it
+  // (ENOENT). That is the holder releasing, so it counts as contention too, but only a few times
+  // in a row: an EPERM or EACCES that keeps coming with no file there is a real permission problem.
+  const MAX_VANISHED_RETRIES = 10;
+  let vanishedRetries = 0;
   const isContention = (e) => {
     if (e.code === "EEXIST") return e.syscall === "open";
     if (platform === "win32" && e.code === "EBUSY") return true;
     if (platform === "win32" && (e.code === "EPERM" || e.code === "EACCES")) {
       try {
         fs.statSync(lockPath);
+        vanishedRetries = 0;
         return true;
       } catch (statErr) {
+        if (statErr.code === "ENOENT") return ++vanishedRetries <= MAX_VANISHED_RETRIES;
         return statErr.code === "EPERM";
       }
     }
