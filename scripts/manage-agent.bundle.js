@@ -18985,7 +18985,7 @@ var require_conn_defaults = __commonJS({
   "src/conn-defaults.js"(exports2, module2) {
     var fs7 = require("fs");
     var path3 = require("path");
-    var WORKSPACE_COMMANDS = ["validate", "push", "pull", "changes", "publish"];
+    var WORKSPACE_COMMANDS = ["validate", "push", "pull", "changes", "publish", "remote-changes", "verify"];
     var WRITE_COMMANDS = ["push", "pull", "publish"];
     var FLAGS = {
       tenantId: "--tenant-id",

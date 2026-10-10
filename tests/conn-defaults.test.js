@@ -211,7 +211,7 @@ test("CPS_ENVIRONMENT_ID loses to conn.json, so it is no environment mismatch", 
 // Agent id: only publish sends it, so only publish compares it
 // ---------------------------------------------------------------------------
 
-for (const command of ["validate", "push", "pull", "changes"]) {
+for (const command of ["validate", "push", "pull", "changes", "remote-changes", "verify"]) {
   test(`${command}: an --agent-id that differs gives no warning`, () => {
     const args = emptyArgs({ command, agentId: "other-agent" });
     const r = applyConnDefaults(args, realConn(), ctx(["--agent-id", "other-agent"], {}, command));
@@ -731,7 +731,7 @@ test("V2: push with another --agent-mgmt-url is refused and names the flag", () 
 const emptyWs = path.join(tmp, "empty");
 fs.mkdirSync(emptyWs);
 
-for (const command of ["validate", "push", "pull", "changes"]) {
+for (const command of ["validate", "push", "pull", "changes", "remote-changes", "verify"]) {
   test(`hint: ${command} without conn.json says to clone again`, () => {
     const { warns } = resolve(emptyArgs({ workspace: emptyWs, command }));
     assert.strictEqual(warns.length, 1);
@@ -786,7 +786,7 @@ function runBundle(args, extraEnv = {}) {
 }
 const errorOf = (r) => JSON.parse(r.stdout.trim()).error;
 
-for (const command of ["validate", "push", "pull", "changes"]) {
+for (const command of ["validate", "push", "pull", "changes", "remote-changes", "verify"]) {
   test(`bundle: ${command} --workspace alone gets past the tenant and environment checks`, () => {
     const r = runBundle([command, "--workspace", agentDir]);
     assert.strictEqual(r.status, 1, r.stderr);

@@ -22,7 +22,7 @@ const path = require("path");
 // Commands that work on a cloned workspace. clone is left out on purpose: its
 // workspace is the target folder, and an unrelated agent in a subfolder must
 // not feed it defaults.
-const WORKSPACE_COMMANDS = ["validate", "push", "pull", "changes", "publish"];
+const WORKSPACE_COMMANDS = ["validate", "push", "pull", "changes", "publish", "remote-changes", "verify"];
 
 // Commands that write to the server. An environment mismatch stops them.
 const WRITE_COMMANDS = ["push", "pull", "publish"];

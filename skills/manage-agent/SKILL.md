@@ -29,7 +29,7 @@ This is a new capability under active development. The manage-agent scripts (`ma
 
 ## Phase 0: Resolve Configuration
 
-Find the agent folder (the one with `.mcs/conn.json`) and pass it as `--workspace`. `validate`, `push`, `pull`, `changes` and `publish` read the tenant ID, environment ID, agent ID, environment URL and agent management URL from that `conn.json`, so `--workspace` is the only option you need for them. Do not open `conn.json` to copy the values into flags. A flag you do pass wins over the file, and the script prints a warning when it differs from the file. The script prints a `Target` line on stderr with the environment name and ID, agent ID, tenant and both hosts. Show it to the user before a `push`, `pull` or `publish`. If the folder holds several agents, the script stops and lists them; pass the one you mean. If you pass an environment that is not the one in `conn.json`, `push`, `pull` and `publish` refuse unless `--force` is given, and `validate` and `changes` warn. A URL in `conn.json` is used only when it is https on a known Microsoft host; otherwise the script looks the environment up.
+Find the agent folder (the one with `.mcs/conn.json`) and pass it as `--workspace`. `validate`, `push`, `pull`, `changes`, `remote-changes`, `verify` and `publish` read the tenant ID, environment ID, agent ID, environment URL and agent management URL from that `conn.json`, so `--workspace` is the only option you need for them. Do not open `conn.json` to copy the values into flags. A flag you do pass wins over the file, and the script prints a warning when it differs from the file. The script prints a `Target` line on stderr with the environment name and ID, agent ID, tenant and both hosts. Show it to the user before a `push`, `pull` or `publish`. If the folder holds several agents, the script stops and lists them; pass the one you mean. If you pass an environment that is not the one in `conn.json`, `push`, `pull` and `publish` refuse unless `--force` is given, and `validate` and `changes` warn. A URL in `conn.json` is used only when it is https on a known Microsoft host; otherwise the script looks the environment up.
 
 If the folder has no `conn.json` (copied without `.mcs`, or never cloned), it has no `.mcs/botdefinition.json` either, and `validate`, `push`, `pull` and `changes` stop on that. Do not ask the user for IDs for them: clone the agent again into a new folder, copy the edited YAML files over, and use the new folder. `publish` is the exception: it needs `--tenant-id`, `--environment-url` and `--agent-id` when there is no `conn.json`.
 
@@ -103,7 +103,7 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 **Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). `pull` and `push` also refuse such a workspace themselves. Never pass `--allow-cli-agent` unless the user names that flag. A pull into one was reported to cut the tail off `settings.mcs.yml` (upstream issue #180).
 
-All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`). `validate`, `push`, `pull`, `changes` and `publish` read the connection details from it, so the examples below show `--workspace` only. `clone` has no `conn.json` yet and needs the flags shown in its section. If `--workspace` points at a folder without `conn.json`, the script says so and what to do about it (see Phase 0).
+All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`). `validate`, `push`, `pull`, `changes`, `remote-changes`, `verify` and `publish` read the connection details from it, so the examples below show `--workspace` only. `clone` has no `conn.json` yet and needs the flags shown in its section. If `--workspace` points at a folder without `conn.json`, the script says so and what to do about it (see Phase 0).
 
 ### Remote changes (what a pull would change, writes nothing)
 
@@ -111,11 +111,7 @@ Run this before a pull when the agent may have been edited in the portal or by s
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js remote-changes \
-  --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-id "<envId>" \
-  --environment-url "<envUrl>" \
-  --agent-mgmt-url "<mgmtUrl>"
+  --workspace "<path-to-agent-folder>"
 ```
 
 The output has `message` (one sentence), `remote` (one entry per file the server changed: `file`, `server` as added, modified or deleted, `local` if you changed it too, `bothSides`, `merge`, and `diff` with the first differing lines of both sides), `bothSides` (files changed on the server and here with different content), `conflicts` (files where the same lines changed on both sides, so a pull writes conflict markers), and `localOnly` (your changes the pull does not touch). `merge` is `clean` (different lines, should merge), `conflict`, `same`, or `unknown` (the base copy could not be read, so it may or may not merge cleanly). The `diff` is a text diff and can include comment and formatting lines. If `conflicts` is not empty, tell the user which files before you pull and show the `diff`. Do not pull on your own in that case.
@@ -126,11 +122,7 @@ The output has `message` (one sentence), `remote` (one entry per file the server
 
 ```bash
 node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js verify \
-  --workspace "<path-to-agent-folder>" \
-  --tenant-id "<tenantId>" \
-  --environment-id "<envId>" \
-  --environment-url "<envUrl>" \
-  --agent-mgmt-url "<mgmtUrl>"
+  --workspace "<path-to-agent-folder>"
 ```
 
 ### Pull (download remote changes)
