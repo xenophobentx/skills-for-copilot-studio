@@ -8,34 +8,46 @@ const r = p.resolve(__dirname, '..');
 // CLAUDE_PLUGIN_DATA is what the harness hands to this hook, so it is this plugin's
 // own folder here. Other plugins use the same name in the session, so the scripts
 // get SFCS_PLUGIN_DATA and sfcs-plugin-paths.json, and read CLAUDE_PLUGIN_DATA
-// only when that folder holds our native-deps.json. PLUGIN_DATA is the plain name
-// Codex also sets.
+// only when that folder holds our native-deps.json.
 //
 // `setup.js --ensure` is the way without a hook (Codex before the hook is trusted,
 // `npx skills add`). It runs from a model's shell, so CLAUDE_PLUGIN_DATA and
 // plugin-paths.json can name another plugin's folder (a shell started from a Claude
 // Code session has them set) and are never used to pick an install folder. It installs
-// into SFCS_PLUGIN_DATA, the folder in sfcs-plugin-paths.json (written by our hook), or
-// ~/.copilot-studio-cli/sfcs-data, one folder per user. It waits for the install and
-// writes no paths file.
+// into SFCS_PLUGIN_DATA, the folder in sfcs-plugin-paths.json (written by our hook, and
+// only when its pluginRoot is this plugin copy, because the file is shared by every copy
+// and the last session start wins), or ~/.copilot-studio-cli/sfcs-data, one folder per
+// user. It waits for the install and writes no paths file.
 const ensure = process.argv[2] === '--ensure';
 const cli = p.join(os.homedir(), '.copilot-studio-cli');
 const fallback = p.join(cli, 'sfcs-data');
 const e = process.env.CLAUDE_ENV_FILE;
 
-function pathFileData(name) {
+// The file is shared by every copy of the plugin and the last hook to run wins, so its
+// folder is ours only if pluginRoot names this copy. Same check as in the bundle banner.
+function sameDir(a, b) {
   try {
-    const v = JSON.parse(fs.readFileSync(p.join(cli, name), 'utf8').replace(/^\uFEFF/, '')).pluginData;
-    return typeof v === 'string' && fs.existsSync(v) ? v : undefined;
+    const x = fs.realpathSync(a);
+    const y = fs.realpathSync(b);
+    return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+  } catch {
+    return false;
+  }
+}
+function ownPathFileData() {
+  try {
+    const j = JSON.parse(fs.readFileSync(p.join(cli, 'sfcs-plugin-paths.json'), 'utf8').replace(/^\uFEFF/, ''));
+    const v = j.pluginData;
+    return typeof v === 'string' && fs.existsSync(v) && typeof j.pluginRoot === 'string' && sameDir(j.pluginRoot, r) ? v : undefined;
   } catch {}
 }
 // The banner in scripts/package.json and pluginData() in doctor.js look in this order:
-// SFCS_PLUGIN_DATA, sfcs-plugin-paths.json, the stable folder, then the shared names.
-// tests/plugin-data.test.js checks that after --ensure all three pick its folder.
+// SFCS_PLUGIN_DATA, sfcs-plugin-paths.json (this copy only), the stable folder, then the
+// shared names. tests/plugin-data.test.js checks that after --ensure all three pick its folder.
 function lookup() {
-  return process.env.SFCS_PLUGIN_DATA || pathFileData('sfcs-plugin-paths.json') || fallback;
+  return process.env.SFCS_PLUGIN_DATA || ownPathFileData() || fallback;
 }
-const d = ensure ? lookup() : process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA || process.env.PLUGIN_DATA;
+const d = ensure ? lookup() : process.env.CLAUDE_PLUGIN_DATA || process.env.COPILOT_PLUGIN_DATA;
 
 if (!r || !d) {
   process.exit(0);

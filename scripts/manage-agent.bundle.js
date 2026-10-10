@@ -1,4 +1,4 @@
-var _sf=require('fs'),_sp=require('path'),_sr=function(n){try{var v=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')).pluginData;if(typeof v=='string'&&_sf.existsSync(v))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(_sp.join(require('os').homedir(),'.copilot-studio-cli','sfcs-data'))||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
+var _sf=require('fs'),_sp=require('path'),_ss=function(a){try{var f=function(x){x=_sf.realpathSync(x);return process.platform=='win32'?x.toLowerCase():x};return typeof a=='string'&&f(a)==f(_sp.join(__dirname,'..'))}catch{}},_sr=function(n){try{var j=JSON.parse(_sf.readFileSync(_sp.join(require('os').homedir(),'.copilot-studio-cli',n),'utf8')),v=j.pluginData;if(typeof v=='string'&&_sf.existsSync(v)&&(n!='sfcs-plugin-paths.json'||_ss(j.pluginRoot)))return v}catch{}},_so=function(x){return x&&_sf.existsSync(_sp.join(x,'native-deps.json'))&&x},_sd=process.env.SFCS_PLUGIN_DATA||_sr('sfcs-plugin-paths.json')||_so(_sp.join(require('os').homedir(),'.copilot-studio-cli','sfcs-data'))||_so(process.env.CLAUDE_PLUGIN_DATA)||_so(_sr('plugin-paths.json'));if(_sd){process.env.NODE_PATH=[_sp.join(_sd,'node_modules'),process.env.NODE_PATH].filter(Boolean).join(_sp.delimiter);require('module')._initPaths()}
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -18175,17 +18175,22 @@ var require_doctor = __commonJS({
     function ensureCommand(ctx) {
       return `node "${path3.join(ownRoot(ctx), "hooks", "setup.js")}" --ensure`;
     }
-    function pathFileData(ctx, name) {
+    function pathFileData(ctx, name, ownCopy) {
       const r = readJson(ctx, path3.join(cliDir(ctx), name));
       const v = r.value && r.value.pluginData;
-      return typeof v === "string" && exists(ctx, v) ? v : null;
+      if (typeof v !== "string" || !exists(ctx, v)) return null;
+      if (ownCopy && !isOwnRoot(ctx, r.value.pluginRoot)) return null;
+      return v;
+    }
+    function isOwnRoot(ctx, root) {
+      return typeof root === "string" && exists(ctx, root) && samePath(ctx, root, ownRoot(ctx));
     }
     function ours(ctx, dir) {
       return typeof dir === "string" && dir !== "" && exists(ctx, path3.join(dir, "native-deps.json"));
     }
     function pluginData(ctx) {
       if (ctx.env.SFCS_PLUGIN_DATA) return { dir: ctx.env.SFCS_PLUGIN_DATA, source: "SFCS_PLUGIN_DATA" };
-      const own = pathFileData(ctx, "sfcs-plugin-paths.json");
+      const own = pathFileData(ctx, "sfcs-plugin-paths.json", true);
       if (own) return { dir: own, source: "sfcs-plugin-paths.json" };
       const fb = fallbackDir(ctx);
       if (ours(ctx, fb)) return { dir: fb, source: "stable folder" };
@@ -18346,6 +18351,9 @@ var require_doctor = __commonJS({
         add("plugin-paths", "WARN", `${file} is not valid, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
       } else if (typeof r.value.pluginData !== "string" || !exists(ctx, r.value.pluginData)) {
         add("plugin-paths", "WARN", `pluginData in ${file} is missing or does not exist, the scripts ignore it`, "Start a new session with the plugin loaded to rewrite it.");
+      } else if (!isOwnRoot(ctx, r.value.pluginRoot)) {
+        const root = typeof r.value.pluginRoot === "string" ? r.value.pluginRoot : "missing";
+        add("plugin-paths", "OK", `${file} was written by another copy of the plugin (pluginRoot ${root}), this copy ignores it`);
       } else {
         const pd = pluginData(ctx);
         if (pd && pd.source === "SFCS_PLUGIN_DATA" && !samePath(ctx, pd.dir, r.value.pluginData)) {

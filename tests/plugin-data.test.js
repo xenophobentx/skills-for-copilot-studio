@@ -17,6 +17,7 @@ const path = require("path");
 
 const SCRIPTS = path.join(__dirname, "..", "scripts");
 const SETUP = path.join(__dirname, "..", "hooks", "setup.js");
+const REPO = path.resolve(__dirname, "..");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-data-test-"));
 
 let passed = 0;
@@ -52,15 +53,26 @@ function dir(name, files) {
 
 // Runs the banner in a child process with a fake home and a clean environment;
 // prints the first NODE_PATH entry the banner added.
+// The banner finds its plugin root from __dirname, which is "." under -e, so the child runs
+// in <plugin root>/scripts. A sfcs-plugin-paths.json entry is { pluginData, pluginRoot }, or a
+// plain folder name, which means "written by this copy" (the root the banner runs in).
+const bannerRoot = dir("banner-root", []);
+const bannerCwd = dir(path.join("banner-root", "scripts"), []);
+const otherRoot = dir("other-copy-root", []);
+function pathsBody(f, v, rootOfThisCopy) {
+  if (f !== "sfcs-plugin-paths.json") return { pluginData: v };
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && "pluginData" in v) return v;
+  return { pluginData: v, pluginRoot: rootOfThisCopy };
+}
 function resolve(env, home, pathsFiles) {
   const cfg = path.join(home, ".copilot-studio-cli");
   fs.rmSync(cfg, { recursive: true, force: true });
   fs.mkdirSync(cfg, { recursive: true });
   for (const [f, data] of Object.entries(pathsFiles || {})) {
-    fs.writeFileSync(path.join(cfg, f), JSON.stringify({ pluginData: data }));
+    fs.writeFileSync(path.join(cfg, f), JSON.stringify(pathsBody(f, data, bannerRoot)));
   }
   const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, ...env };
-  const r = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8" });
+  const r = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8", cwd: bannerCwd });
   if (r.status !== 0) return "ERROR " + r.stderr;
   return r.stdout.trim().split(path.delimiter)[0];
 }
@@ -97,6 +109,20 @@ check("broken sfcs-plugin-paths.json falls through", (() => {
   const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, CLAUDE_PLUGIN_DATA: own };
   const r = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8" });
   return r.stdout.trim().split(path.delimiter)[0] === nm(own);
+})());
+check("sfcs-plugin-paths.json of another copy is ignored", resolve(
+  {}, home, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: otherRoot } }) === "");
+check("sfcs-plugin-paths.json of another copy falls through to CLAUDE_PLUGIN_DATA with our marker", resolve(
+  { CLAUDE_PLUGIN_DATA: own2 }, home, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: otherRoot } }) === nm(own2));
+check("sfcs-plugin-paths.json without pluginRoot is ignored", resolve({}, home, { "sfcs-plugin-paths.json": { pluginData: own } }) === "");
+check("sfcs-plugin-paths.json with a pluginRoot that does not exist is ignored", resolve(
+  {}, home, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: path.join(root, "gone") } }) === "");
+check("sfcs-plugin-paths.json with a pluginRoot that is not a string is ignored", resolve(
+  {}, home, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: 5 } }) === "");
+check("pluginRoot reached through a symlink still counts as this copy", (() => {
+  const link = path.join(root, "root-link");
+  try { fs.symlinkSync(bannerRoot, link, "junction"); } catch { return true; }
+  return resolve({}, home, { "sfcs-plugin-paths.json": { pluginData: own, pluginRoot: link } }) === nm(own);
 })());
 check("an existing NODE_PATH is kept after ours", (() => {
   const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: home, USERPROFILE: home, SFCS_PLUGIN_DATA: own, NODE_PATH: foreign2 };
@@ -219,6 +245,13 @@ const r4 = cp.spawnSync(process.execPath, [SETUP, "--ensure"], {
 check("--ensure with a failing npm exits 1 and names the log", r4.status === 1 && r4.stderr.includes("install.log") &&
   !fs.existsSync(path.join(stableOf(eHome3), "native-deps.json")), r4.stderr);
 
+// The generic PLUGIN_DATA name is not used by the hook (Codex sets CLAUDE_PLUGIN_DATA for it too).
+{
+  const h = dir("setup-home-plain-name");
+  const res = setup({ PLUGIN_DATA: sData }, h);
+  check("setup.js ignores a bare PLUGIN_DATA", res.status === 0 && !fs.existsSync(path.join(h, ".copilot-studio-cli")), res.stderr);
+}
+
 // After --ensure, the banner and doctor pick the folder it reported, whatever else is set.
 {
   const { pluginData } = require("../scripts/src/doctor.js");
@@ -237,18 +270,21 @@ check("--ensure with a failing npm exits 1 and names the log", r4.status === 1 &
     ["stable folder complete", {}, {}, true, "stable"],
     ["stable folder beats the shared names", { CLAUDE_PLUGIN_DATA: a }, { "plugin-paths.json": b }, true, "stable"],
     ["sfcs file beats the stable folder", {}, { "sfcs-plugin-paths.json": a }, true, a],
+    ["sfcs file of another copy is not used", {}, { "sfcs-plugin-paths.json": { pluginData: a, pluginRoot: otherRoot } }, false, "stable"],
+    ["sfcs file of another copy loses to the stable folder", {}, { "sfcs-plugin-paths.json": { pluginData: a, pluginRoot: otherRoot } }, true, "stable"],
+    ["sfcs file without pluginRoot is not used", {}, { "sfcs-plugin-paths.json": { pluginData: a } }, false, "stable"],
   ];
   for (const [label, env, files, withStableDir, want] of cases) {
     const h = dir("agree-home-" + label.replace(/\W+/g, "-"));
     fs.mkdirSync(path.join(h, ".copilot-studio-cli"), { recursive: true });
-    for (const [f, data] of Object.entries(files)) fs.writeFileSync(path.join(h, ".copilot-studio-cli", f), JSON.stringify({ pluginData: data }));
+    for (const [f, data] of Object.entries(files)) fs.writeFileSync(path.join(h, ".copilot-studio-cli", f), JSON.stringify(pathsBody(f, data, REPO)));
     if (withStableDir) complete(stableOf(h));
     const res = ensure(env, h);
     const m = /ready in (.*?)\r?\n/.exec(res.stdout);
     const reported = m && m[1];
     const expected = want === "stable" ? stableOf(h) : want;
     const clean = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: h, USERPROFILE: h, ...env };
-    const probe = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8" });
+    const probe = cp.spawnSync(process.execPath, ["-e", banner + ";console.log(process.env.NODE_PATH||'')"], { env: clean, encoding: "utf8", cwd: SCRIPTS });
     const first = probe.stdout.trim().split(path.delimiter)[0];
     const fromBanner = first ? path.dirname(first) : null;
     const fromDoctor = (pluginData(fsCtx(h, env)) || {}).dir || null;
