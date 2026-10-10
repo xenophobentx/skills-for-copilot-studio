@@ -1,0 +1,7 @@
+# Check out text files with LF on every OS. The CI job rebuilds the bundles
+# and compares them with the committed ones, and a Windows checkout with
+# autocrlf would otherwise turn them into CRLF.
+* text=auto eol=lf
+
+*.png binary
+reference/adaptive-card.schema.json -text
