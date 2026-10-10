@@ -59,7 +59,8 @@ function sameId(a, b) {
 
 /**
  * A URL from conn.json is used only when it is https, has no credentials, uses the
- * default port and its host ends in one of `suffixes`. Returns { url } or { reason }.
+ * default port and its host ends in one of `suffixes`. Returns { url } (the parsed
+ * origin, so path, query and odd spellings are gone) or { reason }.
  */
 function checkUrl(value, suffixes) {
   const text = str(value);
@@ -75,7 +76,15 @@ function checkUrl(value, suffixes) {
   if (u.port && u.port !== "443") return { reason: "unusual port" };
   const host = u.hostname.toLowerCase();
   if (!suffixes.some((s) => host.endsWith(s))) return { reason: `host is not on ${suffixes.join(" or ")}` };
-  return { url: text };
+  return { url: u.origin }; // the parsed origin, never the text as typed
+}
+
+function originOf(value) {
+  try {
+    return new URL(String(value)).origin.toLowerCase();
+  } catch {
+    return String(value).toLowerCase();
+  }
 }
 
 function hostOf(value) {
@@ -184,7 +193,7 @@ function sourceOf(option, args, { argv = [], env = {} } = {}) {
  *   rejected     [{ option, value, reason }] conn.json URLs that failed the check
  */
 function applyConnDefaults(args, conn, ctx = {}) {
-  const result = { used: [], warnings: [], envMismatch: null, envMatches: false, rejected: [] };
+  const result = { used: [], warnings: [], envMismatch: null, urlMismatches: [], envMatches: false, rejected: [] };
   if (!conn) return result;
   const where = { argv: ctx.argv || [], env: ctx.env || {} };
 
@@ -232,13 +241,28 @@ function applyConnDefaults(args, conn, ctx = {}) {
     if (conn[field] == null) continue;
     const checked = checkUrl(conn[field], suffixes);
     if (checked.url) {
-      fill(option, checked.url, field, { compare: false });
+      const src = fill(option, checked.url, field, { compare: false });
+      // A URL flag that points somewhere else than the workspace's environment is as
+      // much a mismatch as another environment id: publish uses the URL, not the id.
+      if (src && src.kind !== "env" && originOf(args[option]) !== originOf(checked.url)) {
+        const what = option === "environmentUrl" ? "Dataverse URL" : "agent management URL";
+        result.urlMismatches.push({ source: src.label, option, what, given: args[option], stored: checked.url });
+        result.warnings.push(
+          `${src.label} ${args[option]} differs from the ${what} in .mcs/conn.json (${checked.url}). ` +
+            "The workspace belongs to the environment in conn.json."
+        );
+      }
     } else {
       result.rejected.push({ option, value: String(conn[field]).slice(0, 200), reason: checked.reason });
-      result.warnings.push(
-        `.mcs/conn.json ${field} (${String(conn[field]).slice(0, 120)}) is not used: ${checked.reason}. ` +
-          `${FLAGS[option]} sets it, or the environment lookup fills it.`
-      );
+      const remedy =
+        ctx.command === "publish"
+          ? option === "environmentUrl"
+            ? "publish has no environment lookup, so pass --environment-url."
+            : "publish does not use it."
+          : `${FLAGS[option]} sets it, or the environment lookup fills it.`;
+      if (ctx.command !== "publish" || option === "environmentUrl") {
+        result.warnings.push(`.mcs/conn.json ${field} (${String(conn[field]).slice(0, 120)}) is not used: ${checked.reason}. ${remedy}`);
+      }
     }
   }
   return result;
@@ -268,7 +292,8 @@ function noConnHint(command, workspace) {
  * The manage-agent entry point: for the commands in WORKSPACE_COMMANDS with a
  * --workspace, find the agent folder, read its conn.json and fill the gaps in args.
  * Stops (die) when the workspace holds several agents, and for push, pull and
- * publish when an explicit environment is not the one in conn.json, unless --force.
+ * publish when an explicit environment id or environment/agent management URL is not
+ * the one in conn.json, unless --force.
  * Logs one line with the target and one warning per value that lost.
  *
  * deps: { findAgentDir, log, warn, die, argv, env, fsImpl }
@@ -298,12 +323,21 @@ function resolveConnDefaults(args, { findAgentDir, log, warn, die, argv = proces
   }
   for (const w of result.warnings) warn(w);
 
-  if (result.envMismatch && WRITE_COMMANDS.includes(args.command) && !args.force) {
+  if (WRITE_COMMANDS.includes(args.command) && !args.force) {
     const m = result.envMismatch;
-    die(
-      `${args.command} refused: ${m.source} environment ${m.given} is not the environment of this workspace (${m.stored} in .mcs/conn.json). ` +
-        "Use the workspace of that environment, or add --force if you mean it."
-    );
+    if (m) {
+      die(
+        `${args.command} refused: ${m.source} environment ${m.given} is not the environment of this workspace (${m.stored} in .mcs/conn.json). ` +
+          "Use the workspace of that environment, or add --force if you mean it."
+      );
+    }
+    const u = result.urlMismatches[0];
+    if (u) {
+      die(
+        `${args.command} refused: ${u.source} ${u.given} is not the ${u.what} of this workspace (${u.stored} in .mcs/conn.json). ` +
+          "Use the workspace of that environment, or add --force if you mean it."
+      );
+    }
   }
 
   if (conn) {

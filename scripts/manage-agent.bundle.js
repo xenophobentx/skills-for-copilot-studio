@@ -18677,7 +18677,14 @@ var require_conn_defaults = __commonJS({
       if (u.port && u.port !== "443") return { reason: "unusual port" };
       const host = u.hostname.toLowerCase();
       if (!suffixes.some((s) => host.endsWith(s))) return { reason: `host is not on ${suffixes.join(" or ")}` };
-      return { url: text };
+      return { url: u.origin };
+    }
+    function originOf(value) {
+      try {
+        return new URL(String(value)).origin.toLowerCase();
+      } catch {
+        return String(value).toLowerCase();
+      }
     }
     function hostOf(value) {
       if (!value) return "(looked up)";
@@ -18687,7 +18694,7 @@ var require_conn_defaults = __commonJS({
         return String(value);
       }
     }
-    function readConnJson(agentDir, fsImpl = fs7) {
+    function readConnJson2(agentDir, fsImpl = fs7) {
       try {
         const text = fsImpl.readFileSync(path3.join(agentDir, ".mcs", "conn.json"), "utf8");
         const conn = JSON.parse(text.replace(/^﻿/, ""));
@@ -18738,7 +18745,7 @@ var require_conn_defaults = __commonJS({
       return { kind: "flag", label: FLAGS[option] };
     }
     function applyConnDefaults(args, conn, ctx = {}) {
-      const result = { used: [], warnings: [], envMismatch: null, envMatches: false, rejected: [] };
+      const result = { used: [], warnings: [], envMismatch: null, urlMismatches: [], envMatches: false, rejected: [] };
       if (!conn) return result;
       const where = { argv: ctx.argv || [], env: ctx.env || {} };
       const fill = (option, value, from, { compare = true, label } = {}) => {
@@ -18776,12 +18783,20 @@ var require_conn_defaults = __commonJS({
         if (conn[field] == null) continue;
         const checked = checkUrl(conn[field], suffixes);
         if (checked.url) {
-          fill(option, checked.url, field, { compare: false });
+          const src = fill(option, checked.url, field, { compare: false });
+          if (src && src.kind !== "env" && originOf(args[option]) !== originOf(checked.url)) {
+            const what = option === "environmentUrl" ? "Dataverse URL" : "agent management URL";
+            result.urlMismatches.push({ source: src.label, option, what, given: args[option], stored: checked.url });
+            result.warnings.push(
+              `${src.label} ${args[option]} differs from the ${what} in .mcs/conn.json (${checked.url}). The workspace belongs to the environment in conn.json.`
+            );
+          }
         } else {
           result.rejected.push({ option, value: String(conn[field]).slice(0, 200), reason: checked.reason });
-          result.warnings.push(
-            `.mcs/conn.json ${field} (${String(conn[field]).slice(0, 120)}) is not used: ${checked.reason}. ${FLAGS[option]} sets it, or the environment lookup fills it.`
-          );
+          const remedy = ctx.command === "publish" ? option === "environmentUrl" ? "publish has no environment lookup, so pass --environment-url." : "publish does not use it." : `${FLAGS[option]} sets it, or the environment lookup fills it.`;
+          if (ctx.command !== "publish" || option === "environmentUrl") {
+            result.warnings.push(`.mcs/conn.json ${field} (${String(conn[field]).slice(0, 120)}) is not used: ${checked.reason}. ${remedy}`);
+          }
         }
       }
       return result;
@@ -18806,18 +18821,26 @@ var require_conn_defaults = __commonJS({
         );
       }
       const agentDir = findAgentDir2(args.workspace, true);
-      const conn = readConnJson(agentDir, fsImpl);
+      const conn = readConnJson2(agentDir, fsImpl);
       const result = applyConnDefaults(args, conn, { argv, env, command: args.command });
       if (!conn) {
         const missing = args.command === "publish" ? !args.tenantId || !args.environmentUrl || !args.agentId : !args.tenantId || !args.environmentId;
         if (missing) warn2(noConnHint(args.command, args.workspace));
       }
       for (const w of result.warnings) warn2(w);
-      if (result.envMismatch && WRITE_COMMANDS.includes(args.command) && !args.force) {
+      if (WRITE_COMMANDS.includes(args.command) && !args.force) {
         const m = result.envMismatch;
-        die2(
-          `${args.command} refused: ${m.source} environment ${m.given} is not the environment of this workspace (${m.stored} in .mcs/conn.json). Use the workspace of that environment, or add --force if you mean it.`
-        );
+        if (m) {
+          die2(
+            `${args.command} refused: ${m.source} environment ${m.given} is not the environment of this workspace (${m.stored} in .mcs/conn.json). Use the workspace of that environment, or add --force if you mean it.`
+          );
+        }
+        const u = result.urlMismatches[0];
+        if (u) {
+          die2(
+            `${args.command} refused: ${u.source} ${u.given} is not the ${u.what} of this workspace (${u.stored} in .mcs/conn.json). Use the workspace of that environment, or add --force if you mean it.`
+          );
+        }
       }
       if (conn) {
         log2(targetLine(args, agentDir));
@@ -18829,7 +18852,7 @@ var require_conn_defaults = __commonJS({
       WORKSPACE_COMMANDS,
       WRITE_COMMANDS,
       checkUrl,
-      readConnJson,
+      readConnJson: readConnJson2,
       listAgentFolders,
       matchesEnvironment: matchesEnvironment2,
       matchesTenant: matchesTenant2,
@@ -18867,6 +18890,7 @@ var {
 } = require_shared_auth();
 var doctor = require_doctor();
 var {
+  readConnJson,
   resolveConnDefaults,
   matchesEnvironment,
   matchesTenant,
@@ -18896,6 +18920,7 @@ function parseAgentUrl(url) {
 }
 function parseArgs() {
   const args = process.argv.slice(2);
+  let environmentIdFlag = false;
   const parsed = {
     command: null,
     workspace: null,
@@ -18929,6 +18954,7 @@ function parseArgs() {
         break;
       case "--environment-id":
         parsed.environmentId = args[++i];
+        environmentIdFlag = true;
         break;
       case "--environment-url":
         parsed.environmentUrl = args[++i];
@@ -18997,7 +19023,7 @@ function parseArgs() {
 Expected format: https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>`
       );
     }
-    if (!parsed.environmentId) parsed.environmentId = urlInfo.environmentId;
+    if (!environmentIdFlag) parsed.environmentId = urlInfo.environmentId;
     if (!parsed.agentId) parsed.agentId = urlInfo.agentId;
     log(`Parsed URL \u2192 environmentId: ${urlInfo.environmentId}, agentId: ${urlInfo.agentId}`);
   }
@@ -19711,12 +19737,7 @@ function requireBotDefinition(args) {
   if (message) die(message);
 }
 function loadConnJson(agentDir) {
-  try {
-    const connPath = path2.join(agentDir, ".mcs", "conn.json");
-    return JSON.parse(fs6.readFileSync(connPath, "utf8"));
-  } catch {
-    return null;
-  }
+  return readConnJson(agentDir);
 }
 function lookupClusterCategory(args) {
   const conn = loadConnJson(findAgentDir(args.workspace, true));

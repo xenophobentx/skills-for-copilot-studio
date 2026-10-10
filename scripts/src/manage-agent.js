@@ -54,6 +54,7 @@ const {
 } = require("./shared-auth");
 const doctor = require("./doctor");
 const {
+  readConnJson,
   resolveConnDefaults,
   matchesEnvironment,
   matchesTenant,
@@ -115,6 +116,7 @@ function parseAgentUrl(url) {
 
 function parseArgs() {
   const args = process.argv.slice(2);
+  let environmentIdFlag = false; // --environment-id was given (a CPS_ENVIRONMENT_ID value is not a flag)
   const parsed = {
     command: null,
     workspace: null,
@@ -147,6 +149,7 @@ function parseArgs() {
         break;
       case "--environment-id":
         parsed.environmentId = args[++i];
+        environmentIdFlag = true;
         break;
       case "--environment-url":
         parsed.environmentUrl = args[++i];
@@ -221,7 +224,8 @@ function parseArgs() {
           "Expected format: https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>"
       );
     }
-    if (!parsed.environmentId) parsed.environmentId = urlInfo.environmentId;
+    // --environment-id beats --url, and --url beats the CPS_ENVIRONMENT_ID variable
+    if (!environmentIdFlag) parsed.environmentId = urlInfo.environmentId;
     if (!parsed.agentId) parsed.agentId = urlInfo.agentId;
     log(`Parsed URL → environmentId: ${urlInfo.environmentId}, agentId: ${urlInfo.agentId}`);
   }
@@ -1136,12 +1140,7 @@ function requireBotDefinition(args) {
 }
 
 function loadConnJson(agentDir) {
-  try {
-    const connPath = path.join(agentDir, ".mcs", "conn.json");
-    return JSON.parse(fs.readFileSync(connPath, "utf8"));
-  } catch {
-    return null;
-  }
+  return readConnJson(agentDir); // same reader as resolveConnDefaults, so a BOM is fine in both
 }
 
 // Cluster category for the environment lookup of a workspace command: the value
@@ -1162,7 +1161,7 @@ function buildSyncRequest(args, tokens) {
     log(`Found .mcs/conn.json — AgentId: ${conn.AgentId}`);
   }
 
-  // Build accountInfo — conn.json uses PascalCase but LSP binary expects camelCase.
+  // Build accountInfo: conn.json uses PascalCase but LSP binary expects camelCase.
   // The account in conn.json belongs to its tenant, so all of it comes from the file or
   // none of it does. The cluster category belongs to the environment (see storedClusterCategory).
   const connAccount = conn && matchesTenant(args, conn) ? conn.AccountInfo : null;

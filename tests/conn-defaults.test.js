@@ -110,7 +110,7 @@ test("flags win over conn.json", () => {
   assert.strictEqual(args.agentMgmtUrl, "https://mine.example/mgmt");
   assert.strictEqual(args.environmentName, "Mine");
   assert.deepStrictEqual(r.used, []);
-  assert.strictEqual(r.warnings.length, 1);
+  assert.strictEqual(r.warnings.length, 3); // the tenant, the Dataverse URL and the agent management URL
   assert.match(r.warnings[0], /^--tenant-id other-tenant differs from the tenant in \.mcs\/conn\.json \(8da7352d.*\); using --tenant-id\./);
 });
 
@@ -311,6 +311,7 @@ writeConn(agentDir, JSON.stringify(realConn()));
 const tokens = { copilotStudio: { accessToken: "t1", account: { homeAccountId: "token-account", username: "token@user" } }, dataverse: { accessToken: "t2" } };
 const syncFns = load(["toFileUri", "findAgentDir", "loadConnJson", "buildSyncRequest", "lookupClusterCategory"], {
   fs, path, log: () => {},
+  readConnJson: cd.readConnJson,
   resolveClusterCategory,
   matchesEnvironment: cd.matchesEnvironment,
   matchesTenant: cd.matchesTenant,
@@ -437,6 +438,96 @@ test("an explicit flag can still set an unusual URL", () => {
   const args = emptyArgs({ agentMgmtUrl: "https://mgmt.gov.example/x" });
   applyConnDefaults(args, realConn({ AgentManagementEndpoint: "http://bad" }), ctx(["--agent-mgmt-url", "https://mgmt.gov.example/x"]));
   assert.strictEqual(args.agentMgmtUrl, "https://mgmt.gov.example/x");
+});
+
+// V1: the parsed origin comes back, not the text as typed
+test("V1: checkUrl returns the parsed origin", () => {
+  assert.strictEqual(checkUrl("https://X.CRM.DYNAMICS.COM:443/api/data?x=1#frag", [".dynamics.com"]).url, "https://x.crm.dynamics.com");
+  assert.strictEqual(checkUrl("https:x.crm.dynamics.com", [".dynamics.com"]).url, "https://x.crm.dynamics.com");
+  assert.strictEqual(checkUrl("https:\\\\x.crm.dynamics.com", [".dynamics.com"]).url, "https://x.crm.dynamics.com");
+  assert.strictEqual(checkUrl("https://ev\nil.dynamics.com", [".dynamics.com"]).url, "https://evil.dynamics.com");
+});
+
+test("V1: the value that reaches args has no path, query or odd spelling", () => {
+  const args = emptyArgs();
+  applyConnDefaults(args, realConn({ DataverseEndpoint: `${DV}/api/data/v9.2?x=1#f`, AgentManagementEndpoint: "https:" + MG.slice(6) }), ctx());
+  assert.strictEqual(args.environmentUrl, DV);
+  assert.strictEqual(args.agentMgmtUrl, MG);
+});
+
+// V2: a URL flag that is not the workspace's environment
+test("V2: --environment-url on another host is a mismatch, same host with a path is not", () => {
+  const other = emptyArgs({ environmentId: ENV, environmentUrl: "https://orgprod.crm4.dynamics.com" });
+  const r = applyConnDefaults(other, realConn(), ctx(["--environment-url", "https://orgprod.crm4.dynamics.com"]));
+  assert.strictEqual(r.urlMismatches.length, 1);
+  assert.deepStrictEqual([r.urlMismatches[0].source, r.urlMismatches[0].what, r.urlMismatches[0].stored], ["--environment-url", "Dataverse URL", DV]);
+  assert.strictEqual(other.environmentUrl, "https://orgprod.crm4.dynamics.com");
+  assert.match(r.warnings[0], /^--environment-url https:\/\/orgprod\.crm4\.dynamics\.com differs from the Dataverse URL in \.mcs\/conn\.json/);
+  const same = emptyArgs({ environmentUrl: DV.toUpperCase() + "/some/path" });
+  const r2 = applyConnDefaults(same, realConn(), ctx(["--environment-url", DV.toUpperCase() + "/some/path"]));
+  assert.deepStrictEqual(r2.urlMismatches, []);
+});
+
+test("V2: --agent-mgmt-url on another host is a mismatch too", () => {
+  const args = emptyArgs({ agentMgmtUrl: "https://powervamg.other.gateway.prod.island.powerapps.com" });
+  const r = applyConnDefaults(args, realConn(), ctx(["--agent-mgmt-url", args.agentMgmtUrl]));
+  assert.strictEqual(r.urlMismatches[0].what, "agent management URL");
+});
+
+test("V2: a CPS_ENVIRONMENT_URL does not count, conn.json wins; a rejected conn.json URL is not compared", () => {
+  const a = emptyArgs({ environmentUrl: "https://orgprod.crm4.dynamics.com" });
+  const r = applyConnDefaults(a, realConn(), ctx([], { CPS_ENVIRONMENT_URL: a.environmentUrl }));
+  assert.deepStrictEqual(r.urlMismatches, []);
+  assert.strictEqual(a.environmentUrl, DV);
+  const b = emptyArgs({ environmentUrl: "https://orgprod.crm4.dynamics.com" });
+  const r2 = applyConnDefaults(b, realConn({ DataverseEndpoint: "http://bad" }), ctx(["--environment-url", b.environmentUrl]));
+  assert.deepStrictEqual(r2.urlMismatches, []);
+});
+
+test("V2: another environment id and a URL flag give the environment mismatch only", () => {
+  const args = emptyArgs({ environmentId: OTHER_ENV, environmentUrl: "https://orgprod.crm4.dynamics.com" });
+  const r = applyConnDefaults(args, realConn(), ctx(["--environment-id", OTHER_ENV, "--environment-url", args.environmentUrl]));
+  assert.ok(r.envMismatch);
+  assert.deepStrictEqual(r.urlMismatches, []);
+});
+
+// Nit: the wording of the rejected URL warning for publish
+test("nit: publish says it has no lookup when the conn.json Dataverse URL is rejected", () => {
+  const args = emptyArgs({ command: "publish" });
+  const r = applyConnDefaults(args, realConn({ DataverseEndpoint: "http://bad.example" }), ctx([], {}, "publish"));
+  assert.match(r.warnings[0], /is not used: not https\. publish has no environment lookup, so pass --environment-url\.$/);
+  assert.doesNotMatch(r.warnings[0], /lookup fills it/);
+});
+
+test("nit: publish does not warn about a rejected agent management URL (it does not use it)", () => {
+  const args = emptyArgs({ command: "publish" });
+  const r = applyConnDefaults(args, realConn({ AgentManagementEndpoint: "http://bad.example" }), ctx([], {}, "publish"));
+  assert.deepStrictEqual(r.warnings, []);
+  assert.strictEqual(r.rejected.length, 1);
+});
+
+test("nit: the other commands keep the lookup wording", () => {
+  const r = applyConnDefaults(emptyArgs(), realConn({ DataverseEndpoint: "http://bad.example" }), ctx());
+  assert.match(r.warnings[0], /--environment-url sets it, or the environment lookup fills it\.$/);
+});
+
+test("nit: a BOM in conn.json is fine for the reader buildSyncRequest uses", () => {
+  const dir = path.join(tmp, "bom-sync");
+  writeConn(dir, "\uFEFF" + JSON.stringify(realConn({ SolutionVersions: { A: "1" } })));
+  const r = syncFns.buildSyncRequest({ workspace: dir, tenantId: TENANT, environmentId: ENV, environmentUrl: DV, agentMgmtUrl: MG }, tokens);
+  assert.strictEqual(r.accountInfo.accountId, `x.${TENANT}`);
+  assert.deepStrictEqual(r.solutionVersions, { A: "1" });
+});
+
+test("nit: no em or en dash on the lines of manage-agent.js that this branch touches", () => {
+  assert.ok(src.includes("// Build accountInfo: conn.json uses PascalCase"));
+  const mine = fs.readFileSync(path.join(__dirname, "..", "scripts", "src", "conn-defaults.js"), "utf8");
+  assert.ok(!/[\u2013\u2014]/.test(mine));
+});
+
+test("docs: the push section of the manage-agent skill says what --force skips", () => {
+  const skill = fs.readFileSync(path.join(__dirname, "..", "skills", "manage-agent", "SKILL.md"), "utf8");
+  assert.match(skill, /`--force` skips three things: validation, `instructions-shape`, and the environment guard\./);
 });
 
 // ---------------------------------------------------------------------------
@@ -606,6 +697,36 @@ test("trust: the same environment by flag is fine for push", () => {
   assert.strictEqual(resolve(args, { argv: ["--environment-id", ENV] }).died, null);
 });
 
+for (const command of ["push", "pull", "publish"]) {
+  test(`V2: ${command} with another --environment-url is refused, --force goes on`, () => {
+    const url = "https://orgprod.crm4.dynamics.com";
+    const args = emptyArgs({ workspace: agentDir, command, environmentUrl: url });
+    const r = resolve(args, { argv: ["--environment-url", url] });
+    assert.match(r.died, new RegExp(`^${command} refused: --environment-url ${url.replace(/\./g, "\\.")} is not the Dataverse URL of this workspace \\(${DV.replace(/\./g, "\\.")} in \\.mcs/conn\\.json\\)\\. .*--force`));
+    const forced = emptyArgs({ workspace: agentDir, command, environmentUrl: url, force: true });
+    const f = resolve(forced, { argv: ["--environment-url", url, "--force"] });
+    assert.strictEqual(f.died, null);
+    assert.strictEqual(forced.environmentUrl, url);
+    assert.match(f.warns[0], /differs from the Dataverse URL/);
+  });
+}
+
+for (const command of ["validate", "changes"]) {
+  test(`V2: ${command} with another --environment-url warns and goes on`, () => {
+    const url = "https://orgprod.crm4.dynamics.com";
+    const args = emptyArgs({ workspace: agentDir, command, environmentUrl: url });
+    const r = resolve(args, { argv: ["--environment-url", url] });
+    assert.strictEqual(r.died, null);
+    assert.strictEqual(r.warns.length, 1);
+  });
+}
+
+test("V2: push with another --agent-mgmt-url is refused and names the flag", () => {
+  const url = "https://powervamg.other.gateway.prod.island.powerapps.com";
+  const args = emptyArgs({ workspace: agentDir, command: "push", agentMgmtUrl: url });
+  assert.match(resolve(args, { argv: ["--agent-mgmt-url", url] }).died, /^push refused: --agent-mgmt-url .* is not the agent management URL of this workspace/);
+});
+
 // Fallback hints without conn.json
 const emptyWs = path.join(tmp, "empty");
 fs.mkdirSync(emptyWs);
@@ -704,6 +825,38 @@ test("bundle: push to another environment is refused, validate only warns", () =
 test("bundle: publish to another environment is refused", () => {
   const r = runBundle(["publish", "--workspace", agentDir, "--environment-id", OTHER_ENV]);
   assert.match(errorOf(r), /^publish refused: /);
+});
+
+test("bundle: V2 publish with another --environment-url is refused before any sign-in", () => {
+  const r = runBundle(["publish", "--workspace", agentDir, "--environment-url", "https://orgprod.crm4.dynamics.com"]);
+  assert.strictEqual(r.status, 1);
+  assert.match(errorOf(r), /^publish refused: --environment-url https:\/\/orgprod\.crm4\.dynamics\.com is not the Dataverse URL of this workspace/);
+});
+
+test("bundle: V2 push with another --agent-mgmt-url is refused", () => {
+  const r = runBundle(["push", "--workspace", agentDir, "--agent-mgmt-url", "https://x.island.powerapps.com"]);
+  assert.match(errorOf(r), /^push refused: --agent-mgmt-url/);
+});
+
+const urlOf = (env, bot) => `https://copilotstudio.microsoft.com/environments/${env}/bots/${bot}/overview`;
+
+test("bundle: V3 --url beats CPS_ENVIRONMENT_ID, so push --url of another environment is refused", () => {
+  const r = runBundle(["push", "--workspace", agentDir, "--url", urlOf(OTHER_ENV, AGENT)], { CPS_ENVIRONMENT_ID: ENV });
+  assert.strictEqual(r.status, 1);
+  assert.match(errorOf(r), new RegExp(`^push refused: --url environment ${OTHER_ENV} is not the environment of this workspace`));
+});
+
+test("bundle: V3 with CPS_ENVIRONMENT_ID set to a third environment the label and id are the --url ones", () => {
+  const third = "99999999-8888-7777-6666-555555555555";
+  const r = runBundle(["publish", "--workspace", agentDir, "--url", urlOf(OTHER_ENV, AGENT)], { CPS_ENVIRONMENT_ID: third });
+  assert.match(errorOf(r), new RegExp(`^publish refused: --url environment ${OTHER_ENV} `));
+});
+
+test("bundle: V3 --environment-id still beats --url, and a --url of the workspace's own environment is fine", () => {
+  const r = runBundle(["push", "--workspace", agentDir, "--url", urlOf(ENV, AGENT), "--environment-id", OTHER_ENV]);
+  assert.match(errorOf(r), new RegExp(`^push refused: --environment-id environment ${OTHER_ENV}`));
+  const ok = runBundle(["validate", "--workspace", agentDir, "--url", urlOf(ENV, AGENT)], { CPS_ENVIRONMENT_ID: OTHER_ENV });
+  assert.match(errorOf(ok), /No \.mcs\/botdefinition\.json found/);
 });
 
 test("bundle: CPS_TENANT_ID loses to conn.json and the warning names it", () => {
