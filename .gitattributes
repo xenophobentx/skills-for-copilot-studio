@@ -1,0 +1,7 @@
+# Several tests read the script sources line by line and fail on CRLF, and
+# windows-latest checks out with core.autocrlf=true. Check text files out
+# with LF on every OS.
+* text=auto eol=lf
+
+*.png binary
+reference/adaptive-card.schema.json -text

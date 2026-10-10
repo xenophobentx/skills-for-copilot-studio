@@ -8,7 +8,7 @@ This guide walks you through setting up the plugin and using it end-to-end: inst
 
 | Requirement | Version | Verification |
 |-------------|---------|-------------|
-| Node.js | 18+ | `node --version` |
+| Node.js | 20 or later | `node --version` |
 | Claude Code or GitHub Copilot CLI | Latest | `claude --version` or `copilot --version` |
 | Copilot Studio VS Code Extension | Latest | [Install from marketplace](https://github.com/microsoft/vscode-copilotstudio) |
 

@@ -1,0 +1,116 @@
+name: Fork CI
+
+on:
+  push:
+    branches: [main, "xeno/**"]
+  pull_request:
+    branches: [main, "xeno/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Only superseded pull request runs are cancelled; every push to main gets a result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # Same shell on every runner. On windows-latest the default would be pwsh,
+    # and the steps below are bash.
+    shell: bash
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22", "24"]
+        include:
+          # 20 is the floor of the dependencies in scripts/package-lock.json
+          # (msal-node, agents-activity, open and others need node >=20).
+          - os: ubuntu-latest
+            node: "20"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install script dependencies
+        working-directory: scripts
+        run: npm ci
+
+      - name: Run tests
+        env:
+          CI: "1"
+        run: |
+          unset CLAUDE_PLUGIN_DATA SFCS_PLUGIN_DATA PLUGIN_DATA
+          failed=0
+          for f in tests/*.test.js; do
+            echo "::group::$f"
+            if ! node "$f"; then
+              echo "::error file=$f::test failed"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $failed
+
+      - name: Rebuild bundles
+        if: ${{ !cancelled() }}
+        working-directory: scripts
+        # --ignore-scripts skips the prebuild hook, which would run npm ci again.
+        run: npm run build --ignore-scripts
+
+      - name: Bundles match the committed ones
+        if: ${{ !cancelled() }}
+        run: |
+          if ! git diff --exit-code --stat -- "scripts/*.bundle.js"; then
+            echo "::error::scripts/*.bundle.js differs from a fresh build. Run 'cd scripts && npm ci && npm run build' and commit the result."
+            exit 1
+          fi
+          untracked=$(git ls-files --others --exclude-standard -- "scripts/*.bundle.js")
+          if [ -n "$untracked" ]; then
+            echo "::error::a bundle is not committed: $untracked"
+            exit 1
+          fi
+
+  validate-plugin:
+    name: claude plugin validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      # The CLI is only used offline here. No API key or login is needed.
+      # Pin a version that is at least 7 days old (the repo's Dependabot cooldown);
+      # Dependabot does not track this line, so bump it by hand.
+      - name: Install Claude Code CLI
+        run: npm install --global @anthropic-ai/claude-code@2.1.287
+
+      - name: Validate marketplace and plugin manifests
+        env:
+          DISABLE_AUTOUPDATER: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          claude plugin validate .
+          claude plugin validate .claude-plugin/plugin.json

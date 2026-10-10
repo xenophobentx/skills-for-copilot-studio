@@ -43,6 +43,22 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - MCP and connector requests go to the portal flow first.
 - run-tests-kit installs its dependencies from the plugin folder.
 
+## CI
+
+- `.github/workflows/fork-ci.yml` runs on push and pull requests to `main` and `xeno/**`. It runs every `tests/*.test.js` on ubuntu, macOS and Windows with Node 22 and 24, and on ubuntu with Node 20. It rebuilds the bundles and fails when they differ from the committed ones, and it runs `claude plugin validate` with a pinned Claude Code CLI. No secrets are used.
+- The README said "Node 18+", which is stale. The dependencies in `scripts/package-lock.json` (msal-node, agents-activity, agents-copilotstudio-client, open) declare `node >=20`, so 20 is the floor and the README now says so. `doctor` still has `MIN_NODE_MAJOR = 18`.
+- `.gitattributes` checks text files out with LF. On a Windows runner with `core.autocrlf=true` several tests read the script sources by line and fail on CRLF. A Windows clone that was checked out before this file existed keeps CRLF until it is checked out again once. In PowerShell 5.1 run these two commands (no `&&`), in a clean working tree:
+
+  ```
+  git rm -r --cached -q .
+  git reset --hard -q
+  ```
+
+  Afterwards only `reference/adaptive-card.schema.json` (kept byte for byte) is CRLF.
+- The workflow only exists on branches that contain it. The `fix/*`, `feat/*` and `chore/*` branches that become upstream PRs are based on upstream main, so a push to them runs no CI. To get a run, open a draft pull request from the branch into fork `main`. It tests the merge with the fork's changes, so it is close to the branch but not identical.
+- The Claude Code version in the `validate-plugin` job is pinned by hand. Use a release that is at least 7 days old.
+- `new-release.yml` is kept for clean upstream merges but only runs in microsoft/skills-for-copilot-studio.
+
 ## Not taken from upstream PRs
 
 - #129 (Enhanced Task Completion). `SmartTaskCompletionEnabled` is not in the bundled schema, not on Microsoft Learn and not in the 1.9.14 language server, and the PR turns on generative actions without asking.
