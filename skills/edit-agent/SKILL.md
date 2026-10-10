@@ -60,6 +60,12 @@ Modify agent metadata (`agent.mcs.yml`) or configuration (`settings.mcs.yml`).
 
 For detailed guidance on writing knowledge-aware instructions, grounding directives, citation control, and scope enforcement, see [instructions-guide.md](instructions-guide.md).
 
+## Instructions Format
+
+In a classic agent, `instructions` in `agent.mcs.yml` is a plain string. Write it as a block scalar (`instructions: |`). Do not write an object there: both `instructions: {segments: ...}` and `instructions: {text: ...}` come out empty, because the language server sees no difference from an empty value. `validate` reports them as errors with source `instructions-shape`.
+
+`segments` with `kind: StaticSegment` is the CLI agent format. If you see it, the workspace is a CLI agent: stop as described in int-project-context.
+
 ## Fields to NEVER Modify
 
 - `schemaName` — This is the internal Power Platform identifier. Changing it breaks the agent.
