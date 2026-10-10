@@ -11,7 +11,7 @@
 >
 > Don't install it next to the upstream plugin. Both are called `copilot-studio` and have the same commands.
 
-A plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), [Codex](https://developers.openai.com/codex), and [VS Code](https://code.visualstudio.com/) that enables authoring, testing, and troubleshooting [Microsoft Copilot Studio](https://aka.ms/CopilotStudio) **STANDARD** agents through YAML files — directly from your terminal or editor.
+A plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [GitHub Copilot CLI](https://docs.github.com/en/copilot), [Codex](https://developers.openai.com/codex), and [VS Code](https://code.visualstudio.com/) that enables authoring, testing, and troubleshooting [Microsoft Copilot Studio](https://aka.ms/CopilotStudio) **STANDARD** agents through YAML files, directly from your terminal or editor.
 
 Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft Copilot Studio Plugin](https://github.com/microsoft/copilot-studio-plugin). If you open a CLI agent workspace here (`template: cliagent-*` or `authoringModel: CliCopilot` in its `settings.mcs.yml`), the plugin is instructed to detect it, only read and describe it (no edits, pull, push or publish), and point you to that plugin.
 
@@ -72,20 +72,21 @@ codex plugin add copilot-studio@xeno-skills-for-copilot-studio
 
 Codex reads the same manifest as Claude Code, so there is nothing else to package. The skills are listed as `copilot-studio:<skill>`. Ask in plain words or pick one with `/skills`.
 
-The plugin also has a SessionStart hook. Codex skips plugin hooks until you trust them: open `/hooks` and trust it before your first message, and again after an update changes it. `codex exec` skips an untrusted hook without saying so. The hook adds the routing prompt and installs the native modules (keytar, msal-node-extensions, vscode-jsonrpc) for sign-in and push/pull.
+What has been tested: Codex 0.160 on macOS, installed from a local copy of this branch, with `--yolo` and with the default sandbox. That covers skill routing and authoring, `validate` on a cloned agent, and the setup without a hook described below. The plugin also installs and lists its skills in Codex on Linux and Windows, and the unit tests pass there. Not yet tested: a full Codex run on Linux and Windows, the `/hooks` trust screen, the sub-agent fallback described below, approving a command interactively, installing from GitHub with the commands above, and GitHub Copilot CLI after this change. Claude Code was smoke-tested with `claude -p`.
+
+The plugin also has a SessionStart hook. Codex does not run a plugin hook until you trust it (`/hooks`), and `codex exec` skips an untrusted hook without saying so. The hook adds the routing prompt and installs the native modules (keytar, msal-node-extensions, vscode-jsonrpc) for sign-in and push/pull. I ran it with `--dangerously-bypass-hook-trust`; the trust screen itself and what an update does to the trust are untested.
 
 The skills also work without the hook:
 
 - Every skill that changes files checks for a CLI agent workspace on its own and stops.
-- Native modules: run `node <plugin folder>/hooks/setup.js --ensure` once. A skill that hits `Cannot find module` says so. It installs into `SFCS_PLUGIN_DATA` or the folder in `sfcs-plugin-paths.json` if there is one, otherwise into `~/.copilot-studio-cli/sfcs-data`. That folder is per user. It never installs into the folder named by `CLAUDE_PLUGIN_DATA` or `plugin-paths.json`, because another plugin can own those, and it does not write them. `manage-agent doctor` shows which folder is in use.
-- Codex has no agent type for the plugin's agents. With the hook, the routing prompt tells Codex to start a general-purpose sub-agent from the agent file. Without it, the skills run in the main session.
+- Native modules: run `node <plugin folder>/hooks/setup.js --ensure` once. A skill that hits `Cannot find module` says so. It installs into `SFCS_PLUGIN_DATA`, or into the folder in `sfcs-plugin-paths.json` if that file was written by this copy of the plugin, otherwise into `~/.copilot-studio-cli/sfcs-data`. That folder is per user. It never installs into the folder named by `CLAUDE_PLUGIN_DATA` or `plugin-paths.json`, because another plugin can own those, and it does not write them. `manage-agent doctor` shows which folder is in use. It needs the network and write access to your home folder, so run it outside the Codex sandbox.
+- Codex has no agent type for the plugin's agents. With the hook, the routing prompt tells Codex to start a general-purpose sub-agent from the agent file. I have not run that path. Without the hook, the skills run in the main session.
 
-Codex's default sandbox (`workspace-write`) blocks network access and writes to `~/.copilot-studio-cli`. Sign-in, clone, push, pull, validate and chat need both. In a sandbox the skills run those commands outside it, which Codex asks you to approve. With `approval_policy = "never"` Codex can't ask: the skills stop and name the commands. Use full access (`--yolo` or `--sandbox danger-full-access`) for those sessions.
+Sandbox: in my runs `codex exec` started with a read-only workspace, so the authoring skills could not write files until I passed `-s workspace-write`. Sign-in, clone, push, pull, validate and chat need the network and write to `~/.copilot-studio-cli`, and neither `codex exec` mode allowed that: the skills stopped before running anything and named the commands. Use full access (`--yolo` or `--sandbox danger-full-access`) for those sessions. Approving such a command in an interactive session is untested.
 
-Platform notes:
+macOS: a problem with the Codex install itself (for example every shell command timing out) is not caused by this plugin. Try reinstalling Codex first (`brew reinstall --cask codex`).
 
-- macOS: if every Codex shell command times out ("timed out negotiating with the code-mode host"), the Codex binary is quarantined. Run `xattr -c` on `codex-code-mode-host` in the Codex install folder.
-- Windows: `codex.ps1` needs an execution policy of `RemoteSigned` or `Bypass`. In PowerShell 5.1, send chat messages with quotes through `--message-file`.
+Windows: in PowerShell 5.1, send chat messages that contain quotes through `--message-file`.
 
 ## Updating
 
@@ -96,6 +97,16 @@ The update process depends on how you installed the plugin:
 | **Claude Code CLI** | Manual, or background auto-update once you turn it on | Claude Code leaves auto-update off for third-party marketplaces, and this is one. See below. |
 | **GitHub Copilot CLI** | Manual | Run `copilot plugin update copilot-studio@xeno-skills-for-copilot-studio` from the terminal, or `/plugin update copilot-studio@xeno-skills-for-copilot-studio` in an interactive session. `copilot plugin marketplace update xeno-skills-for-copilot-studio` refreshes the catalog first. |
 | **VS Code** | Extension auto-update | VS Code handles updates automatically when extension auto-update is enabled in settings. |
+| **Codex** | Manual | Run `codex plugin marketplace upgrade xeno-skills-for-copilot-studio`, then `codex plugin add copilot-studio@xeno-skills-for-copilot-studio` again. Check `/hooks` afterwards, because an updated hook may need trusting again (untested). |
+
+To remove the plugin from Codex:
+
+```bash
+codex plugin remove copilot-studio@xeno-skills-for-copilot-studio
+codex plugin marketplace remove xeno-skills-for-copilot-studio
+```
+
+This leaves `~/.copilot-studio-cli`, which holds your sign-in cache and the installed native modules, alone. Delete it yourself if you want it gone.
 
 ### Claude Code
 
