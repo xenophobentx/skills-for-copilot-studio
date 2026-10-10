@@ -18636,6 +18636,350 @@ var require_doctor = __commonJS({
   }
 });
 
+// src/sync-guard.js
+var require_sync_guard = __commonJS({
+  "src/sync-guard.js"(exports2, module2) {
+    var fs7 = require("fs");
+    var path3 = require("path");
+    var yaml2 = require_js_yaml();
+    function skipDir(name) {
+      return name.startsWith(".") || name === "node_modules";
+    }
+    var BACKUP_SUBDIR = path3.join(".mcs", "backups");
+    var BACKUP_NAME_RE = /^(\d{8}-\d{6})(?:-(\d+))?$/;
+    var DEFAULT_KEEP_BACKUPS = 5;
+    var CHANGE_NAMES = { 0: "added", 1: "modified", 2: "deleted" };
+    function listFiles(dir, rel = "") {
+      let entries;
+      try {
+        entries = fs7.readdirSync(path3.join(dir, rel), { withFileTypes: true });
+      } catch {
+        return [];
+      }
+      const files = [];
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (skipDir(entry.name)) continue;
+          files.push(...listFiles(dir, rel ? `${rel}/${entry.name}` : entry.name));
+        } else if (entry.isFile()) {
+          files.push(rel ? `${rel}/${entry.name}` : entry.name);
+        }
+      }
+      return files.sort();
+    }
+    function pad(n, width = 2) {
+      return String(n).padStart(width, "0");
+    }
+    function backupStamp(d) {
+      return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+    }
+    function backupOrder(a, b) {
+      const [sa, na] = BACKUP_NAME_RE.exec(a).slice(1);
+      const [sb, nb] = BACKUP_NAME_RE.exec(b).slice(1);
+      return sa < sb ? -1 : sa > sb ? 1 : Number(na || 1) - Number(nb || 1);
+    }
+    function backupAgent(agentDir, { keep = DEFAULT_KEEP_BACKUPS, now = /* @__PURE__ */ new Date() } = {}) {
+      const root = path3.join(agentDir, BACKUP_SUBDIR);
+      fs7.mkdirSync(root, { recursive: true });
+      const stamp = backupStamp(now);
+      let name = stamp;
+      const same = fs7.readdirSync(root).map((n) => BACKUP_NAME_RE.exec(n)).filter((m) => m && m[1] === stamp);
+      if (same.length > 0) name = `${stamp}-${Math.max(...same.map((m) => Number(m[2] || 1))) + 1}`;
+      const dest = path3.join(root, name);
+      const files = listFiles(agentDir);
+      for (const rel of files) {
+        const target = path3.join(dest, ...rel.split("/"));
+        fs7.mkdirSync(path3.dirname(target), { recursive: true });
+        fs7.copyFileSync(path3.join(agentDir, ...rel.split("/")), target);
+      }
+      fs7.mkdirSync(dest, { recursive: true });
+      const removed = [];
+      const old = fs7.readdirSync(root).filter((n) => BACKUP_NAME_RE.test(n)).sort(backupOrder);
+      while (old.length > Math.max(keep, 1)) {
+        const victim = old.shift();
+        fs7.rmSync(path3.join(root, victim), { recursive: true, force: true });
+        removed.push(victim);
+      }
+      return { path: dest, files: files.length, removed, restore: restoreText(dest, agentDir) };
+    }
+    function restoreText(backupPath, agentDir, platform2 = process.platform) {
+      const command = platform2 === "win32" ? `Copy-Item -Path "${backupPath}\\*" -Destination "${agentDir}" -Recurse -Force` : `cp -R "${backupPath}/." "${agentDir}"`;
+      return `To go back to the state before the pull, run: ${command} This overwrites what the pull brought in. A push after that sends your old version and overwrites the server changes. Topics the server deleted come back and the push creates them again. Files the pull added stay; delete them by hand.`;
+    }
+    function tryBackup(agentDir, { keep = DEFAULT_KEEP_BACKUPS, now } = {}) {
+      if (keep === 0) return { backup: null, warning: null };
+      try {
+        return { backup: backupAgent(agentDir, { keep, now }), warning: null };
+      } catch (e) {
+        return {
+          backup: null,
+          warning: `No backup was made (${e.message}). The pull went ahead without one. Use --keep-backups 0 to turn the backup off.`
+        };
+      }
+    }
+    var loadYaml = (text) => yaml2.load(text, { json: true });
+    function useYamlLoader(fn) {
+      loadYaml = fn;
+    }
+    function normalizeText(text) {
+      return String(text).replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+    }
+    function sameContent(a, b) {
+      const x = normalizeText(a);
+      const y = normalizeText(b);
+      if (x === y) return true;
+      try {
+        const left = loadYaml(x);
+        const right = loadYaml(y);
+        return JSON.stringify(sortKeys(left)) === JSON.stringify(sortKeys(right));
+      } catch {
+        return false;
+      }
+    }
+    function sortKeys(value) {
+      if (Array.isArray(value)) return value.map(sortKeys);
+      if (value && typeof value === "object") {
+        const out = {};
+        for (const k of Object.keys(value).sort()) out[k] = sortKeys(value[k]);
+        return out;
+      }
+      return value;
+    }
+    function lineDiff(localText, remoteText, maxLines = 20) {
+      const a = normalizeText(localText).split("\n");
+      const b = normalizeText(remoteText).split("\n");
+      let start = 0;
+      while (start < a.length && start < b.length && a[start] === b[start]) start++;
+      let endA = a.length;
+      let endB = b.length;
+      while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+        endA--;
+        endB--;
+      }
+      if (start === endA && start === endB) return null;
+      const local = a.slice(start, endA);
+      const remote = b.slice(start, endB);
+      return {
+        line: start + 1,
+        local: local.slice(0, maxLines),
+        remote: remote.slice(0, maxLines),
+        truncated: local.length > maxLines || remote.length > maxLines
+      };
+    }
+    var TEXT_EXT = /\.(ya?ml|json)$/i;
+    var NOT_CLONED = /^(testcases|evaluations)\/|\.eval\.mcs\.yml$/;
+    function compareTrees(localDir, serverDir) {
+      const local = listFiles(localDir);
+      const server = new Set(listFiles(serverDir));
+      const localSet = new Set(local);
+      const differs = [];
+      const localOnly = [];
+      let checked = 0;
+      for (const rel of local) {
+        if (!server.has(rel)) {
+          if (rel.endsWith(".mcs.yml") && !NOT_CLONED.test(rel)) localOnly.push(rel);
+          continue;
+        }
+        checked++;
+        const mine = fs7.readFileSync(path3.join(localDir, ...rel.split("/")));
+        const theirs = fs7.readFileSync(path3.join(serverDir, ...rel.split("/")));
+        if (TEXT_EXT.test(rel)) {
+          const text = mine.toString("utf8");
+          const remoteText = theirs.toString("utf8");
+          if (!sameContent(text, remoteText)) {
+            differs.push({ file: rel, diff: lineDiff(text, remoteText) });
+          }
+        } else if (!mine.equals(theirs)) {
+          differs.push({ file: rel, diff: null });
+        }
+      }
+      const serverOnly = [...server].filter((rel) => !localSet.has(rel)).sort();
+      return { checked, differs, localOnly, serverOnly };
+    }
+    var MAX_LCS_CELLS = 4e6;
+    function changedRanges(baseLines, otherLines) {
+      const n = baseLines.length;
+      const m = otherLines.length;
+      let pre = 0;
+      while (pre < n && pre < m && baseLines[pre] === otherLines[pre]) pre++;
+      let post = 0;
+      while (post < n - pre && post < m - pre && baseLines[n - 1 - post] === otherLines[m - 1 - post]) post++;
+      const bn = n - pre - post;
+      const om = m - pre - post;
+      if (bn === 0 && om === 0) return [];
+      if ((bn + 1) * (om + 1) > MAX_LCS_CELLS) {
+        return [{ start: pre, end: n - post, lines: otherLines.slice(pre, m - post) }];
+      }
+      const w = om + 1;
+      const lcs = new Int32Array((bn + 1) * w);
+      for (let i2 = bn - 1; i2 >= 0; i2--) {
+        for (let j2 = om - 1; j2 >= 0; j2--) {
+          lcs[i2 * w + j2] = baseLines[pre + i2] === otherLines[pre + j2] ? lcs[(i2 + 1) * w + j2 + 1] + 1 : Math.max(lcs[(i2 + 1) * w + j2], lcs[i2 * w + j2 + 1]);
+        }
+      }
+      const ranges = [];
+      let i = 0;
+      let j = 0;
+      let open2 = null;
+      while (i < bn || j < om) {
+        if (i < bn && j < om && baseLines[pre + i] === otherLines[pre + j]) {
+          if (open2) {
+            ranges.push(open2);
+            open2 = null;
+          }
+          i++;
+          j++;
+        } else {
+          if (!open2) open2 = { start: pre + i, end: pre + i, lines: [] };
+          if (j < om && (i >= bn || lcs[i * w + j + 1] >= lcs[(i + 1) * w + j])) {
+            open2.lines.push(otherLines[pre + j]);
+            j++;
+          } else {
+            i++;
+            open2.end = pre + i;
+          }
+        }
+      }
+      if (open2) ranges.push(open2);
+      return ranges;
+    }
+    function mergeConflicts(baseText, localText, serverText) {
+      const base = normalizeText(baseText).split("\n");
+      const mine = changedRanges(base, normalizeText(localText).split("\n"));
+      const theirs = changedRanges(base, normalizeText(serverText).split("\n"));
+      const sameEdit = (a, b) => a.start === b.start && a.end === b.end && a.lines.length === b.lines.length && a.lines.every((l, k) => l === b.lines[k]);
+      return mine.some((a) => theirs.some((b) => a.start <= b.end && b.start <= a.end && !sameEdit(a, b)));
+    }
+    async function buildPullPreview({ localChanges, remoteChanges, agentDir, fetchRemote, fetchBase }) {
+      const localList = localChanges && localChanges.localChanges || [];
+      const remoteList = remoteChanges && remoteChanges.localChanges || [];
+      const localByFile = new Map(localList.map((c) => [c.uri, c]));
+      const remoteFiles = new Set(remoteList.map((c) => c.uri));
+      const remote = [];
+      const bothSides = [];
+      const conflicts = [];
+      for (const change of remoteList) {
+        const mine = localByFile.get(change.uri);
+        const entry = {
+          file: change.uri,
+          server: CHANGE_NAMES[change.changeType] || String(change.changeType),
+          local: mine ? CHANGE_NAMES[mine.changeType] || String(mine.changeType) : null,
+          bothSides: false,
+          merge: null
+        };
+        let localText = null;
+        try {
+          localText = fs7.readFileSync(path3.join(agentDir, ...change.uri.split("/")), "utf8");
+        } catch {
+        }
+        if (mine && change.changeType !== 2) {
+          let serverText = null;
+          try {
+            serverText = await fetchRemote(change);
+          } catch (e) {
+            entry.error = `could not read the server copy: ${e.message}`;
+          }
+          if (serverText === null || serverText === void 0) {
+            entry.bothSides = true;
+            entry.merge = "unknown";
+            if (!entry.error) entry.error = "could not read the server copy";
+          } else if (localText !== null) {
+            entry.diff = lineDiff(localText, serverText);
+            if (sameContent(localText, serverText)) {
+              entry.merge = "same";
+            } else {
+              entry.bothSides = true;
+              let baseText = null;
+              if (fetchBase) {
+                try {
+                  baseText = await fetchBase(change);
+                } catch {
+                }
+              }
+              entry.merge = baseText === null || baseText === void 0 ? "unknown" : mergeConflicts(baseText, localText, serverText) ? "conflict" : "clean";
+            }
+          } else {
+            entry.bothSides = true;
+            entry.merge = "conflict";
+          }
+        } else if (mine) {
+          entry.bothSides = mine.changeType !== 2;
+          entry.merge = mine.changeType !== 2 ? "conflict" : "same";
+        }
+        if (entry.bothSides) bothSides.push(change.uri);
+        if (entry.merge === "conflict") conflicts.push(change.uri);
+        remote.push(entry);
+      }
+      const localOnly = localList.filter((c) => !remoteFiles.has(c.uri)).map((c) => ({ file: c.uri, local: CHANGE_NAMES[c.changeType] || String(c.changeType) }));
+      return {
+        remote,
+        localOnly,
+        bothSides,
+        conflicts,
+        workflows: (remoteChanges && remoteChanges.workflowResponse || []).length,
+        aiPrompts: (remoteChanges && remoteChanges.aiPromptResponse || []).length
+      };
+    }
+    function pushOutcome(result, verification, { strict = false } = {}) {
+      const output = { status: "ok", method: "powerplatformls/syncPush", result };
+      let exitCode = 0;
+      if (verification) {
+        output.verification = verification;
+        if (verification.status === "mismatch") {
+          output.warnings = [
+            "The push went through, but the server copy of some files differs from yours. Tell the user which files differ. Do not push again without asking. " + verification.message
+          ];
+          if (strict) {
+            output.status = "unverified";
+            exitCode = 1;
+          }
+        } else if (verification.status === "error") {
+          output.warnings = [
+            `The push went through. The check after it failed: ${verification.error}. Do not push again. Run verify later to compare the folder with the server.`
+          ];
+        }
+      }
+      return { output, exitCode };
+    }
+    var FLAG_COMMANDS = {
+      "--dry-run": ["pull"],
+      "--no-verify": ["push"],
+      "--verify": ["push"],
+      "--keep-backups": ["pull"]
+    };
+    function flagError(command, flagsSeen) {
+      const seen = new Set(flagsSeen);
+      if (seen.has("--verify") && seen.has("--no-verify")) {
+        return "--verify and --no-verify contradict each other. Nothing was run. Use one of them.";
+      }
+      for (const flag of seen) {
+        const allowed = FLAG_COMMANDS[flag];
+        if (allowed && !allowed.includes(command)) {
+          return `${flag} only works with ${allowed.join(" or ")}, not with ${command}. Nothing was run.${flag === "--dry-run" ? " Use remote-changes or pull --dry-run to look before a pull; push has no dry run." : ""}`;
+        }
+      }
+      return null;
+    }
+    module2.exports = {
+      backupAgent,
+      buildPullPreview,
+      changedRanges,
+      compareTrees,
+      flagError,
+      lineDiff,
+      listFiles,
+      mergeConflicts,
+      pushOutcome,
+      restoreText,
+      sameContent,
+      tryBackup,
+      useYamlLoader,
+      DEFAULT_KEEP_BACKUPS,
+      BACKUP_SUBDIR
+    };
+  }
+});
+
 // src/manage-agent.js
 var { spawn } = require("child_process");
 var { randomUUID } = require("crypto");
@@ -18661,6 +19005,7 @@ var {
   getOrAcquireIslandToken
 } = require_shared_auth();
 var doctor = require_doctor();
+var syncGuard = require_sync_guard();
 function warn(msg) {
   process.stderr.write("[WARN] " + msg + "\n");
 }
@@ -18705,8 +19050,16 @@ function parseArgs() {
     clusterCategory: null,
     url: null,
     out: null,
-    allowCliAgent: false
+    allowCliAgent: false,
+    dryRun: false,
+    verify: true,
+    // check the server copy after a push
+    verifyStrict: false,
+    // push --verify: a mismatch fails the command
+    keepBackups: syncGuard.DEFAULT_KEEP_BACKUPS
+    // 0 = no backup
   };
+  const flagsSeen = /* @__PURE__ */ new Set();
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--workspace":
@@ -18766,6 +19119,27 @@ function parseArgs() {
       case "--allow-cli-agent":
         parsed.allowCliAgent = true;
         break;
+      case "--dry-run":
+        flagsSeen.add("--dry-run");
+        parsed.dryRun = true;
+        break;
+      case "--no-verify":
+        flagsSeen.add("--no-verify");
+        parsed.verify = false;
+        break;
+      case "--verify":
+        flagsSeen.add("--verify");
+        parsed.verifyStrict = true;
+        break;
+      case "--keep-backups": {
+        flagsSeen.add("--keep-backups");
+        const raw = args[++i];
+        if (!/^\d+$/.test(raw || "")) {
+          die(`--keep-backups needs a whole number, 0 or more (got ${raw === void 0 ? "nothing" : `"${raw}"`}). 0 turns the backup off.`);
+        }
+        parsed.keepBackups = parseInt(raw, 10);
+        break;
+      }
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
         break;
@@ -18778,7 +19152,7 @@ function parseArgs() {
   }
   if (!parsed.command) {
     die(
-      "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor, pack-copy"
+      "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, remote-changes, verify, validate, publish, list-agents, list-envs, doctor, pack-copy"
     );
   }
   if (parsed.clusterCategory != null && parsed.command !== "clone") {
@@ -18786,6 +19160,8 @@ function parseArgs() {
       `--cluster-category only applies to clone, so ${parsed.command} ignores it. Other commands use the value stored in .mcs/conn.json.`
     );
   }
+  const flagProblem = syncGuard.flagError(parsed.command, flagsSeen);
+  if (flagProblem) die(flagProblem);
   if (parsed.url) {
     const urlInfo = parseAgentUrl(parsed.url);
     if (!urlInfo) {
@@ -19186,14 +19562,14 @@ function belowEmptyBlock(lines, i) {
   }
   return false;
 }
-function checkYamlText(text) {
+function checkYamlText(text, withData = false) {
   const lines = text.replace(/^﻿/, "").split(/\r?\n/);
   const warnings = [];
   let relax = null;
   for (let round = 0; round <= lines.length; round++) {
     try {
-      yaml.load(lines.join("\n"), { json: true });
-      return { error: null, warnings };
+      const data = yaml.load(lines.join("\n"), { json: true });
+      return withData ? { error: null, warnings, data } : { error: null, warnings };
     } catch (e) {
       const failure = {
         line: e.mark ? e.mark.line + 1 : 1,
@@ -19217,6 +19593,11 @@ function checkYamlText(text) {
     }
   }
   return { error: { line: 1, column: 1, message: "too many unquoted values" }, warnings: [] };
+}
+function lenientLoad(text) {
+  const result = checkYamlText(text, true);
+  if (result.error) throw new Error(result.error.message);
+  return result.data;
 }
 function scanYamlFiles(agentDir) {
   const errors = [];
@@ -19739,6 +20120,7 @@ async function cmdWithLsp(args, method) {
   const tokens = await acquireLspTokens(args);
   const binaryInfo = findBinary();
   const client = new LspClient(binaryInfo, args.workspace);
+  let pushResult = null;
   try {
     await client.start();
     if (method === "powerplatformls/syncPush" && !args.force) {
@@ -19753,6 +20135,14 @@ async function cmdWithLsp(args, method) {
       }
       log(`[push] Validation passed (${validation.summary.warnings} warning(s))`);
     }
+    let backup = null;
+    let backupWarning = null;
+    if (method === "powerplatformls/syncPull") {
+      ({ backup, warning: backupWarning } = syncGuard.tryBackup(agentDir, { keep: args.keepBackups }));
+      if (backup) log(`[pull] Backup of ${backup.files} file(s) in ${backup.path}`);
+      if (backupWarning) warn(backupWarning);
+    }
+    const warnings = backupWarning ? [backupWarning] : [];
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
     let result;
@@ -19770,18 +20160,103 @@ async function cmdWithLsp(args, method) {
           method,
           result,
           conflicts,
-          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`
+          backup,
+          ...warnings.length ? { warnings } : {},
+          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.` + (backup ? ` Your files from before the pull are in ${backup.path}.` : "")
         }, null, 2) + "\n"
       );
       process.exitCode = 1;
-    } else {
-      process.stdout.write(
-        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
-      );
+      return;
     }
+    if (method === "powerplatformls/syncPull") {
+      process.stdout.write(
+        JSON.stringify({ status: "ok", method, result, backup, ...warnings.length ? { warnings } : {} }, null, 2) + "\n"
+      );
+      return;
+    }
+    pushResult = result;
   } finally {
     await client.stop();
   }
+  const verification = args.verify ? await verifyAgent(args, agentDir) : null;
+  const { output, exitCode } = syncGuard.pushOutcome(pushResult, verification, { strict: args.verifyStrict });
+  if (exitCode) process.exitCode = exitCode;
+  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+}
+async function verifyAgent(args, agentDir) {
+  const conn = loadConnJson(agentDir);
+  const agentId = conn && conn.AgentId || args.agentId;
+  let note = null;
+  if (conn && conn.AgentId && args.agentId && args.agentId !== conn.AgentId) {
+    note = `--url or --agent-id names ${args.agentId}, but the workspace belongs to ${conn.AgentId}. The check used the workspace's agent.`;
+    warn(note);
+  }
+  const verifyArgs = { ...args, agentId };
+  let tmp = null;
+  try {
+    tmp = fs6.mkdtempSync(path2.join(os2.tmpdir(), "sfcs-verify-"));
+    log("[verify] Fresh clone of the server copy...");
+    await cloneAgentInto(verifyArgs, tmp, lookupClusterCategory(args));
+    const cloned = findAgentDir(tmp, true);
+    if (!fs6.existsSync(path2.join(cloned, ".mcs", "conn.json"))) {
+      throw new Error("the clone produced no agent folder");
+    }
+    const cmp = syncGuard.compareTrees(agentDir, cloned);
+    const bad = cmp.differs.length + cmp.localOnly.length;
+    if (bad === 0) {
+      return {
+        status: "verified",
+        checked: cmp.checked,
+        serverOnly: cmp.serverOnly,
+        ...note ? { note } : {}
+      };
+    }
+    return {
+      status: "mismatch",
+      checked: cmp.checked,
+      differs: cmp.differs,
+      localOnly: cmp.localOnly,
+      serverOnly: cmp.serverOnly,
+      ...note ? { note } : {},
+      message: "The server does not hold these local files as they are: " + [...cmp.differs.map((d) => `${d.file} (content differs)`), ...cmp.localOnly.map((f) => `${f} (not on the server)`)].join("; ") + ". Possible causes: the push did not apply, the language server skipped the file, the file has edits that were not pushed, or someone changed the agent on the server. The lines that differ are in verification.differs (a text diff, so it can also show comment and formatting lines)."
+    };
+  } catch (e) {
+    return {
+      status: "error",
+      error: e.message,
+      ...note ? { note } : {},
+      message: `The check failed: ${e.message}. Run verify later to compare the folder with the server.`
+    };
+  } finally {
+    if (tmp) {
+      try {
+        fs6.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (e) {
+        warn(`Could not delete the temp folder ${tmp} (${e.message}). Delete it by hand.`);
+      }
+    }
+  }
+}
+async function cmdVerify(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
+  if (!args.environmentUrl || !args.agentMgmtUrl) {
+    log("Resolving environment details from BAP API...");
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
+    if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
+    if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
+    if (!args.environmentName) args.environmentName = envDetails.displayName;
+  }
+  if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
+  if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
+  const verification = await verifyAgent(args, findAgentDir(args.workspace));
+  const ok = verification.status === "verified";
+  process.stdout.write(
+    JSON.stringify({ status: ok ? "ok" : "unverified", verification, message: verification.message }, null, 2) + "\n"
+  );
+  if (!ok) process.exitCode = 1;
 }
 async function cmdValidate(args) {
   if (!args.workspace) die("--workspace is required");
@@ -20076,6 +20551,77 @@ async function cmdChanges(args) {
     await client.stop();
   }
 }
+async function cmdRemoteChanges(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
+  if (!args.environmentUrl || !args.agentMgmtUrl) {
+    log("Resolving environment details from BAP API...");
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
+    if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
+    if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
+    if (!args.environmentName) args.environmentName = envDetails.displayName;
+  }
+  if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
+  if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
+  const agentDir = findAgentDir(args.workspace);
+  const tokens = await acquireLspTokens(args);
+  const client = new LspClient(findBinary(), args.workspace);
+  try {
+    await client.start();
+    const request = buildSyncRequest(args, tokens);
+    const localChanges = await sendCustomRequestWithRetries(client, "powerplatformls/getLocalChanges", request);
+    const remoteChanges = await sendCustomRequestWithRetries(client, "powerplatformls/getRemoteChanges", request);
+    const preview = await syncGuard.buildPullPreview({
+      localChanges,
+      remoteChanges,
+      agentDir,
+      fetchRemote: async (change) => {
+        const r = await sendCustomRequestWithRetries(client, "powerplatformls/getRemoteFile", {
+          ...request,
+          schemaName: change.schemaName
+        });
+        return typeof r.content === "string" ? r.content : null;
+      },
+      // The copy the last sync started from, so a merge can be judged line by line.
+      fetchBase: async (change) => {
+        const r = await client.sendCustomRequest("powerplatformls/getCachedFile", {
+          workspaceUri: request.workspaceUri,
+          schemaName: change.schemaName
+        });
+        return r && typeof r.content === "string" && r.content !== "" ? r.content : null;
+      }
+    });
+    const n = preview.remote.length;
+    const both = preview.bothSides.length;
+    const unknown = preview.remote.filter((e) => e.merge === "unknown");
+    let message;
+    if (n === 0) {
+      message = "The server has no changes for you. A pull would change nothing.";
+    } else {
+      message = `A pull would change ${n} file(s) from the server.`;
+      if (both === 0) {
+        message += " None of them was also changed here with different content.";
+      } else {
+        message += ` ${both} changed on both sides: ${preview.bothSides.join(", ")}.`;
+        if (preview.conflicts.length) {
+          message += ` Same lines changed on both sides, so a pull writes conflict markers into: ${preview.conflicts.join(", ")}.`;
+        }
+        if (unknown.length) {
+          message += ` Could not compare ${unknown.map((e) => `${e.file} (${e.error ? "server copy unreadable" : "base copy unreadable"})`).join(", ")}, so those may merge cleanly or not.`;
+        }
+        if (!preview.conflicts.length && !unknown.length) {
+          message += " The changes are on different lines, so a pull should merge them cleanly.";
+        }
+      }
+      message += " A pull saves a backup of your folder first.";
+    }
+    process.stdout.write(JSON.stringify({ status: "ok", dryRun: true, message, ...preview }, null, 2) + "\n");
+  } finally {
+    await client.stop();
+  }
+}
 function planPackCopy(agentDir) {
   const copy = [];
   const skipped = [];
@@ -20199,28 +20745,7 @@ async function fetchAgentInfo(envUrl, agentId, accessToken) {
     }))
   };
 }
-async function cmdClone(args) {
-  if (!args.workspace) die("--workspace is required");
-  if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
-  if (!args.agentId) die("--agent-id (or --url) is required for clone");
-  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
-  const picked = resolveClusterCategory({ option: args.clusterCategory, url: args.url });
-  const clusterCategory = picked.category;
-  const sources = { option: "from --cluster-category", url: "from the --url host", default: "default, Prod" };
-  log(`Cluster category ${clusterCategory} (${sources[picked.source]})`);
-  if (picked.source === "option" && picked.conflict) {
-    warn(`--url host suggests cluster category ${picked.urlCategory}; using ${clusterCategory} as given.`);
-  }
-  if (!args.environmentUrl || !args.agentMgmtUrl) {
-    log("Resolving environment details from BAP API...");
-    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, clusterCategory);
-    if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
-    if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
-    if (!args.environmentName) args.environmentName = envDetails.displayName;
-    log(`Resolved: ${envDetails.displayName} (${envDetails.dataverseUrl})`);
-  }
-  if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
-  if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
+async function cloneAgentInto(args, rootFolder, clusterCategory = DEFAULT_CLUSTER_CATEGORY) {
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   const cpsToken = await getOrAcquireIslandToken(args.tenantId, clusterCategory, "Island API");
   const dvToken = await getOrAcquireToken(args.tenantId, VSCODE_CLIENT_ID, [`${envUrl}/.default`], "Dataverse API");
@@ -20229,7 +20754,6 @@ async function cmdClone(args) {
     fetchSolutionVersions(envUrl, dvToken.accessToken)
   ]);
   log(`Cloning agent: ${agentInfo.displayName}`);
-  const rootFolder = path2.resolve(args.workspace);
   const binaryInfo = findBinary();
   const client = new LspClient(binaryInfo, rootFolder);
   try {
@@ -20255,17 +20779,40 @@ async function cmdClone(args) {
       rootFolder
     };
     log("Calling powerplatformls/cloneAgent...");
-    const result = await sendCustomRequestWithRetries(
-      client,
-      "powerplatformls/cloneAgent",
-      request
-    );
-    process.stdout.write(
-      JSON.stringify({ status: "ok", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
-    );
+    return await sendCustomRequestWithRetries(client, "powerplatformls/cloneAgent", request);
   } finally {
     await client.stop();
   }
+}
+async function cmdClone(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
+  if (!args.agentId) die("--agent-id (or --url) is required for clone");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  const picked = resolveClusterCategory({ option: args.clusterCategory, url: args.url });
+  const clusterCategory = picked.category;
+  const sources = { option: "from --cluster-category", url: "from the --url host", default: "default, Prod" };
+  log(`Cluster category ${clusterCategory} (${sources[picked.source]})`);
+  if (picked.source === "option" && picked.conflict) {
+    warn(`--url host suggests cluster category ${picked.urlCategory}; using ${clusterCategory} as given.`);
+  }
+  if (!args.environmentUrl || !args.agentMgmtUrl) {
+    log("Resolving environment details from BAP API...");
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, clusterCategory);
+    if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
+    if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
+    if (!args.environmentName) args.environmentName = envDetails.displayName;
+    log(`Resolved: ${envDetails.displayName} (${envDetails.dataverseUrl})`);
+  }
+  if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
+  if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
+  const result = await cloneAgentInto(args, path2.resolve(args.workspace), clusterCategory);
+  process.stdout.write(
+    JSON.stringify({ status: "ok", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
+  );
+}
+function resolveCommand(args) {
+  return args.command === "pull" && args.dryRun ? "remote-changes" : args.command;
 }
 function cmdDoctor(args) {
   const result = doctor.runDoctor(doctor.makeContext(args), {
@@ -20282,9 +20829,10 @@ function cmdDoctor(args) {
   if (result.status === "fail") process.exitCode = 1;
 }
 async function main() {
+  syncGuard.useYamlLoader(lenientLoad);
   const args = parseArgs();
   try {
-    switch (args.command) {
+    switch (resolveCommand(args)) {
       case "auth":
         await cmdAuth(args);
         break;
@@ -20293,6 +20841,12 @@ async function main() {
         break;
       case "pull":
         await cmdWithLsp(args, "powerplatformls/syncPull");
+        break;
+      case "remote-changes":
+        await cmdRemoteChanges(args);
+        break;
+      case "verify":
+        await cmdVerify(args);
         break;
       case "clone":
         await cmdClone(args);
