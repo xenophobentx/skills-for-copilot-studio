@@ -64,7 +64,7 @@ For detailed guidance on writing knowledge-aware instructions, grounding directi
 
 In a classic agent, `instructions` in `agent.mcs.yml` is a plain string. Write it as a block scalar (`instructions: |`). Do not write an object there: both `instructions: {segments: ...}` and `instructions: {text: ...}` come out empty, because the language server sees no difference from an empty value. `validate` reports them as errors with source `instructions-shape`.
 
-`segments` with `kind: StaticSegment` is the CLI agent format. If you see it, the workspace is a CLI agent: stop as described in int-project-context.
+`segments` with `kind: StaticSegment` under `configuration.agentSettings` in `settings.mcs.yml` belongs to CLI agents. If you see it, run the CLI agent check in int-project-context before you change anything.
 
 ## Fields to NEVER Modify
 
