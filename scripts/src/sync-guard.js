@@ -131,6 +131,14 @@ function tryBackup(agentDir, { keep = DEFAULT_KEEP_BACKUPS, now } = {}) {
   }
 }
 
+// How YAML text is read when two files are compared. manage-agent installs the
+// validator's lenient reading, which takes an unquoted `a: b: c` that the service
+// keeps and returns quoted.
+let loadYaml = (text) => yaml.load(text, { json: true });
+function useYamlLoader(fn) {
+  loadYaml = fn;
+}
+
 function normalizeText(text) {
   return String(text).replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
 }
@@ -145,8 +153,8 @@ function sameContent(a, b) {
   const y = normalizeText(b);
   if (x === y) return true;
   try {
-    const left = yaml.load(x, { json: true });
-    const right = yaml.load(y, { json: true });
+    const left = loadYaml(x);
+    const right = loadYaml(y);
     return JSON.stringify(sortKeys(left)) === JSON.stringify(sortKeys(right));
   } catch {
     return false;
@@ -235,8 +243,8 @@ function compareTrees(localDir, serverDir) {
 const MAX_LCS_CELLS = 4000000;
 
 /**
- * The line ranges of `base` that `other` changed, as [{ start, end }] (end exclusive,
- * base line numbers from 0). Uses a longest common subsequence; a file too large for
+ * The line ranges of `base` that `other` changed, as [{ start, end, lines }] (end
+ * exclusive, base line numbers from 0, `lines` what `other` has there). Uses a longest common subsequence; a file too large for
  * that gets one range from the first to the last changed line.
  */
 function changedRanges(baseLines, otherLines) {
@@ -249,7 +257,9 @@ function changedRanges(baseLines, otherLines) {
   const bn = n - pre - post;
   const om = m - pre - post;
   if (bn === 0 && om === 0) return [];
-  if ((bn + 1) * (om + 1) > MAX_LCS_CELLS) return [{ start: pre, end: n - post }];
+  if ((bn + 1) * (om + 1) > MAX_LCS_CELLS) {
+    return [{ start: pre, end: n - post, lines: otherLines.slice(pre, m - post) }];
+  }
 
   // lcs[i][j]: length of the common subsequence of the tails from i and j.
   const w = om + 1;
@@ -271,8 +281,9 @@ function changedRanges(baseLines, otherLines) {
       if (open) { ranges.push(open); open = null; }
       i++; j++;
     } else {
-      if (!open) open = { start: pre + i, end: pre + i };
+      if (!open) open = { start: pre + i, end: pre + i, lines: [] };
       if (j < om && (i >= bn || lcs[i * w + j + 1] >= lcs[(i + 1) * w + j])) {
+        open.lines.push(otherLines[pre + j]);
         j++;
       } else {
         i++;
@@ -292,7 +303,10 @@ function mergeConflicts(baseText, localText, serverText) {
   const base = normalizeText(baseText).split("\n");
   const mine = changedRanges(base, normalizeText(localText).split("\n"));
   const theirs = changedRanges(base, normalizeText(serverText).split("\n"));
-  return mine.some((a) => theirs.some((b) => a.start <= b.end && b.start <= a.end));
+  const sameEdit = (a, b) =>
+    a.start === b.start && a.end === b.end && a.lines.length === b.lines.length && a.lines.every((l, k) => l === b.lines[k]);
+  // Both sides made the very same change there: nothing to merge by hand.
+  return mine.some((a) => theirs.some((b) => a.start <= b.end && b.start <= a.end && !sameEdit(a, b)));
 }
 
 /**
@@ -333,7 +347,12 @@ async function buildPullPreview({ localChanges, remoteChanges, agentDir, fetchRe
       let serverText = null;
       try { serverText = await fetchRemote(change); }
       catch (e) { entry.error = `could not read the server copy: ${e.message}`; }
-      if (serverText !== null && localText !== null) {
+      if (serverText === null || serverText === undefined) {
+        // Nothing to compare with: it may merge cleanly or not.
+        entry.bothSides = true;
+        entry.merge = "unknown";
+        if (!entry.error) entry.error = "could not read the server copy";
+      } else if (localText !== null) {
         entry.diff = lineDiff(localText, serverText);
         if (sameContent(localText, serverText)) {
           entry.merge = "same";
@@ -348,7 +367,7 @@ async function buildPullPreview({ localChanges, remoteChanges, agentDir, fetchRe
             : mergeConflicts(baseText, localText, serverText) ? "conflict" : "clean";
         }
       } else {
-        // Changed on both sides and one copy is unknown or gone.
+        // Changed here and deleted locally, the server changed it: a pull has to ask.
         entry.bothSides = true;
         entry.merge = "conflict";
       }
@@ -416,7 +435,11 @@ const FLAG_COMMANDS = {
 };
 
 function flagError(command, flagsSeen) {
-  for (const flag of flagsSeen) {
+  const seen = new Set(flagsSeen);
+  if (seen.has("--verify") && seen.has("--no-verify")) {
+    return "--verify and --no-verify contradict each other. Nothing was run. Use one of them.";
+  }
+  for (const flag of seen) {
     const allowed = FLAG_COMMANDS[flag];
     if (allowed && !allowed.includes(command)) {
       return (
@@ -441,6 +464,7 @@ module.exports = {
   restoreText,
   sameContent,
   tryBackup,
+  useYamlLoader,
   DEFAULT_KEEP_BACKUPS,
   BACKUP_SUBDIR,
 };

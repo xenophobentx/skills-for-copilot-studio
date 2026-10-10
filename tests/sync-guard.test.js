@@ -129,12 +129,33 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, ...rel.split("/")), "u
       assertEqual(/overwrites the server changes/.test(unix) && /deleted come back/.test(unix), true, "restore text warns about a push and deleted topics");
     }
 
+    // Unquoted value the validator lets through, returned quoted by the service.
+    {
+      const yaml = require(path.join(__dirname, "..", "scripts", "node_modules", "js-yaml"));
+      const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "src", "manage-agent.js"), "utf8");
+      const a = src.indexOf("function findMcsYmlFiles(");
+      const b = src.indexOf("function openFilesForDiagnostics(");
+      const fs_ = fs; // the sliced code uses fs, path and yaml from this scope
+      eval(src.slice(a, b));
+      const plain = "mcs.metadata:\n  description: Text: more text\nkind: AdaptiveDialog\n";
+      const quoted = 'mcs.metadata:\n  description: "Text: more text"\nkind: AdaptiveDialog\n';
+      assertEqual(sg.sameContent(plain, quoted), false, "strict reading: unquoted and quoted are not the same");
+      sg.useYamlLoader(lenientLoad);
+      assertEqual(sg.sameContent(plain, quoted), true, "lenient reading: unquoted and quoted with the same value are the same");
+      assertEqual(sg.sameContent(plain, quoted.replace("more text", "other text")), false, "lenient reading: a different value is still different");
+      assertEqual(sg.sameContent("a: 'x'\nb: 2\n", 'b: 2\na: "x"\n'), true, "lenient reading: quoting style and key order");
+      const local = makeDir({ "topics/T.mcs.yml": plain });
+      const server = makeDir({ "topics/T.mcs.yml": quoted });
+      const r = sg.compareTrees(local, server);
+      assertEqual([r.differs, r.localOnly], [[], []], "compareTrees: quoted and unquoted value is no difference");
+    }
+
     // -----------------------------------------------------------------------
     // sameContent
     // -----------------------------------------------------------------------
     assertEqual(sg.sameContent("a: 1\n", "a: 1\n"), true, "identical text");
     assertEqual(sg.sameContent("a: 1\nb: 2\n", "a: 1\r\nb: 2\r\n"), true, "CRLF is not a difference");
-    assertEqual(sg.sameContent("﻿a: 1\n", "a: 1\n"), true, "BOM is not a difference");
+    assertEqual(sg.sameContent("\uFEFFa: 1\n", "a: 1\n"), true, "BOM is not a difference");
     assertEqual(sg.sameContent("a: 'x'\nb: 2\n", 'b: 2\na: "x"\n'), true, "quoting and key order are not differences");
     assertEqual(sg.sameContent("a: 1\n", "a: 2\n"), false, "different value");
     assertEqual(sg.sameContent("a: [1\n", "a: 1\n"), false, "unparsable text that differs");
@@ -261,7 +282,7 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, ...rel.split("/")), "u
       assertEqual(p.workflows, 2, "workflow count passed through");
     }
 
-    // Server copy cannot be read: the file counts as a conflict and carries the error.
+    // Server copy cannot be read: the file is "unknown" and carries the error.
     {
       const dir = makeDir({ "topics/X.mcs.yml": "a: 1\n" });
       const c = { uri: "topics/X.mcs.yml", changeType: 1, schemaName: "s.X" };
@@ -271,7 +292,7 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, ...rel.split("/")), "u
         remoteChanges: { localChanges: [c] },
         fetchRemote: async () => { throw new Error("boom"); },
       });
-      assertEqual([p.conflicts, p.remote[0].error], [["topics/X.mcs.yml"], "could not read the server copy: boom"], "unreadable server copy");
+      assertEqual([p.conflicts, p.remote[0].merge, p.bothSides, p.remote[0].error], [[], "unknown", ["topics/X.mcs.yml"], "could not read the server copy: boom"], "unreadable server copy is unknown, not a conflict");
     }
 
     // Three-way: different lines merge cleanly, the same line conflicts, no base is unknown.
@@ -300,9 +321,17 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, ...rel.split("/")), "u
       p = await run("a: 1\nb: 2\nc: 3\nd: 4\ne: 5\n", "a: 1\nb: 2\nc: 3\nd: 4\ne: 5\n", getBase);
       assertEqual(p.remote[0].merge, "same", "identical content");
     }
+    // Same change on both sides plus another local edit: no conflict (a pull merges it).
+    assertEqual(
+      sg.mergeConflicts("t1\nt2\nt3\nHello\nz\n", "t1\nLOCAL\nt3\nHi\nz\n", "t1\nt2\nt3\nHi\nz\n"),
+      false,
+      "same change on both sides and a separate local edit"
+    );
+    assertEqual(sg.mergeConflicts("a\nHello\nz\n", "a\nHi\nz\n", "a\nHey\nz\n"), true, "different changes to one line still conflict");
+    assertEqual(sg.mergeConflicts("a\nb\nc\n", "a\nB\nc\n", "a\nb\nC\n"), true, "adjacent lines count as a conflict");
     assertEqual(sg.changedRanges(["a", "b", "c"], ["a", "b", "c"]), [], "no change, no range");
-    assertEqual(sg.changedRanges(["a", "b", "c", "d", "e"], ["a", "X", "c", "d", "Y"]), [{ start: 1, end: 2 }, { start: 4, end: 5 }], "two separate edits stay two ranges");
-    assertEqual(sg.changedRanges(["a", "c"], ["a", "b", "c"]), [{ start: 1, end: 1 }], "insertion is an empty range");
+    assertEqual(sg.changedRanges(["a", "b", "c", "d", "e"], ["a", "X", "c", "d", "Y"]), [{ start: 1, end: 2, lines: ["X"] }, { start: 4, end: 5, lines: ["Y"] }], "two separate edits stay two ranges");
+    assertEqual(sg.changedRanges(["a", "c"], ["a", "b", "c"]), [{ start: 1, end: 1, lines: ["b"] }], "insertion is an empty range");
     assertEqual(sg.mergeConflicts("a\nb\nc\n", "a\nb\nc\nlocal\n", "top\na\nb\nc\n"), false, "insert at the end and at the start merge");
 
     // Empty results.
@@ -343,13 +372,14 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, ...rel.split("/")), "u
     // -----------------------------------------------------------------------
     {
       assertEqual(sg.flagError("pull", ["--dry-run", "--keep-backups"]), null, "pull takes --dry-run and --keep-backups");
-      assertEqual(sg.flagError("push", ["--no-verify", "--verify"]), null, "push takes --no-verify and --verify");
+      assertEqual([sg.flagError("push", ["--no-verify"]), sg.flagError("push", ["--verify"])], [null, null], "push takes --no-verify and --verify");
       assertEqual(/--dry-run only works with pull, not with push/.test(sg.flagError("push", ["--dry-run"])), true, "push --dry-run is refused");
       assertEqual(sg.flagError("remote-changes", ["--dry-run"]) !== null, true, "remote-changes --dry-run is refused");
       assertEqual(sg.flagError("validate", ["--dry-run"]) !== null, true, "validate --dry-run is refused");
       assertEqual(sg.flagError("pull", ["--no-verify"]) !== null, true, "pull --no-verify is refused");
       assertEqual(sg.flagError("push", ["--keep-backups"]) !== null, true, "push --keep-backups is refused");
       assertEqual(sg.flagError("push", []), null, "no flags, no problem");
+      assertEqual(/contradict/.test(sg.flagError("push", ["--verify", "--no-verify"])), true, "push --verify --no-verify is refused");
 
       const src = fs.readFileSync(path.join(__dirname, "..", "scripts", "src", "manage-agent.js"), "utf8");
       const a = src.indexOf("function resolveCommand(");
@@ -369,6 +399,18 @@ const read = (dir, rel) => fs.readFileSync(path.join(dir, ...rel.split("/")), "u
       assertEqual([r.status, out && out.status, out && /--dry-run only works with pull/.test(out.error)], [1, "error", true], "bundle: push --dry-run exits 1 with an error");
       r = run("changes", "--dry-run", "--workspace", path.join(root, "nowhere"));
       assertEqual(r.status, 1, "bundle: changes --dry-run exits 1");
+      for (const bad of ["abc", "-1", "2.5", ""]) {
+        r = run("pull", "--keep-backups", bad, "--workspace", path.join(root, "nowhere"));
+        out = null;
+        try { out = JSON.parse(r.stdout); } catch { /* checked below */ }
+        assertEqual([r.status, out && /--keep-backups needs a whole number/.test(out.error)], [1, true], `bundle: --keep-backups "${bad}" is refused`);
+      }
+      r = run("pull", "--keep-backups", "0", "--workspace", path.join(root, "nowhere"));
+      out = null;
+      try { out = JSON.parse(r.stdout); } catch { /* checked below */ }
+      assertEqual(out && /--keep-backups/.test(out.error || ""), false, "bundle: --keep-backups 0 is accepted");
+      r = run("push", "--verify", "--no-verify", "--workspace", path.join(root, "nowhere"));
+      assertEqual(r.status, 1, "bundle: push --verify --no-verify exits 1");
       r = run("pull", "--dry-run", "--workspace", path.join(root, "nowhere"));
       out = null;
       try { out = JSON.parse(r.stdout); } catch { /* checked below */ }

@@ -18717,6 +18717,10 @@ var require_sync_guard = __commonJS({
         };
       }
     }
+    var loadYaml = (text) => yaml2.load(text, { json: true });
+    function useYamlLoader(fn) {
+      loadYaml = fn;
+    }
     function normalizeText(text) {
       return String(text).replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
     }
@@ -18725,8 +18729,8 @@ var require_sync_guard = __commonJS({
       const y = normalizeText(b);
       if (x === y) return true;
       try {
-        const left = yaml2.load(x, { json: true });
-        const right = yaml2.load(y, { json: true });
+        const left = loadYaml(x);
+        const right = loadYaml(y);
         return JSON.stringify(sortKeys(left)) === JSON.stringify(sortKeys(right));
       } catch {
         return false;
@@ -18803,7 +18807,9 @@ var require_sync_guard = __commonJS({
       const bn = n - pre - post;
       const om = m - pre - post;
       if (bn === 0 && om === 0) return [];
-      if ((bn + 1) * (om + 1) > MAX_LCS_CELLS) return [{ start: pre, end: n - post }];
+      if ((bn + 1) * (om + 1) > MAX_LCS_CELLS) {
+        return [{ start: pre, end: n - post, lines: otherLines.slice(pre, m - post) }];
+      }
       const w = om + 1;
       const lcs = new Int32Array((bn + 1) * w);
       for (let i2 = bn - 1; i2 >= 0; i2--) {
@@ -18824,8 +18830,9 @@ var require_sync_guard = __commonJS({
           i++;
           j++;
         } else {
-          if (!open2) open2 = { start: pre + i, end: pre + i };
+          if (!open2) open2 = { start: pre + i, end: pre + i, lines: [] };
           if (j < om && (i >= bn || lcs[i * w + j + 1] >= lcs[(i + 1) * w + j])) {
+            open2.lines.push(otherLines[pre + j]);
             j++;
           } else {
             i++;
@@ -18840,7 +18847,8 @@ var require_sync_guard = __commonJS({
       const base = normalizeText(baseText).split("\n");
       const mine = changedRanges(base, normalizeText(localText).split("\n"));
       const theirs = changedRanges(base, normalizeText(serverText).split("\n"));
-      return mine.some((a) => theirs.some((b) => a.start <= b.end && b.start <= a.end));
+      const sameEdit = (a, b) => a.start === b.start && a.end === b.end && a.lines.length === b.lines.length && a.lines.every((l, k) => l === b.lines[k]);
+      return mine.some((a) => theirs.some((b) => a.start <= b.end && b.start <= a.end && !sameEdit(a, b)));
     }
     async function buildPullPreview({ localChanges, remoteChanges, agentDir, fetchRemote, fetchBase }) {
       const localList = localChanges && localChanges.localChanges || [];
@@ -18871,7 +18879,11 @@ var require_sync_guard = __commonJS({
           } catch (e) {
             entry.error = `could not read the server copy: ${e.message}`;
           }
-          if (serverText !== null && localText !== null) {
+          if (serverText === null || serverText === void 0) {
+            entry.bothSides = true;
+            entry.merge = "unknown";
+            if (!entry.error) entry.error = "could not read the server copy";
+          } else if (localText !== null) {
             entry.diff = lineDiff(localText, serverText);
             if (sameContent(localText, serverText)) {
               entry.merge = "same";
@@ -18936,7 +18948,11 @@ var require_sync_guard = __commonJS({
       "--keep-backups": ["pull"]
     };
     function flagError(command, flagsSeen) {
-      for (const flag of flagsSeen) {
+      const seen = new Set(flagsSeen);
+      if (seen.has("--verify") && seen.has("--no-verify")) {
+        return "--verify and --no-verify contradict each other. Nothing was run. Use one of them.";
+      }
+      for (const flag of seen) {
         const allowed = FLAG_COMMANDS[flag];
         if (allowed && !allowed.includes(command)) {
           return `${flag} only works with ${allowed.join(" or ")}, not with ${command}. Nothing was run.${flag === "--dry-run" ? " Use remote-changes or pull --dry-run to look before a pull; push has no dry run." : ""}`;
@@ -18957,6 +18973,7 @@ var require_sync_guard = __commonJS({
       restoreText,
       sameContent,
       tryBackup,
+      useYamlLoader,
       DEFAULT_KEEP_BACKUPS,
       BACKUP_SUBDIR
     };
@@ -19116,8 +19133,11 @@ function parseArgs() {
         break;
       case "--keep-backups": {
         flagsSeen.add("--keep-backups");
-        const v = parseInt(args[++i], 10);
-        if (Number.isFinite(v) && v >= 0) parsed.keepBackups = v;
+        const raw = args[++i];
+        if (!/^\d+$/.test(raw || "")) {
+          die(`--keep-backups needs a whole number, 0 or more (got ${raw === void 0 ? "nothing" : `"${raw}"`}). 0 turns the backup off.`);
+        }
+        parsed.keepBackups = parseInt(raw, 10);
         break;
       }
       case "--auth-mode":
@@ -19542,14 +19562,14 @@ function belowEmptyBlock(lines, i) {
   }
   return false;
 }
-function checkYamlText(text) {
+function checkYamlText(text, withData = false) {
   const lines = text.replace(/^﻿/, "").split(/\r?\n/);
   const warnings = [];
   let relax = null;
   for (let round = 0; round <= lines.length; round++) {
     try {
-      yaml.load(lines.join("\n"), { json: true });
-      return { error: null, warnings };
+      const data = yaml.load(lines.join("\n"), { json: true });
+      return withData ? { error: null, warnings, data } : { error: null, warnings };
     } catch (e) {
       const failure = {
         line: e.mark ? e.mark.line + 1 : 1,
@@ -19573,6 +19593,11 @@ function checkYamlText(text) {
     }
   }
   return { error: { line: 1, column: 1, message: "too many unquoted values" }, warnings: [] };
+}
+function lenientLoad(text) {
+  const result = checkYamlText(text, true);
+  if (result.error) throw new Error(result.error.message);
+  return result.data;
 }
 function scanYamlFiles(agentDir) {
   const errors = [];
@@ -20570,7 +20595,7 @@ async function cmdRemoteChanges(args) {
     });
     const n = preview.remote.length;
     const both = preview.bothSides.length;
-    const unknown = preview.remote.filter((e) => e.merge === "unknown").map((e) => e.file);
+    const unknown = preview.remote.filter((e) => e.merge === "unknown");
     let message;
     if (n === 0) {
       message = "The server has no changes for you. A pull would change nothing.";
@@ -20584,7 +20609,7 @@ async function cmdRemoteChanges(args) {
           message += ` Same lines changed on both sides, so a pull writes conflict markers into: ${preview.conflicts.join(", ")}.`;
         }
         if (unknown.length) {
-          message += ` Could not read the base copy for ${unknown.join(", ")}, so those may merge cleanly or not.`;
+          message += ` Could not compare ${unknown.map((e) => `${e.file} (${e.error ? "server copy unreadable" : "base copy unreadable"})`).join(", ")}, so those may merge cleanly or not.`;
         }
         if (!preview.conflicts.length && !unknown.length) {
           message += " The changes are on different lines, so a pull should merge them cleanly.";
@@ -20804,6 +20829,7 @@ function cmdDoctor(args) {
   if (result.status === "fail") process.exitCode = 1;
 }
 async function main() {
+  syncGuard.useYamlLoader(lenientLoad);
   const args = parseArgs();
   try {
     switch (resolveCommand(args)) {

@@ -217,8 +217,11 @@ function parseArgs() {
         break;
       case "--keep-backups": {
         flagsSeen.add("--keep-backups");
-        const v = parseInt(args[++i], 10);
-        if (Number.isFinite(v) && v >= 0) parsed.keepBackups = v;
+        const raw = args[++i];
+        if (!/^\d+$/.test(raw || "")) {
+          die(`--keep-backups needs a whole number, 0 or more (got ${raw === undefined ? "nothing" : `"${raw}"`}). 0 turns the backup off.`);
+        }
+        parsed.keepBackups = parseInt(raw, 10);
         break;
       }
       case "--auth-mode":
@@ -786,15 +789,15 @@ function belowEmptyBlock(lines, i) {
 // warning. Anything else that fails is an error. Returns
 // { error: { line, column, message } | null, warnings: [{ line, column, reason, message }] },
 // line and column 1-based. A file with an error returns no warnings.
-function checkYamlText(text) {
+function checkYamlText(text, withData = false) {
   const lines = text.replace(/^﻿/, "").split(/\r?\n/);
   const warnings = [];
   let relax = null;
   for (let round = 0; round <= lines.length; round++) {
     try {
       // json: true lets a repeated key through; the LSP already reports those.
-      yaml.load(lines.join("\n"), { json: true });
-      return { error: null, warnings };
+      const data = yaml.load(lines.join("\n"), { json: true });
+      return withData ? { error: null, warnings, data } : { error: null, warnings };
     } catch (e) {
       const failure = {
         line: e.mark ? e.mark.line + 1 : 1,
@@ -820,6 +823,14 @@ function checkYamlText(text) {
   return { error: { line: 1, column: 1, message: "too many unquoted values" }, warnings: [] };
 }
 
+// Parse a file the way the validator reads it, so that `description: Text: more text`
+// (kept by the service, returned quoted) has the same value as `description: "Text: more text"`.
+// The sync checks use it to compare local and server files.
+function lenientLoad(text) {
+  const result = checkYamlText(text, true);
+  if (result.error) throw new Error(result.error.message);
+  return result.data;
+}
 // The LSP accepts files that do not parse as YAML (a quote closed by a later
 // quote, or text after a closing quote, comes back as "valid"; an unclosed
 // quote that runs to the end of the file it reports itself), so parse every
@@ -2066,7 +2077,7 @@ async function cmdRemoteChanges(args) {
 
     const n = preview.remote.length;
     const both = preview.bothSides.length;
-    const unknown = preview.remote.filter((e) => e.merge === "unknown").map((e) => e.file);
+    const unknown = preview.remote.filter((e) => e.merge === "unknown");
     let message;
     if (n === 0) {
       message = "The server has no changes for you. A pull would change nothing.";
@@ -2080,7 +2091,7 @@ async function cmdRemoteChanges(args) {
           message += ` Same lines changed on both sides, so a pull writes conflict markers into: ${preview.conflicts.join(", ")}.`;
         }
         if (unknown.length) {
-          message += ` Could not read the base copy for ${unknown.join(", ")}, so those may merge cleanly or not.`;
+          message += ` Could not compare ${unknown.map((e) => `${e.file} (${e.error ? "server copy unreadable" : "base copy unreadable"})`).join(", ")}, so those may merge cleanly or not.`;
         }
         if (!preview.conflicts.length && !unknown.length) {
           message += " The changes are on different lines, so a pull should merge them cleanly.";
@@ -2360,6 +2371,7 @@ function cmdDoctor(args) {
 }
 
 async function main() {
+  syncGuard.useYamlLoader(lenientLoad);
   const args = parseArgs();
 
   try {
