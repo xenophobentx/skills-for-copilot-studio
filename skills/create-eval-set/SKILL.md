@@ -15,6 +15,15 @@ agent: copilot-studio-test
 
 Create a test set CSV file that can be imported into Copilot Studio's **Evaluate** tab for in-product agent evaluation.
 
+## Write a CSV, not YAML
+
+The schema has the kinds `EvaluationSet` and `EvaluationData`, and `validate` accepts such files. Do not write them for a test set. What we measured with the language server from extension 1.9.14:
+
+- Outside a `testcases/` folder, `validate` warns `WrongLocationForEntityType` and `push` ignores the files, with no error.
+- Inside `testcases/` (every row needs `input`), `push` uploads them as test case components. `pull` and `clone` never bring them back, and deleting the file locally does not delete the component on the server. We could not check whether the Evaluate tab shows them.
+
+Multi-turn test sets have no CSV import. Tell the user to build them in the portal (Evaluation, New evaluation, Conversation, then Quick or Full conversation set or Use your test chat).
+
 ## Phase 1: Understand the Agent
 
 Read the agent's YAML files to understand what it does:
@@ -104,6 +113,8 @@ Write the CSV file using the Write tool. The format must be:
 ```csv
 "What is 2+2?","4"
 ```
+
+If the portal rejects the file, download the CSV template from **New evaluation** > **Single response** > **Import** and use its header row exactly. Microsoft Learn names the two columns `Question` and `Expected response`.
 
 ## Phase 5: Instruct the User
 

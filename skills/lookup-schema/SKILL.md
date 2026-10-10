@@ -39,3 +39,8 @@ Look up and explain a Copilot Studio YAML schema definition.
 User: `/lookup-schema SendActivity`
 
 Response should include the full schema definition and explain how to use it in YAML.
+
+## Schema-valid does not mean synced
+
+A kind that is in the schema can still be ignored by `push`. For example `EvaluationSet` and `EvaluationData` are only picked up from a `testcases/` folder and never come back on `pull`. If the user wants a test set, use `/copilot-studio:create-eval-set` (a CSV for the Evaluate tab), not these kinds.
+
