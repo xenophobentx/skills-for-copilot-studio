@@ -3,7 +3,7 @@ name: add-other-agents
 user-invocable: false
 description: Add child agents, connected agents, or other multi-agent patterns to a Copilot Studio agent. Use when the user asks to create a sub-agent, child agent, connected agent, or call another agent.
 argument-hint: <agent description>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -21,7 +21,7 @@ Add multi-agent capabilities to a Copilot Studio agent. Two patterns are support
 1. This file is `<pluginRoot>/skills/add-other-agents/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 | Pattern | Use when | What it creates |
 |---------|----------|----------------|
@@ -46,8 +46,8 @@ Create a new child agent (AgentDialog) that the parent agent's orchestrator can 
 
 2. **Look up the AgentDialog schema**:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve AgentDialog
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve OnToolSelected
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve AgentDialog
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve OnToolSelected
    ```
 
 3. **Determine from the user**:

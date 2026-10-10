@@ -24,7 +24,7 @@ Run a batch test suite against a **published** Copilot Studio agent using the [P
 1. This file is `<pluginRoot>/skills/run-tests-kit/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Prerequisites
 

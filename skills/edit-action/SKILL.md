@@ -3,7 +3,7 @@ name: edit-action
 user-invocable: false
 description: Edit an existing action (TaskDialog) in a Copilot Studio agent. Supports connector actions and MCP server actions. Modify inputs, outputs, descriptions, connection mode, and other properties.
 argument-hint: <what to change, e.g. "add description to SharePoint inputs">
-allowed-tools: Bash(node *connector-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js *), Read, Edit, Glob
+allowed-tools: Bash(node *connector-lookup.bundle.js *), Bash(node *connector-lookup.bundle.js" *), Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Edit, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -21,7 +21,7 @@ Edit an existing action (`kind: TaskDialog`) in a Copilot Studio agent. Supports
 1. This file is `<pluginRoot>/skills/edit-action/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Connector Lookup
 
@@ -30,19 +30,19 @@ Help the user find the right connector and operation before they go to the UI. U
 When the connector IS available, use the lookup tool to help the user before they go to the UI:
 
 ```bash
-node <pluginRoot>/scripts/connector-lookup.bundle.js list                              # List connectors
-node <pluginRoot>/scripts/connector-lookup.bundle.js operations <connector>            # List operations
-node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <opId>      # Full input/output details
-node <pluginRoot>/scripts/connector-lookup.bundle.js search <keyword>                  # Search operations
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" list                              # List connectors
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operations <connector>            # List operations
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operation <connector> <opId>      # Full input/output details
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" search <keyword>                  # Search operations
 ```
 
 Use schema lookup for structural properties:
 
 ```bash
-node <pluginRoot>/scripts/schema-lookup.bundle.js summary TaskDialog
-node <pluginRoot>/scripts/schema-lookup.bundle.js summary InvokeConnectorTaskAction
-node <pluginRoot>/scripts/schema-lookup.bundle.js summary InvokeExternalAgentTaskAction
-node <pluginRoot>/scripts/schema-lookup.bundle.js summary ModelContextProtocolMetadata
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary TaskDialog
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary InvokeConnectorTaskAction
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary InvokeExternalAgentTaskAction
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary ModelContextProtocolMetadata
 ```
 
 ## Instructions
@@ -63,7 +63,7 @@ node <pluginRoot>/scripts/schema-lookup.bundle.js summary ModelContextProtocolMe
    - Read the action YAML to find `action.operationId` and the connector API name from `connectionreferences.mcs.yml`
    - Look up the full operation details (if the connector is available in the lookup script):
      ```bash
-     node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <operationId>
+     node "<pluginRoot>/scripts/connector-lookup.bundle.js" operation <connector> <operationId>
      ```
    - This gives you the complete list of available inputs and outputs for the operation
    - If the connector is not found, try broader terms. If still not found, inform the user and proceed with edits based on the existing action YAML and schema-lookup only
@@ -172,7 +172,7 @@ node <pluginRoot>/scripts/schema-lookup.bundle.js summary ModelContextProtocolMe
 
 7. **Validate the edited file**:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js validate <action-file-path>
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" validate <action-file-path>
    ```
 
 8. **Inform the user** about next steps:

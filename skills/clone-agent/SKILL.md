@@ -3,7 +3,7 @@ name: clone-agent
 user-invocable: false
 description: Clone a Copilot Studio agent from the cloud. Guides through environment selection, agent selection, and downloads agent YAML files.
 argument-hint: "[agent name or environment hint]"
-allowed-tools: Bash(node *manage-agent.bundle.js *), Read, Glob, Grep
+allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(node *manage-agent.bundle.js" *), Read, Glob, Grep
 context: fork
 agent: copilot-studio-manage
 ---
@@ -23,7 +23,7 @@ Guided flow to clone a Copilot Studio agent from the cloud to a local workspace.
 1. This file is `<pluginRoot>/skills/clone-agent/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
 
 ## IMPORTANT: Do Not Modify Scripts
 
@@ -75,7 +75,7 @@ https://copilotstudio.test.microsoft.com/environments/<envId>/bots/<agentId>
 If the user provides a URL like this, you still need a `tenantId` (from a `conn.json` or by asking the user). Then **skip to Phase 3**, passing `--url` instead of `--agent-id` / `--environment-id` / `--environment-url` / `--agent-mgmt-url`:
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js clone \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
   --workspace "." \
   --tenant-id "<tenantId>" \
   --url "<copilotStudioUrl>"
@@ -98,7 +98,7 @@ Tell the user: **"A browser window may open for Microsoft sign-in (tokens are ca
 Run the list-envs command:
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js list-envs \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" list-envs \
   --tenant-id "<tenantId>"
 ```
 
@@ -124,7 +124,7 @@ First, ask the user: **"Do you want to list only agents you own, or all agents i
 - If **all agents** → add `--no-owner` flag
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js list-agents \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" list-agents \
   --tenant-id "<tenantId>" \
   --environment-url "<environmentUrl>" \
   [--no-owner]
@@ -147,7 +147,7 @@ Ask the user to pick an agent. Extract the `agentId`.
 Run the clone command. The workspace should be the current directory (`.`). The `--agent-id` is required (from Phase 2):
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js clone \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
   --workspace "." \
   --tenant-id "<tenantId>" \
   --agent-id "<agentId>" \

@@ -3,7 +3,7 @@ name: edit-agent
 user-invocable: false
 description: Edit Copilot Studio agent settings, instructions, or configuration. Use when the user asks to change agent instructions, display name, conversation starters, AI settings, or generative actions toggle.
 argument-hint: <what to change>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Edit, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Edit, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -21,7 +21,7 @@ Modify agent metadata (`agent.mcs.yml`) or configuration (`settings.mcs.yml`).
 1. This file is `<pluginRoot>/skills/edit-agent/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Instructions
 
@@ -37,7 +37,7 @@ Check that the file you need exists under `<pluginRoot>` before you use it.
 
 3. **If the user wants to change the AI model**, run the schema lookup tool first:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js models
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" models
    ```
    Use the output to determine the correct `modelNameHint` and `provider` values.
    **CRITICAL:** Do NOT include `kind` in the model block — the agent-level schema uses `CurrentModelsNoKind`.

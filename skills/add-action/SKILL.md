@@ -3,7 +3,7 @@ name: add-action
 user-invocable: false
 description: Guide users through adding a new connector action to a Copilot Studio agent. Connector actions require UI-based connection setup, so this skill walks users through the Copilot Studio portal steps, then delegates to edit-action for YAML modifications.
 argument-hint: <action description, e.g. "post a Teams message">
-allowed-tools: Bash(node *connector-lookup.bundle.js *), Read
+allowed-tools: Bash(node *connector-lookup.bundle.js *), Bash(node *connector-lookup.bundle.js" *), Read
 context: fork
 agent: copilot-studio-author
 ---
@@ -19,7 +19,7 @@ This skill guides users through adding a new connector action to their Copilot S
 1. This file is `<pluginRoot>/skills/add-action/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 **Do not create or modify any file in this skill**: no `actions/*.mcs.yml`, no `connectionreferences.mcs.yml`, and no changes to the agent instructions or settings, even when the user asks for an MCP server or a connector by name and even if you know the endpoint. A hand-written action file has no real connection reference, so it would not work after a push. The answer to the user is the portal guidance below. Files are only touched after the user has added the action in the portal and pulled it, and then only through `/copilot-studio:edit-action`.
 
@@ -37,10 +37,10 @@ Help the user find the right connector and operation before they go to the UI. U
 When the connector IS available, use the lookup tool to help the user before they go to the UI:
 
 ```bash
-node <pluginRoot>/scripts/connector-lookup.bundle.js list
-node <pluginRoot>/scripts/connector-lookup.bundle.js operations <connector>
-node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <operationId>
-node <pluginRoot>/scripts/connector-lookup.bundle.js search <keyword>
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" list
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operations <connector>
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operation <connector> <operationId>
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" search <keyword>
 ```
 
 `<connector>` matches by API name (`shared_office365`) or partial display name (`outlook`).
@@ -56,13 +56,13 @@ Use these to help the user understand:
 
 2. **Search for the operation** using connector-lookup:
    ```bash
-   node <pluginRoot>/scripts/connector-lookup.bundle.js search "<user's description>"
+   node "<pluginRoot>/scripts/connector-lookup.bundle.js" search "<user's description>"
    ```
    If no match, try broader terms. If the connector is not available in the lookup script at all after different tries, inform the user that this connector is not in the local reference and they will need to add the action through the Copilot Studio UI.
 
 3. **Show the operation details** so the user knows exactly what to look for in the UI:
    ```bash
-   node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <operationId>
+   node "<pluginRoot>/scripts/connector-lookup.bundle.js" operation <connector> <operationId>
    ```
 
 4. **Walk the user through the UI steps**:

@@ -3,7 +3,7 @@ name: add-generative-answers
 user-invocable: false
 description: Add generative answer nodes (SearchAndSummarizeContent or AnswerQuestionWithAI) to a Copilot Studio topic. Use this instead of /add-node when the user asks to add grounded answers, knowledge search, generative answers, or AI-powered responses — these nodes require specific patterns (ConditionGroup follow-up, knowledge source references, autoSend, responseCaptureType) that /add-node does not cover.
 argument-hint: <topic-name or "new">
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Edit, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Edit, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -21,7 +21,7 @@ Add `SearchAndSummarizeContent` nodes to generate responses grounded in the agen
 1. This file is `<pluginRoot>/skills/add-generative-answers/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Important: Do You Even Need a Topic?
 
@@ -47,8 +47,8 @@ If the user just wants the agent to answer questions from its knowledge, adding 
 
 3. **Look up the schema** for both nodes:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve CreateSearchQuery
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve SearchAndSummarizeContent
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve CreateSearchQuery
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve SearchAndSummarizeContent
    ```
 
 4. **Read `settings.mcs.yml`** to check if `GenerativeActionsEnabled: true`. This determines the best pattern:

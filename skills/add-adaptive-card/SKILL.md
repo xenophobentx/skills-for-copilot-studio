@@ -3,7 +3,7 @@ name: add-adaptive-card
 user-invocable: false
 description: Generate and insert an Adaptive Card into a Copilot Studio topic using AdaptiveCardPrompt. Use when the user asks to add an adaptive card, rich card, form card, info card, confirmation card, or interactive card to a topic.
 argument-hint: <card-type> in <topic-name>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Edit, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Edit, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -21,7 +21,7 @@ Add an `AdaptiveCardPrompt` node to an existing Copilot Studio topic. Use this f
 1. This file is `<pluginRoot>/skills/add-adaptive-card/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Instructions
 
@@ -42,12 +42,12 @@ Check that the file you need exists under `<pluginRoot>` before you use it.
 4. **Verify the schema** if needed:
    ```bash
    # Copilot Studio node schema
-   node <pluginRoot>/scripts/schema-lookup.bundle.js summary AdaptiveCardPrompt
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary AdaptiveCardPrompt
 
    # Adaptive Cards element schema (v1.6 — the version supported by Copilot Studio)
-   node <pluginRoot>/scripts/schema-lookup.bundle.js ac-summary TextBlock
-   node <pluginRoot>/scripts/schema-lookup.bundle.js ac-summary Input.Text
-   node <pluginRoot>/scripts/schema-lookup.bundle.js ac-search Action
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" ac-summary TextBlock
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" ac-summary Input.Text
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" ac-search Action
    ```
 
 5. **Select and adapt the template** from [card-templates.md](card-templates.md) matching the requested type.
@@ -58,7 +58,7 @@ Check that the file you need exists under `<pluginRoot>` before you use it.
 
 8. **Validate** the updated topic file:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js validate <topic-file.yml>
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" validate <topic-file.yml>
    ```
 
 9. **Inform the user** that they must push (VS Code Extension) and publish (Copilot Studio UI) before testing with `/chat-with-agent` or `/run-tests-kit`.

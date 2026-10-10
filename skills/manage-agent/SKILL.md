@@ -3,7 +3,7 @@ name: manage-agent
 user-invocable: false
 description: Push/pull Copilot Studio agent content via the VS Code extension's LanguageServerHost LSP binary. Handles authentication (browser login, or a device code over SSH or without a display), sync push, sync pull, clone, and diff operations.
 argument-hint: <push|pull|clone|changes|remote-changes|verify|validate|publish|auth|list-agents|list-envs|doctor|pack-copy>
-allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(pac copilot pack *), Read, Glob, Grep
+allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(node *manage-agent.bundle.js" *), Bash(pac copilot pack *), Read, Glob, Grep
 context: fork
 agent: copilot-studio-manage
 ---
@@ -23,7 +23,7 @@ Push and pull Copilot Studio agent content by calling the VS Code extension's La
 1. This file is `<pluginRoot>/skills/manage-agent/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
 
 ## IMPORTANT: Do Not Modify Scripts
 
@@ -68,7 +68,7 @@ The `auth` command acquires a generic `api.powerplatform.com` token and a Datave
 Run with a **5-minute timeout**:
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js auth \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" auth \
   --tenant-id "<tenantId>" \
   --client-id "<clientId>" \
   --environment-url "<environmentUrl>"
@@ -123,7 +123,7 @@ All commands auto-detect the agent directory (finds the subfolder with `.mcs/con
 Run this before a pull when the agent may have been edited in the portal or by someone else. It asks the server which files changed and compares them with your files. `pull --dry-run` does the same. `--dry-run` works with `pull` only; any other command refuses it with an error, so there is no dry run for `push`.
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js remote-changes \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" remote-changes \
   --workspace "<path-to-agent-folder>"
 ```
 
@@ -134,7 +134,7 @@ The output has `message` (one sentence), `remote` (one entry per file the server
 `verify` clones the agent into a temp folder and compares it with the workspace. It writes nothing on the server. Use it when a push result looks doubtful. Local edits that were not pushed yet show up as `differs`. The output is the `verification` object described under Push; `status` is `ok`, or `unverified` with exit code 1.
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js verify \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" verify \
   --workspace "<path-to-agent-folder>"
 ```
 
@@ -143,7 +143,7 @@ node <pluginRoot>/scripts/manage-agent.bundle.js verify \
 `--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js pull \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" pull \
   --workspace "<path-to-agent-folder>"
 ```
 
@@ -172,7 +172,7 @@ After the language server accepts the push, the script clones the agent into a t
 If the user declines, proceed with push. Do NOT block on this — it's advisory.
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js push \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" push \
   --workspace "<path-to-agent-folder>"
 ```
 
@@ -181,7 +181,7 @@ node <pluginRoot>/scripts/manage-agent.bundle.js push \
 Validates all `.mcs.yml` files in the workspace using the LSP binary's full diagnostics (YAML structure, Power Fx, schema, cross-file references).
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js validate \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" validate \
   --workspace "<path-to-agent-folder>"
 ```
 
@@ -196,7 +196,7 @@ Requires either `--agent-id` (the bot GUID from `list-agents`) **or** `--url` (a
 **With explicit IDs:**
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js clone \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
   --workspace "<target-folder>" \
   --tenant-id "<tenantId>" \
   --environment-id "<envId>" \
@@ -208,7 +208,7 @@ node <pluginRoot>/scripts/manage-agent.bundle.js clone \
 **With a Copilot Studio URL (recommended shortcut):**
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js clone \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" clone \
   --workspace "<target-folder>" \
   --tenant-id "<tenantId>" \
   --url "https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>/overview"
@@ -223,7 +223,7 @@ When `--url` is provided, the script extracts `environmentId` and `agentId` from
 `--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js changes \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" changes \
   --workspace "<path-to-agent-folder>"
 ```
 
@@ -236,7 +236,7 @@ Publishes the agent so that the current draft becomes the live version reachable
 The command polls the `publishedon` field on the bot entity until the timestamp changes, confirming that publish has taken effect. Default timeout is 5 minutes.
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js publish \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" publish \
   --workspace "<path-to-agent-folder>" \
   [--timeout <ms>]
 ```
@@ -261,7 +261,7 @@ Optional: `--agent-id "<agentId>"` overrides the bot ID from `conn.json` (the sc
 Only for a user who wants a solution zip of the topics. `pac copilot pack` (2.13.1) accepts only `agent.mcs.yml`, `settings.mcs.yml`, `icon.png`, `.mcs/` and `topics/*.mcs.yml`. Any other file or folder in the agent folder stops it with `Unsupported directory: workflows/.` (or `knowledge/`, `agents/`, `actions/`, `.git/`) or `Unsupported file: README.md.` (a `.DS_Store` from Finder counts too), although clone and pull create several of them (upstream issue #185). A `.mcs.yml` in a subfolder of `topics/` is not refused, pac silently leaves it out of the zip. `pack-copy` copies the accepted entries into a new folder:
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js pack-copy \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" pack-copy \
   --workspace "<path-to-agent-folder>" --out "<new empty folder>"
 ```
 
@@ -278,7 +278,7 @@ pac copilot pack --publisher-prefix <prefix> --project-dir "<new empty folder>" 
 Uses Dataverse REST API directly (no LSP binary needed). `--client-id` is optional.
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js list-agents \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" list-agents \
   --tenant-id "<tenantId>" \
   --environment-url "<envUrl>" \
   [--no-owner]
@@ -291,7 +291,7 @@ By default lists only agents owned by the current user. Add `--no-owner` to list
 Uses BAP REST API directly (no LSP binary needed). `--client-id` is optional.
 
 ```bash
-node <pluginRoot>/scripts/manage-agent.bundle.js list-envs \
+node "<pluginRoot>/scripts/manage-agent.bundle.js" list-envs \
   --tenant-id "<tenantId>"
 ```
 

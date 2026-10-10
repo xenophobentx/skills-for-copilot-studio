@@ -17,7 +17,7 @@ You are working inside a Copilot Studio agent project. All YAML files have the `
 1. This file is `<pluginRoot>/skills/int-project-context/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Project Structure
 
@@ -53,12 +53,12 @@ Supporting evidence only, never enough on its own: `configuration.agentSettings.
 When you write new YAML files, be sure to use the schema lookup script to understand the schema, including mandatory fields, definitions, and references. The script is located at `<pluginRoot>/scripts/schema-lookup.bundle.js`, and you can use it in the terminal as follows:
 
 ```bash
-node <pluginRoot>/scripts/schema-lookup.bundle.js search trigger             # Search by keyword
-node <pluginRoot>/scripts/schema-lookup.bundle.js lookup SendActivity        # Look up a definition
-node <pluginRoot>/scripts/schema-lookup.bundle.js resolve AdaptiveDialog     # Resolve with $refs
-node <pluginRoot>/scripts/schema-lookup.bundle.js kinds                      # List all valid kind values
-node <pluginRoot>/scripts/schema-lookup.bundle.js summary Question           # Compact overview
-node <pluginRoot>/scripts/schema-lookup.bundle.js validate <file.yml>        # Validate a YAML file
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" search trigger             # Search by keyword
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" lookup SendActivity        # Look up a definition
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve AdaptiveDialog     # Resolve with $refs
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" kinds                      # List all valid kind values
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" summary Question           # Compact overview
+node "<pluginRoot>/scripts/schema-lookup.bundle.js" validate <file.yml>        # Validate a YAML file
 ```
 
 If you already know the specific definition you want to look up, use `lookup`. If you want to explore the schema around a certain topic, use `search` or `summary`.
@@ -71,10 +71,10 @@ Always check the schema before writing YAML to ensure you include all required f
 The connector lookup script is at `<pluginRoot>/scripts/connector-lookup.bundle.js`. Use it for any questions about connectors, actions, their inputs, and outputs:
 
 ```bash
-node <pluginRoot>/scripts/connector-lookup.bundle.js list                                 # List all connectors with operation counts
-node <pluginRoot>/scripts/connector-lookup.bundle.js operations <connector>               # List operations for a connector
-node <pluginRoot>/scripts/connector-lookup.bundle.js operation <connector> <operationId>  # Full details of one operation (inputs/outputs)
-node <pluginRoot>/scripts/connector-lookup.bundle.js search <keyword>                     # Search operations across all connectors
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" list                                 # List all connectors with operation counts
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operations <connector>               # List operations for a connector
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" operation <connector> <operationId>  # Full details of one operation (inputs/outputs)
+node "<pluginRoot>/scripts/connector-lookup.bundle.js" search <keyword>                     # Search operations across all connectors
 ```
 
 `<connector>` matches by API name (`shared_office365`) or partial display name (`outlook`).

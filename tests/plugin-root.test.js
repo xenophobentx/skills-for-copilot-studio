@@ -20,7 +20,7 @@ function expectedBlock(name, native) {
     "`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.\n\n" +
     `1. This file is \`<pluginRoot>/skills/${name}/SKILL.md\`. In Claude Code \`<pluginRoot>\` is \`\${CLAUDE_SKILL_DIR}/../..\`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.\n` +
     "2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.\n\n" +
-    "Check that the file you need exists under `<pluginRoot>` before you use it.";
+    "Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.";
   if (native) {
     b +=
       " If a script fails with `Cannot find module` or says the native dependencies are missing, run " +

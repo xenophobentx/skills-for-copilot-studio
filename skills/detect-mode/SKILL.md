@@ -22,14 +22,14 @@ Query the Dataverse `bots` entity to determine whether the agent uses DirectLine
 1. This file is `<pluginRoot>/skills/detect-mode/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
 
 ## Instructions
 
 1. Run the detect-only command:
 
    ```bash
-   node <pluginRoot>/scripts/chat-with-agent.bundle.js --detect-only $ARGUMENTS
+   node "<pluginRoot>/scripts/chat-with-agent.bundle.js" --detect-only $ARGUMENTS
    ```
 
    If the agent is not at the project root, pass `--agent-dir <path>`.

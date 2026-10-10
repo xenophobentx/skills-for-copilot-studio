@@ -3,7 +3,7 @@ name: validate
 user-invocable: false
 description: Validate Copilot Studio agent YAML files using the LSP binary's full diagnostics (YAML structure, Power Fx, schema, cross-file references). Use when the user asks to check, validate, or verify YAML files.
 argument-hint: <path-to-agent-workspace>
-allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(node *schema-lookup.bundle.js *), Read, Glob
+allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(node *manage-agent.bundle.js" *), Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Glob
 ---
 
 # Validate Agent YAML
@@ -19,7 +19,7 @@ Validate Copilot Studio agent YAML files using the LanguageServerHost binary's f
 1. This file is `<pluginRoot>/skills/validate/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
 
 ## Instructions
 
@@ -27,7 +27,7 @@ Check that the file you need exists under `<pluginRoot>` before you use it. If a
 
 2. **Run LSP-based validation**:
    ```bash
-   node <pluginRoot>/scripts/manage-agent.bundle.js validate \
+   node "<pluginRoot>/scripts/manage-agent.bundle.js" validate \
      --workspace "<path-to-agent-folder>"
    ```
    This validates all `.mcs.yml` files in the workspace using the LSP binary's full diagnostics: YAML structure, Power Fx expressions, schema validation, cross-file references, and environment-specific checks.
@@ -55,7 +55,7 @@ Check that the file you need exists under `<pluginRoot>` before you use it. If a
 
 5. **For additional context on specific errors**, use schema lookup:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve <kind>
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve <kind>
    ```
 
 6. **Report findings**:

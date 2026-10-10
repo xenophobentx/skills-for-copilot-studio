@@ -3,7 +3,7 @@ name: add-knowledge
 user-invocable: false
 description: Add a knowledge source (public website or SharePoint) to a Copilot Studio agent. Use when the user asks to add a knowledge source, documentation URL, website, or SharePoint site for the agent to search.
 argument-hint: <url>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Read, Write, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Read, Write, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -21,7 +21,7 @@ Add a knowledge source to the agent. Supports **Public Website**, **SharePoint**
 1. This file is `<pluginRoot>/skills/add-knowledge/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces.
 
 ## Instructions
 
@@ -55,7 +55,7 @@ Check that the file you need exists under `<pluginRoot>` before you use it.
 
 5. **Look up the knowledge source schema**:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve KnowledgeSourceConfiguration
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve KnowledgeSourceConfiguration
    ```
 
 6. **Generate the knowledge source YAML**.

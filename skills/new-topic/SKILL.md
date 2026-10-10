@@ -3,7 +3,7 @@ name: new-topic
 user-invocable: false
 description: Create a new Copilot Studio topic YAML file. Use when the user asks to create a new topic, conversation flow, or dialog for their agent.
 argument-hint: <topic description>
-allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *manage-agent.bundle.js *), Read, Write, Glob
+allowed-tools: Bash(node *schema-lookup.bundle.js *), Bash(node *schema-lookup.bundle.js" *), Bash(node *manage-agent.bundle.js *), Bash(node *manage-agent.bundle.js" *), Read, Write, Glob
 context: fork
 agent: copilot-studio-author
 ---
@@ -23,7 +23,7 @@ Generate a new Copilot Studio topic YAML file based on user requirements.
 1. This file is `<pluginRoot>/skills/new-topic/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
 2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
 
-Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+Check that the file you need exists under `<pluginRoot>` before you use it. In commands, put the whole path in double quotes, as the examples do: the folder name can contain spaces. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
 
 ## Instructions
 
@@ -46,10 +46,10 @@ Check that the file you need exists under `<pluginRoot>` before you use it. If a
 
 3. **MANDATORY: Verify ALL `kind:` values against the schema** before writing them:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js kinds                    # List all valid kind values
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve AdaptiveDialog   # Resolve trigger structure
-   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve <TriggerType>    # Resolve specific trigger
-   node <pluginRoot>/scripts/schema-lookup.bundle.js search <ActionKind>      # Verify an action kind exists
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" kinds                    # List all valid kind values
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve AdaptiveDialog   # Resolve trigger structure
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" resolve <TriggerType>    # Resolve specific trigger
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" search <ActionKind>      # Verify an action kind exists
    ```
    **NEVER write a `kind:` value you haven't verified exists in the schema.** This is the #1 source of hallucination errors. If `schema-lookup.bundle.js search <kind>` returns no results, the kind does NOT exist — do not use it.
 
@@ -75,13 +75,13 @@ Check that the file you need exists under `<pluginRoot>` before you use it. If a
 
    **Step A: Schema validation** — always run this first:
    ```bash
-   node <pluginRoot>/scripts/schema-lookup.bundle.js validate <saved-file.yml>
+   node "<pluginRoot>/scripts/schema-lookup.bundle.js" validate <saved-file.yml>
    ```
 
    **Step B: LSP-based validation** — also run this if the agent has `.mcs/conn.json`:
    The script reads the connection details from `.mcs/conn.json`, so `--workspace` is enough:
    ```bash
-   node <pluginRoot>/scripts/manage-agent.bundle.js validate \
+   node "<pluginRoot>/scripts/manage-agent.bundle.js" validate \
      --workspace "<path-to-agent-folder>"
    ```
 
