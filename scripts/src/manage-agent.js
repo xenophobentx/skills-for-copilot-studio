@@ -53,7 +53,12 @@ const {
   getOrAcquireIslandToken,
 } = require("./shared-auth");
 const doctor = require("./doctor");
-const { resolveConnDefaults } = require("./conn-defaults");
+const {
+  resolveConnDefaults,
+  matchesEnvironment,
+  matchesTenant,
+  storedClusterCategory,
+} = require("./conn-defaults");
 
 // ---------------------------------------------------------------------------
 // Logging helpers
@@ -1144,7 +1149,7 @@ function loadConnJson(agentDir) {
 // --url host, else Prod.
 function lookupClusterCategory(args) {
   const conn = loadConnJson(findAgentDir(args.workspace, true));
-  return resolveClusterCategory({ stored: conn?.AccountInfo?.clusterCategory, url: args.url }).category;
+  return resolveClusterCategory({ stored: storedClusterCategory(conn, args), url: args.url }).category;
 }
 
 function buildSyncRequest(args, tokens) {
@@ -1157,13 +1162,15 @@ function buildSyncRequest(args, tokens) {
     log(`Found .mcs/conn.json — AgentId: ${conn.AgentId}`);
   }
 
-  // Build accountInfo — conn.json uses PascalCase but LSP binary expects camelCase
-  const connAccount = conn && conn.AccountInfo;
+  // Build accountInfo — conn.json uses PascalCase but LSP binary expects camelCase.
+  // The account in conn.json belongs to its tenant, so all of it comes from the file or
+  // none of it does. The cluster category belongs to the environment (see storedClusterCategory).
+  const connAccount = conn && matchesTenant(args, conn) ? conn.AccountInfo : null;
   const accountInfo = {
     accountId: (connAccount && connAccount.AccountId) || args.accountId || tokens.copilotStudio.account?.homeAccountId || "unknown",
     accountEmail: (connAccount && connAccount.AccountEmail) || args.accountEmail || tokens.copilotStudio.account?.username || undefined,
-    tenantId: args.tenantId || (connAccount && connAccount.TenantId),
-    clusterCategory: connAccount && connAccount.clusterCategory,
+    tenantId: args.tenantId,
+    clusterCategory: connAccount ? storedClusterCategory(conn, args) ?? undefined : undefined,
   };
 
   const request = {
@@ -1171,16 +1178,17 @@ function buildSyncRequest(args, tokens) {
     copilotStudioAccessToken: tokens.copilotStudio.accessToken,
     dataverseAccessToken: tokens.dataverse.accessToken,
     environmentInfo: {
-      agentManagementUrl: args.agentMgmtUrl || (conn && conn.AgentManagementEndpoint) || undefined,
-      dataverseUrl: args.environmentUrl || (conn && conn.DataverseEndpoint) || undefined,
+      // Only what resolveConnDefaults checked or the lookup returned. Never the raw conn.json URLs.
+      agentManagementUrl: args.agentMgmtUrl || undefined,
+      dataverseUrl: args.environmentUrl || undefined,
       displayName: args.environmentName || "Environment",
-      environmentId: args.environmentId || (conn && conn.EnvironmentId) || undefined,
+      environmentId: args.environmentId || undefined,
     },
     workspaceUri,
   };
 
-  // Include solutionVersions if available from conn.json
-  if (conn && conn.SolutionVersions) {
+  // Include solutionVersions if available from conn.json (they belong to its environment)
+  if (conn && conn.SolutionVersions && matchesEnvironment(args, conn)) {
     request.solutionVersions = conn.SolutionVersions;
   }
 
@@ -1296,8 +1304,8 @@ async function cmdAuth(args) {
 async function acquireLspTokens(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
-  const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
+  const clusterCategory = storedClusterCategory(conn, args);
+  const tenantId = args.tenantId;
 
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
@@ -1643,17 +1651,16 @@ const PUBLISH_POLL_INTERVAL_MS = 10000; // 10 seconds
 async function cmdPublish(args) {
   if (!args.workspace) die("--workspace is required");
 
-  const agentDir = findAgentDir(args.workspace);
-  const conn = loadConnJson(agentDir);
-
-  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
+  // resolveConnDefaults has filled these from .mcs/conn.json, after checking them,
+  // when the flags did not give them.
+  const tenantId = args.tenantId;
   if (!tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
 
-  const envUrl = (args.environmentUrl || conn?.DataverseEndpoint || "").replace(/\/+$/, "");
+  const envUrl = (args.environmentUrl || "").replace(/\/+$/, "");
   if (!envUrl) die("--environment-url (or CPS_ENVIRONMENT_URL) is required");
 
-  const botId = args.agentId || (conn && conn.AgentId);
-  if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
+  const botId = args.agentId;
+  if (!botId) die("Cannot determine agent ID. Provide --agent-id, or use --workspace of a cloned agent with .mcs/conn.json.");
 
   const dvToken = await getOrAcquireToken(
     tenantId,
@@ -1745,8 +1752,8 @@ async function cmdChanges(args) {
 
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
-  const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
+  const clusterCategory = storedClusterCategory(conn, args);
+  const tenantId = args.tenantId;
 
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
@@ -1969,7 +1976,7 @@ async function main() {
   const args = parseArgs();
   // validate, push, pull, changes and publish take tenant, environment, agent and
   // URLs from the workspace's .mcs/conn.json when they were not given.
-  resolveConnDefaults(args, { findAgentDir, log, warn });
+  resolveConnDefaults(args, { findAgentDir, log, warn, die });
 
   try {
     switch (args.command) {

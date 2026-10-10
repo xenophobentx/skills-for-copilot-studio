@@ -18639,19 +18639,53 @@ var require_conn_defaults = __commonJS({
     var fs7 = require("fs");
     var path3 = require("path");
     var WORKSPACE_COMMANDS = ["validate", "push", "pull", "changes", "publish"];
-    var TENANT_OPTION = "tenantId";
-    var AGENT_OPTION = "agentId";
-    var ENVIRONMENT_ID_OPTION = "environmentId";
-    var ENVIRONMENT_BOUND = [
-      ["environmentUrl", "DataverseEndpoint"],
-      ["agentMgmtUrl", "AgentManagementEndpoint"],
-      ["environmentName", "EnvironmentDisplayName"]
-    ];
+    var WRITE_COMMANDS = ["push", "pull", "publish"];
+    var FLAGS = {
+      tenantId: "--tenant-id",
+      environmentId: "--environment-id",
+      environmentUrl: "--environment-url",
+      agentMgmtUrl: "--agent-mgmt-url",
+      environmentName: "--environment-name",
+      agentId: "--agent-id"
+    };
+    var ENV_VARS = {
+      tenantId: "CPS_TENANT_ID",
+      environmentId: "CPS_ENVIRONMENT_ID",
+      environmentUrl: "CPS_ENVIRONMENT_URL",
+      agentMgmtUrl: "CPS_AGENT_MGMT_URL",
+      environmentName: "CPS_ENVIRONMENT_NAME"
+    };
+    var DATAVERSE_SUFFIXES = [".dynamics.com"];
+    var AGENT_MGMT_SUFFIXES = [".powerapps.com", ".powerplatform.com"];
     function str(value) {
       return typeof value === "string" && value.trim() ? value.trim() : null;
     }
     function sameId(a, b) {
       return String(a).toLowerCase() === String(b).toLowerCase();
+    }
+    function checkUrl(value, suffixes) {
+      const text = str(value);
+      if (!text) return { reason: "missing" };
+      let u;
+      try {
+        u = new URL(text);
+      } catch {
+        return { reason: "not a URL" };
+      }
+      if (u.protocol !== "https:") return { reason: "not https" };
+      if (u.username || u.password) return { reason: "has credentials" };
+      if (u.port && u.port !== "443") return { reason: "unusual port" };
+      const host = u.hostname.toLowerCase();
+      if (!suffixes.some((s) => host.endsWith(s))) return { reason: `host is not on ${suffixes.join(" or ")}` };
+      return { url: text };
+    }
+    function hostOf(value) {
+      if (!value) return "(looked up)";
+      try {
+        return new URL(value).host;
+      } catch {
+        return String(value);
+      }
     }
     function readConnJson(agentDir, fsImpl = fs7) {
       try {
@@ -18662,61 +18696,145 @@ var require_conn_defaults = __commonJS({
         return null;
       }
     }
-    function storedClusterCategory(conn) {
+    function listAgentFolders(workspace, fsImpl = fs7) {
+      const ws = path3.resolve(workspace);
+      if (fsImpl.existsSync(path3.join(ws, ".mcs", "conn.json"))) return [ws];
+      let entries;
+      try {
+        entries = fsImpl.readdirSync(ws, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+      return entries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => path3.join(ws, e.name)).filter((dir) => fsImpl.existsSync(path3.join(dir, ".mcs", "conn.json"))).sort();
+    }
+    function connTenant(conn) {
+      return conn ? str(conn.AccountInfo && conn.AccountInfo.TenantId) || str(conn.TenantId) : null;
+    }
+    function matchesEnvironment2(args, conn) {
+      if (!conn) return false;
+      const envId = str(conn.EnvironmentId);
+      if (!envId) return !args.environmentId;
+      return Boolean(args.environmentId) && sameId(args.environmentId, envId);
+    }
+    function matchesTenant2(args, conn) {
+      const tenant = connTenant(conn);
+      return Boolean(tenant) && Boolean(args.tenantId) && sameId(args.tenantId, tenant);
+    }
+    function storedClusterCategory2(conn, args) {
+      if (args && !matchesEnvironment2(args, conn)) return null;
       const value = conn && conn.AccountInfo && conn.AccountInfo.clusterCategory;
       return Number.isInteger(value) ? value : null;
     }
-    function applyConnDefaults(args, conn) {
-      const result = { used: [], mismatches: [], clusterCategory: storedClusterCategory(conn) };
+    function sourceOf(option, args, { argv = [], env = {} } = {}) {
+      const value = args[option];
+      if (!value) return null;
+      if (argv.includes(FLAGS[option])) return { kind: "flag", label: FLAGS[option] };
+      if ((option === "environmentId" || option === "agentId") && argv.includes("--url")) {
+        return { kind: "url", label: "--url" };
+      }
+      if (ENV_VARS[option] && env[ENV_VARS[option]] === value) {
+        return { kind: "env", label: ENV_VARS[option] };
+      }
+      return { kind: "flag", label: FLAGS[option] };
+    }
+    function applyConnDefaults(args, conn, ctx = {}) {
+      const result = { used: [], warnings: [], envMismatch: null, envMatches: false, rejected: [] };
       if (!conn) return result;
-      const take = (option, value, from) => {
-        if (args[option] == null || args[option] === "") {
-          if (!value) return false;
+      const where = { argv: ctx.argv || [], env: ctx.env || {} };
+      const fill = (option, value, from, { compare = true, label } = {}) => {
+        const src = sourceOf(option, args, where);
+        if (!value) return src;
+        if (!src || src.kind === "env") {
+          if (src && !sameId(args[option], value)) {
+            result.warnings.push(`${src.label} (${args[option]}) differs from ${from} in .mcs/conn.json (${value}); using conn.json. A flag would win over both.`);
+          }
           args[option] = value;
           result.used.push({ option, from });
-          return true;
+        } else if (compare && !sameId(args[option], value)) {
+          result.warnings.push(`${src.label} ${args[option]} differs from the ${label || option} in .mcs/conn.json (${value}); using ${src.label}.`);
         }
-        return false;
+        return src;
       };
-      const compare = (option, value, label) => {
-        if (value && args[option] && !sameId(args[option], value) && !result.used.some((u) => u.option === option)) {
-          result.mismatches.push(`${label} ${args[option]} differs from ${value} in .mcs/conn.json; using ${args[option]}`);
-        }
-      };
-      const tenant = str(conn.AccountInfo && conn.AccountInfo.TenantId) || str(conn.TenantId);
+      fill("tenantId", connTenant(conn), "AccountInfo.TenantId", { label: "tenant" });
       const envId = str(conn.EnvironmentId);
-      const agentId = str(conn.AgentId);
-      take(TENANT_OPTION, tenant, "AccountInfo.TenantId");
-      take(AGENT_OPTION, agentId, "AgentId");
-      take(ENVIRONMENT_ID_OPTION, envId, "EnvironmentId");
-      compare(TENANT_OPTION, tenant, "Tenant");
-      compare(AGENT_OPTION, agentId, "Agent");
-      compare(ENVIRONMENT_ID_OPTION, envId, "Environment");
-      const sameEnvironment = !args.environmentId || !envId || sameId(args.environmentId, envId);
-      if (sameEnvironment) {
-        for (const [option, field] of ENVIRONMENT_BOUND) take(option, str(conn[field]), field);
+      const envSrc = fill("environmentId", envId, "EnvironmentId", { compare: false });
+      if (envSrc && envSrc.kind !== "env" && envId && !sameId(args.environmentId, envId)) {
+        result.envMismatch = { source: envSrc.label, given: args.environmentId, stored: envId };
+        const name = str(conn.EnvironmentDisplayName);
+        result.warnings.push(
+          `${envSrc.label} environment ${args.environmentId} differs from the environment in .mcs/conn.json (${name ? name + ", " : ""}${envId}). The workspace belongs to the one in conn.json. Its URLs, agent id and cluster category are not used.`
+        );
+      }
+      result.envMatches = matchesEnvironment2(args, conn);
+      if (!result.envMatches) return result;
+      fill("agentId", str(conn.AgentId), "AgentId", { compare: ctx.command === "publish", label: "agent" });
+      fill("environmentName", str(conn.EnvironmentDisplayName), "EnvironmentDisplayName", { compare: false });
+      for (const [option, field, suffixes] of [
+        ["environmentUrl", "DataverseEndpoint", DATAVERSE_SUFFIXES],
+        ["agentMgmtUrl", "AgentManagementEndpoint", AGENT_MGMT_SUFFIXES]
+      ]) {
+        if (conn[field] == null) continue;
+        const checked = checkUrl(conn[field], suffixes);
+        if (checked.url) {
+          fill(option, checked.url, field, { compare: false });
+        } else {
+          result.rejected.push({ option, value: String(conn[field]).slice(0, 200), reason: checked.reason });
+          result.warnings.push(
+            `.mcs/conn.json ${field} (${String(conn[field]).slice(0, 120)}) is not used: ${checked.reason}. ${FLAGS[option]} sets it, or the environment lookup fills it.`
+          );
+        }
       }
       return result;
     }
-    function resolveConnDefaults2(args, { findAgentDir: findAgentDir2, log: log2, warn: warn2, fsImpl = fs7 }) {
+    function targetLine(args, agentDir) {
+      const env = args.environmentName ? `${args.environmentName} (${args.environmentId || "?"})` : args.environmentId || "?";
+      return `Target ${agentDir}: environment ${env}, agent ${args.agentId || "(from workspace)"}, tenant ${args.tenantId || "?"}, Dataverse ${hostOf(args.environmentUrl)}, agent management ${hostOf(args.agentMgmtUrl)}`;
+    }
+    function noConnHint(command, workspace) {
+      if (command === "publish") {
+        return `No .mcs/conn.json found under ${workspace}. publish then needs --tenant-id, --environment-url and --agent-id.`;
+      }
+      return `No .mcs/conn.json found under ${workspace}, so tenant and environment cannot be read from it, and the folder has no .mcs/botdefinition.json either. Clone the agent again into a new folder and use that folder as --workspace.`;
+    }
+    function resolveConnDefaults2(args, { findAgentDir: findAgentDir2, log: log2, warn: warn2, die: die2, argv = process.argv.slice(2), env = process.env, fsImpl = fs7 }) {
       if (!WORKSPACE_COMMANDS.includes(args.command) || !args.workspace) return null;
-      const conn = readConnJson(findAgentDir2(args.workspace, true), fsImpl);
-      const result = applyConnDefaults(args, conn);
-      if (!conn && (!args.tenantId || !args.environmentId)) {
-        warn2(
-          `No .mcs/conn.json found under ${args.workspace}, so tenant and environment cannot be read from it. Point --workspace at a cloned agent folder, or pass --tenant-id and --environment-id.`
+      const folders = listAgentFolders(args.workspace, fsImpl);
+      if (folders.length > 1) {
+        die2(
+          `Several agents found under ${path3.resolve(args.workspace)}:
+` + folders.map((f) => `  ${f}`).join("\n") + "\nPass --workspace with the folder of the one you mean."
         );
       }
-      if (result.used.length > 0) {
-        log2(`From .mcs/conn.json: ${result.used.map((u) => u.option).join(", ")}`);
+      const agentDir = findAgentDir2(args.workspace, true);
+      const conn = readConnJson(agentDir, fsImpl);
+      const result = applyConnDefaults(args, conn, { argv, env, command: args.command });
+      if (!conn) {
+        const missing = args.command === "publish" ? !args.tenantId || !args.environmentUrl || !args.agentId : !args.tenantId || !args.environmentId;
+        if (missing) warn2(noConnHint(args.command, args.workspace));
       }
-      for (const m of result.mismatches) warn2(m);
-      return result;
+      for (const w of result.warnings) warn2(w);
+      if (result.envMismatch && WRITE_COMMANDS.includes(args.command) && !args.force) {
+        const m = result.envMismatch;
+        die2(
+          `${args.command} refused: ${m.source} environment ${m.given} is not the environment of this workspace (${m.stored} in .mcs/conn.json). Use the workspace of that environment, or add --force if you mean it.`
+        );
+      }
+      if (conn) {
+        log2(targetLine(args, agentDir));
+        if (result.used.length > 0) log2(`From .mcs/conn.json: ${result.used.map((u) => u.option).join(", ")}`);
+      }
+      return Object.assign(result, { agentDir, conn });
     }
     module2.exports = {
       WORKSPACE_COMMANDS,
+      WRITE_COMMANDS,
+      checkUrl,
       readConnJson,
-      storedClusterCategory,
+      listAgentFolders,
+      matchesEnvironment: matchesEnvironment2,
+      matchesTenant: matchesTenant2,
+      storedClusterCategory: storedClusterCategory2,
+      sourceOf,
       applyConnDefaults,
       resolveConnDefaults: resolveConnDefaults2
     };
@@ -18748,7 +18866,12 @@ var {
   getOrAcquireIslandToken
 } = require_shared_auth();
 var doctor = require_doctor();
-var { resolveConnDefaults } = require_conn_defaults();
+var {
+  resolveConnDefaults,
+  matchesEnvironment,
+  matchesTenant,
+  storedClusterCategory
+} = require_conn_defaults();
 function warn(msg) {
   process.stderr.write("[WARN] " + msg + "\n");
 }
@@ -19597,7 +19720,7 @@ function loadConnJson(agentDir) {
 }
 function lookupClusterCategory(args) {
   const conn = loadConnJson(findAgentDir(args.workspace, true));
-  return resolveClusterCategory({ stored: conn?.AccountInfo?.clusterCategory, url: args.url }).category;
+  return resolveClusterCategory({ stored: storedClusterCategory(conn, args), url: args.url }).category;
 }
 function buildSyncRequest(args, tokens) {
   const agentDir = findAgentDir(args.workspace);
@@ -19607,26 +19730,27 @@ function buildSyncRequest(args, tokens) {
   if (conn) {
     log(`Found .mcs/conn.json \u2014 AgentId: ${conn.AgentId}`);
   }
-  const connAccount = conn && conn.AccountInfo;
+  const connAccount = conn && matchesTenant(args, conn) ? conn.AccountInfo : null;
   const accountInfo = {
     accountId: connAccount && connAccount.AccountId || args.accountId || tokens.copilotStudio.account?.homeAccountId || "unknown",
     accountEmail: connAccount && connAccount.AccountEmail || args.accountEmail || tokens.copilotStudio.account?.username || void 0,
-    tenantId: args.tenantId || connAccount && connAccount.TenantId,
-    clusterCategory: connAccount && connAccount.clusterCategory
+    tenantId: args.tenantId,
+    clusterCategory: connAccount ? storedClusterCategory(conn, args) ?? void 0 : void 0
   };
   const request = {
     accountInfo,
     copilotStudioAccessToken: tokens.copilotStudio.accessToken,
     dataverseAccessToken: tokens.dataverse.accessToken,
     environmentInfo: {
-      agentManagementUrl: args.agentMgmtUrl || conn && conn.AgentManagementEndpoint || void 0,
-      dataverseUrl: args.environmentUrl || conn && conn.DataverseEndpoint || void 0,
+      // Only what resolveConnDefaults checked or the lookup returned. Never the raw conn.json URLs.
+      agentManagementUrl: args.agentMgmtUrl || void 0,
+      dataverseUrl: args.environmentUrl || void 0,
       displayName: args.environmentName || "Environment",
-      environmentId: args.environmentId || conn && conn.EnvironmentId || void 0
+      environmentId: args.environmentId || void 0
     },
     workspaceUri
   };
-  if (conn && conn.SolutionVersions) {
+  if (conn && conn.SolutionVersions && matchesEnvironment(args, conn)) {
     request.solutionVersions = conn.SolutionVersions;
   }
   return request;
@@ -19712,8 +19836,8 @@ async function cmdAuth(args) {
 async function acquireLspTokens(args) {
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
-  const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
+  const clusterCategory = storedClusterCategory(conn, args);
+  const tenantId = args.tenantId;
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
   if (clusterCategory != null) {
@@ -19982,14 +20106,12 @@ async function resolveEnvironmentById(tenantId, environmentId, clusterCategory =
 var PUBLISH_POLL_INTERVAL_MS = 1e4;
 async function cmdPublish(args) {
   if (!args.workspace) die("--workspace is required");
-  const agentDir = findAgentDir(args.workspace);
-  const conn = loadConnJson(agentDir);
-  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
+  const tenantId = args.tenantId;
   if (!tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
-  const envUrl = (args.environmentUrl || conn?.DataverseEndpoint || "").replace(/\/+$/, "");
+  const envUrl = (args.environmentUrl || "").replace(/\/+$/, "");
   if (!envUrl) die("--environment-url (or CPS_ENVIRONMENT_URL) is required");
-  const botId = args.agentId || conn && conn.AgentId;
-  if (!botId) die("Cannot determine agent ID. Provide --agent-id or ensure .mcs/conn.json exists.");
+  const botId = args.agentId;
+  if (!botId) die("Cannot determine agent ID. Provide --agent-id, or use --workspace of a cloned agent with .mcs/conn.json.");
   const dvToken = await getOrAcquireToken(
     tenantId,
     VSCODE_CLIENT_ID,
@@ -20065,8 +20187,8 @@ async function cmdChanges(args) {
   if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
   const agentDir = findAgentDir(args.workspace);
   const conn = loadConnJson(agentDir);
-  const clusterCategory = conn?.AccountInfo?.clusterCategory;
-  const tenantId = args.tenantId || conn?.AccountInfo?.TenantId;
+  const clusterCategory = storedClusterCategory(conn, args);
+  const tenantId = args.tenantId;
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
   let cpsToken, dvToken;
   if (clusterCategory != null) {
@@ -20242,7 +20364,7 @@ function cmdDoctor(args) {
 }
 async function main() {
   const args = parseArgs();
-  resolveConnDefaults(args, { findAgentDir, log, warn });
+  resolveConnDefaults(args, { findAgentDir, log, warn, die });
   try {
     switch (args.command) {
       case "auth":
