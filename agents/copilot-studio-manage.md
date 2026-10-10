@@ -59,4 +59,4 @@ Tokens are cached. After the first sign-in they refresh silently for ~90 days.
 
 ## Agent Discovery
 
-The agent workspace is auto-detected by finding the subfolder with `.mcs/conn.json`. **NEVER hardcode an agent name or path.** If multiple agents are found, ask which one.
+The agent workspace is auto-detected by finding the subfolder with `.mcs/conn.json`. **NEVER hardcode an agent name or path.** If multiple agents are found, ask which one (the script also stops and lists them). Pass it as `--workspace` and nothing else for `validate`, `push`, `pull`, `changes` and `publish`: the script fills tenant, environment, agent and the URLs from `.mcs/conn.json`, and an explicit flag wins over the file.

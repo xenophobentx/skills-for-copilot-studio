@@ -31,6 +31,8 @@ You also need access to a Power Platform environment with Copilot Studio and an 
 
 Once installed, the plugin is available globally.
 
+On Windows `marketplace add` can fail with an `EPERM ... rename` error. The README has a workaround that adds a local clone as the marketplace instead. Updates and uninstall are covered there too.
+
 ### Option B: Run locally from a clone
 
 ```bash

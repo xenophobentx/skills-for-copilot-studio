@@ -29,6 +29,17 @@ Looking for the plugin for GitHub Copilot harness agents? See the [New Microsoft
 /plugin marketplace add xenophobentx/skills-for-copilot-studio
 /plugin install copilot-studio@xeno-skills-for-copilot-studio
 ```
+
+On Windows, `marketplace add` can fail with `EPERM: operation not permitted, rename ...` and `Failed to finalize marketplace cache`. Seen on Claude Code 2.1.295, on every attempt and also for other large marketplaces. If you get it, clone the repository and add the clone as the marketplace:
+
+```powershell
+git clone https://github.com/xenophobentx/skills-for-copilot-studio.git C:\tools\skills-for-copilot-studio
+claude plugin marketplace add C:\tools\skills-for-copilot-studio
+claude plugin install copilot-studio@xeno-skills-for-copilot-studio
+```
+
+The plugin then runs from that clone, so keep the folder. `git pull` in it updates the plugin. Claude Code does not install npm packages into a plugin it loads in place; the plugin's own session hook installs them into its data folder.
+
 ### From VS Code Extensions Store (GitHub Copilot)
 
 The VS Code store installs the upstream plugin, not this fork. To use this fork in VS Code, install it from a local clone (below).
@@ -58,9 +69,48 @@ The update process depends on how you installed the plugin:
 
 | Interface | Update Method | Details |
 |-----------|--------------|--------|
-| **Claude Code CLI** | Auto-update (recommended) | Marketplace plugins update automatically. No action needed. |
-| **GitHub Copilot CLI** | Manual | Run `/plugin update xeno-skills-for-copilot-studio` in an interactive session, or `copilot plugin update xeno-skills-for-copilot-studio` from the terminal. |
+| **Claude Code CLI** | Manual, or background auto-update once you turn it on | Claude Code leaves auto-update off for third-party marketplaces, and this is one. See below. |
+| **GitHub Copilot CLI** | Manual | Run `copilot plugin update copilot-studio@xeno-skills-for-copilot-studio` from the terminal, or `/plugin update copilot-studio@xeno-skills-for-copilot-studio` in an interactive session. `copilot plugin marketplace update xeno-skills-for-copilot-studio` refreshes the catalog first. |
 | **VS Code** | Extension auto-update | VS Code handles updates automatically when extension auto-update is enabled in settings. |
+
+### Claude Code
+
+Claude Code turns auto-update on by default only for Anthropic's own marketplaces. For any other marketplace it is off until you enable it. To update by hand, run these in a terminal and then restart Claude Code (or run `/reload-plugins` in a session):
+
+```bash
+claude plugin marketplace update xeno-skills-for-copilot-studio
+claude plugin update copilot-studio@xeno-skills-for-copilot-studio
+```
+
+To have Claude Code do it in the background, run `/plugin`, open the **Marketplaces** tab, select `xeno-skills-for-copilot-studio` and choose **Enable auto-update**. It runs within about ten minutes after you send your first message in a session.
+
+Claude Code installs a new copy only when the plugin version changes, so a commit on `main` alone does not reach you. If you added the marketplace from a local clone (the Windows workaround above), `git pull` in the clone is the update. See [Claude Code: keep plugins updated](https://code.claude.com/docs/en/discover-plugins#keep-plugins-updated).
+
+## Uninstalling
+
+For Claude Code:
+
+```bash
+claude plugin uninstall copilot-studio@xeno-skills-for-copilot-studio
+claude plugin marketplace remove xeno-skills-for-copilot-studio
+```
+
+Uninstall removes the plugin's data folder (`~/.claude/plugins/data/copilot-studio-xeno-skills-for-copilot-studio`) unless you pass `--keep-data`. It does not remove the file the session hook writes outside the plugin folders:
+
+- `~/.copilot-studio-cli/sfcs-plugin-paths.json` (Windows: `%USERPROFILE%\.copilot-studio-cli\sfcs-plugin-paths.json`). It holds the plugin's data and root paths, which are gone after the uninstall. Delete only this file. `plugin-paths.json` in the same folder belongs to other Copilot Studio plugins.
+
+In PowerShell: `Remove-Item "$env:USERPROFILE\.copilot-studio-cli\sfcs-plugin-paths.json"`. On macOS and Linux: `rm ~/.copilot-studio-cli/sfcs-plugin-paths.json`.
+
+If the data folder is still there, delete it by hand. Claude Code keeps the old copy of the plugin under `~/.claude/plugins/cache/xeno-skills-for-copilot-studio` for a while after an uninstall and removes it itself after 14 days.
+
+For GitHub Copilot CLI:
+
+```bash
+copilot plugin uninstall copilot-studio@xeno-skills-for-copilot-studio
+copilot plugin marketplace remove xeno-skills-for-copilot-studio
+```
+
+Copilot CLI leaves the plugin's data folder, `~/.copilot/plugin-data/xeno-skills-for-copilot-studio/copilot-studio` (under `$COPILOT_HOME` if you set it). Delete that folder, and the `sfcs-plugin-paths.json` file above, if you want the plugin gone completely. If you used the local clone, delete the clone as well.
 
 ## Usage
 

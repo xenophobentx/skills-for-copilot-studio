@@ -66,14 +66,10 @@ Generate a new Copilot Studio topic YAML file based on user requirements.
    ```
 
    **Step B: LSP-based validation** — also run this if the agent has `.mcs/conn.json`:
-   Read `.mcs/conn.json` to get connection details, then:
+   The script reads the connection details from `.mcs/conn.json`, so `--workspace` is enough:
    ```bash
    node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js validate \
-     --workspace "<path-to-agent-folder>" \
-     --tenant-id "<tenantId>" \
-     --environment-id "<envId>" \
-     --environment-url "<envUrl>" \
-     --agent-mgmt-url "<mgmtUrl>"
+     --workspace "<path-to-agent-folder>"
    ```
 
    Both validations are complementary: schema validation checks structural correctness (action kinds, property placement), while LSP validation checks Power Fx expressions, cross-file references, and environment-specific rules. If either fails, fix the issues before reporting success to the user.
