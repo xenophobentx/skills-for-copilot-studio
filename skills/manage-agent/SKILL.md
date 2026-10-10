@@ -187,6 +187,8 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js clone \
 
 When `--url` is provided, the script extracts `environmentId` and `agentId` from the URL and resolves `environmentUrl` and `agentMgmtUrl` automatically via the BAP API. The `--url` flag also works with `push`, `pull`, `changes`, and `validate` commands.
 
+`clone` also takes `--cluster-category N`. It sets the cluster category for the Island API token and for the environment lookup, and it is written to `.mcs/conn.json`, where push and pull read it later. Without the option, `clone` takes it from the `--url` host (`copilotstudio.preview.microsoft.com` is 4, `.preprod.` is 3, `.test.` is 2) and uses 5 (Prod) for everything else. Set it by hand only for a non-Prod environment that you reached without a URL. Accepted values are 0 to 8; anything else stops with an error. Other commands ignore the option and warn. Only 4 and 5 were tested. For 0 to 3 (test and preprod) the plugin picks the same BAP host as the VS Code extension, which was not tested. Categories 6 to 8 are government clouds, which this plugin does not support: it has no environment lookup and no sign-in for them, so passing `--environment-url` and `--agent-mgmt-url` gets past the lookup but sign-in still fails.
+
 ### View Changes (diff local vs remote)
 
 `--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).

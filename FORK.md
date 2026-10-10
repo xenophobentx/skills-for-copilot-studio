@@ -14,6 +14,9 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - Push and validate stop early with a clear message when `.mcs/botdefinition.json` is missing, instead of the `CdsBotId` error (upstream issue #155).
 - The language server no longer logs an error at the end of every command.
 - validate (and `schema-lookup validate`) fails a classic `agent.mcs.yml` whose `instructions` is an object or a list, with source `instructions-shape`. The language server reads it as empty instructions and reports nothing (upstream issue #175).
+- `clone --cluster-category N` sets the cluster category that is stored in `.mcs/conn.json`, so an agent outside Prod can be cloned. Without it, clone reads the category from the agent URL host the way the Copilot Studio extension does (preview 4, preprod 3, test 2, otherwise 5), and picks the BAP host for the environment lookup by category as the extension does. Push and pull read the stored value. Anything outside 0 to 8 is refused with a message, and other commands warn that they ignore the option. Based on upstream PR #165 by @adilei.
+- Tested live with categories 4 and 5 against a Prod environment, including `changes` and `pull` on a category 4 workspace. Categories 0 to 3 are not tested, there is no test or preprod tenant here. Categories 6 to 8 (government clouds) need `--environment-url` and `--agent-mgmt-url`, and the sign-in for them is not there.
+- A clone from a preview URL now stores 4, where it stored 5 before. That is what the extension stores. 4 and 5 use the same Island resource, and existing workspaces keep their value.
 
 ## Sign-in
 
@@ -30,6 +33,7 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 - The scripts find their native dependencies through `SFCS_PLUGIN_DATA` and `~/.copilot-studio-cli/sfcs-plugin-paths.json`. Upstream uses `CLAUDE_PLUGIN_DATA` and `plugin-paths.json`, the same names as microsoft/copilot-studio-plugin, so with both plugins installed the scripts can load the other plugin's folder and fail with `Cannot find module 'vscode-jsonrpc/node'`.
 - `manage-agent doctor` (and the doctor skill) checks node, the language server, native dependencies, the plugin data folder, sign-in mode, pac and the workspace, and says what to fix. It reads no secrets and changes nothing.
 - `scripts/package-lock.json` is committed, so the bundles rebuild byte for byte.
+- The weekly release workflow uses `actions/checkout` 7.0.1, pinned by SHA. Upstream PR #187 by dependabot.
 
 ## Chat
 
@@ -66,4 +70,6 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 ## Not taken from upstream PRs
 
 - #129 (Enhanced Task Completion). `SmartTaskCompletionEnabled` is not in the bundled schema, not on Microsoft Learn and not in the 1.9.14 language server, and the PR turns on generative actions without asking.
-- #165, #136 and #98 are too large for me to review well for now.
+- #165 (Modern Agent support). Its skills write the folder layout of May 2026, which the 1.9.14 language server no longer uses, and its description says a push can turn existing tool components into translation components. This fork leaves CLI-authored agents to microsoft/copilot-studio-plugin. Only the `clone --cluster-category` option is taken, see Sync.
+- #136 (GCC government cloud). It is written on the old sign-in code, so the device code path would sign in against the wrong authority. It also borrows the client IDs of Azure PowerShell and the PAC CLI, and cuts the environment ID wrongly for DirectLine outside Prod. I have no GCC tenant to test it on.
+- #98 (VS Code extension). A Microsoft maintainer suggested it live in its own repository, and the author agreed. The VSIX it builds does not run: the skill script paths are relative to the user's workspace, and the native dependencies and the setup hook are not packaged.

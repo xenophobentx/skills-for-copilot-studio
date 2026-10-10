@@ -40,6 +40,11 @@ const { log, die, sleep } = require("./shared-utils");
 const {
   VSCODE_CLIENT_ID,
   getIslandResourceId,
+  DEFAULT_CLUSTER_CATEGORY,
+  COPILOT_STUDIO_HOST_RE,
+  parseClusterCategory,
+  getBapHost,
+  resolveClusterCategory,
   buildTokenInfo,
   acquireTokenSilent,
   resolveAuthMode,
@@ -61,14 +66,13 @@ function warn(msg) {
 // URL parsing — extract environmentId + agentId from Copilot Studio URLs
 // ---------------------------------------------------------------------------
 
-const COPILOT_STUDIO_HOST_RE = /^copilotstudio(?:\.preview)?\.microsoft\.com$/i;
-
 /**
  * Parse a Copilot Studio web URL and extract environmentId + agentId.
  *
  * Accepted formats:
  *   https://copilotstudio.microsoft.com/environments/<envId>/bots/<agentId>[/...]
  *   https://copilotstudio.preview.microsoft.com/environments/<envId>/bots/<agentId>[/...]
+ *   https://copilotstudio.preprod.microsoft.com/... and https://copilotstudio.test.microsoft.com/...
  *
  * @param {string} url — Copilot Studio URL
  * @returns {{ environmentId: string, agentId: string }} or null if the URL doesn't match
@@ -120,6 +124,7 @@ function parseArgs() {
     owner: true, // default: filter by owner
     timeout: 300000, // default: 5 minutes for publish polling
     force: false,
+    clusterCategory: null,
     url: null,
   };
 
@@ -166,6 +171,13 @@ function parseArgs() {
       case "--force":
         parsed.force = true;
         break;
+      case "--cluster-category":
+        try {
+          parsed.clusterCategory = parseClusterCategory(args[++i]);
+        } catch (e) {
+          die(e.message);
+        }
+        break;
       case "--url":
         parsed.url = args[++i];
         break;
@@ -184,6 +196,13 @@ function parseArgs() {
     die(
       "Usage: manage-agent <command> [options]\n" +
         "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
+    );
+  }
+
+  if (parsed.clusterCategory != null && parsed.command !== "clone") {
+    warn(
+      `--cluster-category only applies to clone, so ${parsed.command} ignores it. ` +
+        "Other commands use the value stored in .mcs/conn.json."
     );
   }
 
@@ -987,6 +1006,14 @@ function loadConnJson(agentDir) {
   }
 }
 
+// Cluster category for the environment lookup of a workspace command: the value
+// stored in .mcs/conn.json (push and pull use it for the Island token), else the
+// --url host, else Prod.
+function lookupClusterCategory(args) {
+  const conn = loadConnJson(findAgentDir(args.workspace, true));
+  return resolveClusterCategory({ stored: conn?.AccountInfo?.clusterCategory, url: args.url }).category;
+}
+
 function buildSyncRequest(args, tokens) {
   const agentDir = findAgentDir(args.workspace);
   const workspaceUri = toFileUri(agentDir);
@@ -1143,6 +1170,7 @@ async function acquireLspTokens(args) {
   let cpsToken, dvToken;
 
   if (clusterCategory != null) {
+    log(`Cluster category ${clusterCategory} (from .mcs/conn.json)`);
     cpsToken = await getOrAcquireIslandToken(tenantId, clusterCategory, "Island API");
     dvToken = await getOrAcquireToken(
       tenantId, VSCODE_CLIENT_ID,
@@ -1211,7 +1239,7 @@ async function cmdWithLsp(args, method) {
 
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
-    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
     if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
     if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
     if (!args.environmentName) args.environmentName = envDetails.displayName;
@@ -1279,7 +1307,7 @@ async function cmdValidate(args) {
 
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
-    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
     if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
     if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
     if (!args.environmentName) args.environmentName = envDetails.displayName;
@@ -1306,7 +1334,6 @@ async function cmdValidate(args) {
 // BAP / Dataverse REST API helpers (list-envs, list-agents use REST, not LSP)
 // ---------------------------------------------------------------------------
 
-const BAP_HOST = "api.bap.microsoft.com";
 const BAP_TOKEN_SCOPE = "https://service.powerapps.com/.default";
 
 async function httpGetJson(url, accessToken) {
@@ -1405,7 +1432,7 @@ async function cmdListEnvs(args) {
   );
 
   const filter = encodeURIComponent("properties/environmentSku ne 'Platform'");
-  const url = `https://${BAP_HOST}/providers/Microsoft.BusinessAppPlatform/environments?api-version=2024-05-01&$filter=${filter}&$expand=properties.permissions`;
+  const url = `https://${getBapHost(DEFAULT_CLUSTER_CATEGORY)}/providers/Microsoft.BusinessAppPlatform/environments?api-version=2024-05-01&$filter=${filter}&$expand=properties.permissions`;
 
   log("Fetching environments from BAP API...");
   const response = await httpGetJson(url, bapToken.accessToken);
@@ -1434,7 +1461,9 @@ async function cmdListEnvs(args) {
 // Resolve environment details by ID — used when --url provides only env + agent IDs
 // ---------------------------------------------------------------------------
 
-async function resolveEnvironmentById(tenantId, environmentId) {
+async function resolveEnvironmentById(tenantId, environmentId, clusterCategory = DEFAULT_CLUSTER_CATEGORY) {
+  // Before any sign-in: the host depends on the cluster category, and some have none.
+  const bapHost = getBapHost(clusterCategory);
   const bapToken = await getOrAcquireToken(
     tenantId,
     VSCODE_CLIENT_ID,
@@ -1443,10 +1472,10 @@ async function resolveEnvironmentById(tenantId, environmentId) {
   );
 
   const url =
-    `https://${BAP_HOST}/providers/Microsoft.BusinessAppPlatform/environments/${encodeURIComponent(environmentId)}` +
+    `https://${bapHost}/providers/Microsoft.BusinessAppPlatform/environments/${encodeURIComponent(environmentId)}` +
     `?api-version=2024-05-01&$expand=properties.permissions`;
 
-  log(`Resolving environment details for ${environmentId}...`);
+  log(`Resolving environment details for ${environmentId} on ${bapHost}...`);
   const env = await httpGetJson(url, bapToken.accessToken);
 
   const meta = env.properties?.linkedEnvironmentMetadata;
@@ -1567,7 +1596,7 @@ async function cmdChanges(args) {
 
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
-    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
     if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
     if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
     if (!args.environmentName) args.environmentName = envDetails.displayName;
@@ -1585,6 +1614,7 @@ async function cmdChanges(args) {
   let cpsToken, dvToken;
 
   if (clusterCategory != null) {
+    log(`Cluster category ${clusterCategory} (from .mcs/conn.json)`);
     cpsToken = await getOrAcquireIslandToken(tenantId, clusterCategory, "Island API");
     dvToken = await getOrAcquireToken(
       tenantId, VSCODE_CLIENT_ID,
@@ -1694,11 +1724,22 @@ async function cmdClone(args) {
   if (!args.agentId) die("--agent-id (or --url) is required for clone");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
 
+  // Cluster category: --cluster-category, else the --url host (preview 4, preprod 3, test 2),
+  // else Prod (5). It picks the BAP host for the lookup below and the Island token audience,
+  // and it is written to .mcs/conn.json, which push and pull read later.
+  const picked = resolveClusterCategory({ option: args.clusterCategory, url: args.url });
+  const clusterCategory = picked.category;
+  const sources = { option: "from --cluster-category", url: "from the --url host", default: "default, Prod" };
+  log(`Cluster category ${clusterCategory} (${sources[picked.source]})`);
+  if (picked.source === "option" && picked.conflict) {
+    warn(`--url host suggests cluster category ${picked.urlCategory}; using ${clusterCategory} as given.`);
+  }
+
   // When --url was used, environmentUrl and agentMgmtUrl may be missing.
   // Resolve them from the BAP API using the environmentId extracted from the URL.
   if (!args.environmentUrl || !args.agentMgmtUrl) {
     log("Resolving environment details from BAP API...");
-    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId);
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, clusterCategory);
     if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
     if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
     if (!args.environmentName) args.environmentName = envDetails.displayName;
@@ -1710,9 +1751,7 @@ async function cmdClone(args) {
 
   const envUrl = args.environmentUrl.replace(/\/+$/, "");
 
-  // Clone uses Island API token (same as push/pull) — default to Prod cluster (5)
-  const DEFAULT_CLUSTER_CATEGORY = 5;
-  const cpsToken = await getOrAcquireIslandToken(args.tenantId, DEFAULT_CLUSTER_CATEGORY, "Island API");
+  const cpsToken = await getOrAcquireIslandToken(args.tenantId, clusterCategory, "Island API");
 
   const dvToken = await getOrAcquireToken(args.tenantId, VSCODE_CLIENT_ID, [`${envUrl}/.default`], "Dataverse API");
 
@@ -1738,7 +1777,7 @@ async function cmdClone(args) {
         accountId: args.accountId || dvToken.account?.homeAccountId || "unknown",
         accountEmail: args.accountEmail || dvToken.account?.username || undefined,
         tenantId: args.tenantId,
-        clusterCategory: DEFAULT_CLUSTER_CATEGORY,
+        clusterCategory,
       },
       copilotStudioAccessToken: cpsToken.accessToken,
       dataverseAccessToken: dvToken.accessToken,
