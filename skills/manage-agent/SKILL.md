@@ -99,7 +99,7 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 ## Phase 2: Execute Command
 
-**Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin).
+**Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). `pull` and `push` also refuse such a workspace themselves (`--allow-cli-agent` overrides that). A pull into one was reported to cut the tail off `settings.mcs.yml` (upstream issue #180).
 
 All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`) and read connection details from it.
 

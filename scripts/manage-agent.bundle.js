@@ -18697,7 +18697,8 @@ function parseArgs() {
     force: false,
     clusterCategory: null,
     url: null,
-    out: null
+    out: null,
+    allowCliAgent: false
   };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -18754,6 +18755,9 @@ function parseArgs() {
         break;
       case "--out":
         parsed.out = args[++i];
+        break;
+      case "--allow-cli-agent":
+        parsed.allowCliAgent = true;
         break;
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
@@ -19569,10 +19573,27 @@ async function acquireLspTokens(args) {
   }
   return { copilotStudio: cpsToken, dataverse: dvToken };
 }
+var CLI_AGENT_RE = /^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im;
+function isCliAgentWorkspace(agentDir) {
+  try {
+    return CLI_AGENT_RE.test(fs6.readFileSync(path2.join(agentDir, "settings.mcs.yml"), "utf8"));
+  } catch {
+    return false;
+  }
+}
+function requireClassicWorkspace(args, what) {
+  if (args.allowCliAgent) return;
+  if (isCliAgentWorkspace(findAgentDir(args.workspace, true))) {
+    die(
+      `${what} refused: this is a CLI agent workspace (template cliagent or authoringModel CliCopilot in settings.mcs.yml). This plugin syncs classic agents. Use microsoft/copilot-studio-plugin for CLI agents. Syncing one here can lose parts of settings.mcs.yml (upstream issue #180). Pass --allow-cli-agent to run anyway.`
+    );
+  }
+}
 async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireClassicWorkspace(args, method === "powerplatformls/syncPush" ? "Push" : "Pull");
   requireBotDefinition(args);
   const agentDir = findAgentDir(args.workspace);
   if (method === "powerplatformls/syncPush") {
