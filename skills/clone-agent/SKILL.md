@@ -14,6 +14,8 @@ Guided flow to clone a Copilot Studio agent from the cloud to a local workspace.
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+**Sandbox.** The commands below sign in, call the network and write to `~/.copilot-studio-cli`. If your client runs commands in a sandbox (Codex with the default `workspace-write`), run them outside it, with the user's permission. If there is a sandbox and the client cannot ask (Codex with `approval_policy = "never"`), say which commands need network access and stop. With full access (`--yolo`), run them directly.
+
 ## Locate the plugin files
 
 `<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
