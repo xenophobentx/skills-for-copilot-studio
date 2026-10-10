@@ -8,6 +8,8 @@
  *   node manage-agent.bundle.js pull --workspace <path>       # Pull remote changes
  *   node manage-agent.bundle.js clone --workspace <path>      # Clone agent to local
  *   node manage-agent.bundle.js changes --workspace <path>    # Show local/remote diffs
+ *   node manage-agent.bundle.js remote-changes --workspace <path>  # What a pull would change; writes nothing (same as pull --dry-run)
+ *   node manage-agent.bundle.js verify --workspace <path>     # Compare the folder with a fresh clone of the server
  *   node manage-agent.bundle.js publish --workspace <path>    # Publish agent (make draft live)
  *   node manage-agent.bundle.js validate --workspace <path>   # Validate YAML via LSP
  *   node manage-agent.bundle.js list-agents                   # List agents in environment
@@ -26,6 +28,11 @@
  *   CPS_AUTH_MODE           device | interactive (default: device over SSH or without a display, else interactive);
  *                           the --auth-mode flag does the same and wins
  *   CPS_AUTH_TIMEOUT_SECONDS  How long the browser sign-in may take (default 300)
+ *
+ * pull copies the agent folder to .mcs/backups/<timestamp>/ first (--keep-backups <n>, default 5, 0 = off).
+ * push compares the folder with a fresh clone afterwards and reports a difference as a warning
+ * (--no-verify skips that, --verify makes a difference fail with exit 1).
+ * --dry-run works with pull only.
  *
  * Output: JSON on stdout, diagnostics on stderr.
  */
@@ -54,6 +61,7 @@ const {
   getOrAcquireIslandToken,
 } = require("./shared-auth");
 const doctor = require("./doctor");
+const syncGuard = require("./sync-guard");
 
 // ---------------------------------------------------------------------------
 // Logging helpers
@@ -129,7 +137,12 @@ function parseArgs() {
     url: null,
     out: null,
     allowCliAgent: false,
+    dryRun: false,
+    verify: true, // check the server copy after a push
+    verifyStrict: false, // push --verify: a mismatch fails the command
+    keepBackups: syncGuard.DEFAULT_KEEP_BACKUPS, // 0 = no backup
   };
+  const flagsSeen = new Set();
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -190,6 +203,24 @@ function parseArgs() {
       case "--allow-cli-agent":
         parsed.allowCliAgent = true;
         break;
+      case "--dry-run":
+        flagsSeen.add("--dry-run");
+        parsed.dryRun = true;
+        break;
+      case "--no-verify":
+        flagsSeen.add("--no-verify");
+        parsed.verify = false;
+        break;
+      case "--verify":
+        flagsSeen.add("--verify");
+        parsed.verifyStrict = true;
+        break;
+      case "--keep-backups": {
+        flagsSeen.add("--keep-backups");
+        const v = parseInt(args[++i], 10);
+        if (Number.isFinite(v) && v >= 0) parsed.keepBackups = v;
+        break;
+      }
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
         break;
@@ -204,7 +235,7 @@ function parseArgs() {
   if (!parsed.command) {
     die(
       "Usage: manage-agent <command> [options]\n" +
-        "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor, pack-copy"
+        "Commands: auth, push, pull, clone, changes, remote-changes, verify, validate, publish, list-agents, list-envs, doctor, pack-copy"
     );
   }
 
@@ -214,6 +245,11 @@ function parseArgs() {
         "Other commands use the value stored in .mcs/conn.json."
     );
   }
+
+  // A flag that one command ignores would let that command run for real
+  // (push --dry-run), so refuse it.
+  const flagProblem = syncGuard.flagError(parsed.command, flagsSeen);
+  if (flagProblem) die(flagProblem);
 
   // When --url is provided, extract environmentId and agentId from the URL
   if (parsed.url) {
@@ -1443,6 +1479,7 @@ async function cmdWithLsp(args, method) {
   const tokens = await acquireLspTokens(args);
   const binaryInfo = findBinary();
   const client = new LspClient(binaryInfo, args.workspace);
+  let pushResult = null;
 
   try {
     await client.start();
@@ -1460,6 +1497,16 @@ async function cmdWithLsp(args, method) {
       }
       log(`[push] Validation passed (${validation.summary.warnings} warning(s))`);
     }
+
+    // A pull can overwrite local edits, so keep a copy of the folder first.
+    let backup = null;
+    let backupWarning = null;
+    if (method === "powerplatformls/syncPull") {
+      ({ backup, warning: backupWarning } = syncGuard.tryBackup(agentDir, { keep: args.keepBackups }));
+      if (backup) log(`[pull] Backup of ${backup.files} file(s) in ${backup.path}`);
+      if (backupWarning) warn(backupWarning);
+    }
+    const warnings = backupWarning ? [backupWarning] : [];
 
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
@@ -1482,18 +1529,120 @@ async function cmdWithLsp(args, method) {
           method,
           result,
           conflicts,
-          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.`,
+          backup,
+          ...(warnings.length ? { warnings } : {}),
+          message: `Pull finished, but the same lines were changed locally and on the server, so merge conflict markers (<<<<<<<, =======, >>>>>>>) were written into: ${formatConflicts(conflicts)}. Pick the right version between the markers, delete the marker lines, run validate, then push.` +
+            (backup ? ` Your files from before the pull are in ${backup.path}.` : ""),
         }, null, 2) + "\n"
       );
       process.exitCode = 1;
-    } else {
-      process.stdout.write(
-        JSON.stringify({ status: "ok", method, result }, null, 2) + "\n"
-      );
+      return;
     }
+    if (method === "powerplatformls/syncPull") {
+      process.stdout.write(
+        JSON.stringify({ status: "ok", method, result, backup, ...(warnings.length ? { warnings } : {}) }, null, 2) + "\n"
+      );
+      return;
+    }
+    pushResult = result;
   } finally {
     await client.stop();
   }
+
+  // push: the language server said it worked. Ask the server what it holds now.
+  // Whatever the check finds, the push result stays as it is (see pushOutcome).
+  const verification = args.verify ? await verifyAgent(args, agentDir) : null;
+  const { output, exitCode } = syncGuard.pushOutcome(pushResult, verification, { strict: args.verifyStrict });
+  if (exitCode) process.exitCode = exitCode;
+  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+}
+
+// Clone the agent into a temp folder and compare it with the local folder.
+// After a push this catches a push that reports success and uploads nothing
+// (upstream #188). args needs the resolved environment and tenant.
+async function verifyAgent(args, agentDir) {
+  const conn = loadConnJson(agentDir);
+  // The workspace decides which agent a push goes to, so it decides here too.
+  const agentId = (conn && conn.AgentId) || args.agentId;
+  let note = null;
+  if (conn && conn.AgentId && args.agentId && args.agentId !== conn.AgentId) {
+    note = `--url or --agent-id names ${args.agentId}, but the workspace belongs to ${conn.AgentId}. The check used the workspace's agent.`;
+    warn(note);
+  }
+  const verifyArgs = { ...args, agentId };
+  let tmp = null;
+  try {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "sfcs-verify-"));
+    log("[verify] Fresh clone of the server copy...");
+    await cloneAgentInto(verifyArgs, tmp, lookupClusterCategory(args));
+    const cloned = findAgentDir(tmp, true);
+    if (!fs.existsSync(path.join(cloned, ".mcs", "conn.json"))) {
+      throw new Error("the clone produced no agent folder");
+    }
+    const cmp = syncGuard.compareTrees(agentDir, cloned);
+    const bad = cmp.differs.length + cmp.localOnly.length;
+    if (bad === 0) {
+      return {
+        status: "verified",
+        checked: cmp.checked,
+        serverOnly: cmp.serverOnly,
+        ...(note ? { note } : {}),
+      };
+    }
+    return {
+      status: "mismatch",
+      checked: cmp.checked,
+      differs: cmp.differs,
+      localOnly: cmp.localOnly,
+      serverOnly: cmp.serverOnly,
+      ...(note ? { note } : {}),
+      message:
+        "The server does not hold these local files as they are: " +
+        [...cmp.differs.map((d) => `${d.file} (content differs)`), ...cmp.localOnly.map((f) => `${f} (not on the server)`)].join("; ") +
+        ". Possible causes: the push did not apply, the language server skipped the file, the file has edits that were not pushed, or someone changed the agent on the server. The lines that differ are in verification.differs (a text diff, so it can also show comment and formatting lines).",
+    };
+  } catch (e) {
+    return {
+      status: "error",
+      error: e.message,
+      ...(note ? { note } : {}),
+      message: `The check failed: ${e.message}. Run verify later to compare the folder with the server.`,
+    };
+  } finally {
+    // A leftover temp folder is only worth a warning (Windows can still hold a handle).
+    if (tmp) {
+      try {
+        fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (e) {
+        warn(`Could not delete the temp folder ${tmp} (${e.message}). Delete it by hand.`);
+      }
+    }
+  }
+}
+
+// Compare the local folder with a fresh clone of the server. Writes nothing on the server.
+async function cmdVerify(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
+
+  if (!args.environmentUrl || !args.agentMgmtUrl) {
+    log("Resolving environment details from BAP API...");
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
+    if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
+    if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
+    if (!args.environmentName) args.environmentName = envDetails.displayName;
+  }
+  if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
+  if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
+
+  const verification = await verifyAgent(args, findAgentDir(args.workspace));
+  const ok = verification.status === "verified";
+  process.stdout.write(
+    JSON.stringify({ status: ok ? "ok" : "unverified", verification, message: verification.message }, null, 2) + "\n"
+  );
+  if (!ok) process.exitCode = 1;
 }
 
 async function cmdValidate(args) {
@@ -1866,6 +2015,85 @@ async function cmdChanges(args) {
   }
 }
 
+// What a pull would change, without writing anything: files the server changed,
+// which of them were also changed here, and a diff for those.
+async function cmdRemoteChanges(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
+  if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
+  requireBotDefinition(args);
+
+  if (!args.environmentUrl || !args.agentMgmtUrl) {
+    log("Resolving environment details from BAP API...");
+    const envDetails = await resolveEnvironmentById(args.tenantId, args.environmentId, lookupClusterCategory(args));
+    if (!args.environmentUrl) args.environmentUrl = envDetails.dataverseUrl;
+    if (!args.agentMgmtUrl) args.agentMgmtUrl = envDetails.agentManagementUrl;
+    if (!args.environmentName) args.environmentName = envDetails.displayName;
+  }
+  if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
+  if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
+
+  const agentDir = findAgentDir(args.workspace);
+  const tokens = await acquireLspTokens(args);
+  const client = new LspClient(findBinary(), args.workspace);
+
+  try {
+    await client.start();
+    const request = buildSyncRequest(args, tokens);
+    const localChanges = await sendCustomRequestWithRetries(client, "powerplatformls/getLocalChanges", request);
+    const remoteChanges = await sendCustomRequestWithRetries(client, "powerplatformls/getRemoteChanges", request);
+
+    const preview = await syncGuard.buildPullPreview({
+      localChanges,
+      remoteChanges,
+      agentDir,
+      fetchRemote: async (change) => {
+        const r = await sendCustomRequestWithRetries(client, "powerplatformls/getRemoteFile", {
+          ...request,
+          schemaName: change.schemaName,
+        });
+        return typeof r.content === "string" ? r.content : null;
+      },
+      // The copy the last sync started from, so a merge can be judged line by line.
+      fetchBase: async (change) => {
+        const r = await client.sendCustomRequest("powerplatformls/getCachedFile", {
+          workspaceUri: request.workspaceUri,
+          schemaName: change.schemaName,
+        });
+        return r && typeof r.content === "string" && r.content !== "" ? r.content : null;
+      },
+    });
+
+    const n = preview.remote.length;
+    const both = preview.bothSides.length;
+    const unknown = preview.remote.filter((e) => e.merge === "unknown").map((e) => e.file);
+    let message;
+    if (n === 0) {
+      message = "The server has no changes for you. A pull would change nothing.";
+    } else {
+      message = `A pull would change ${n} file(s) from the server.`;
+      if (both === 0) {
+        message += " None of them was also changed here with different content.";
+      } else {
+        message += ` ${both} changed on both sides: ${preview.bothSides.join(", ")}.`;
+        if (preview.conflicts.length) {
+          message += ` Same lines changed on both sides, so a pull writes conflict markers into: ${preview.conflicts.join(", ")}.`;
+        }
+        if (unknown.length) {
+          message += ` Could not read the base copy for ${unknown.join(", ")}, so those may merge cleanly or not.`;
+        }
+        if (!preview.conflicts.length && !unknown.length) {
+          message += " The changes are on different lines, so a pull should merge them cleanly.";
+        }
+      }
+      message += " A pull saves a backup of your folder first.";
+    }
+    process.stdout.write(JSON.stringify({ status: "ok", dryRun: true, message, ...preview }, null, 2) + "\n");
+  } finally {
+    await client.stop();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // pack-copy — a folder that `pac copilot pack` accepts (microsoft/skills-for-copilot-studio#185)
 // ---------------------------------------------------------------------------
@@ -2018,6 +2246,58 @@ async function fetchAgentInfo(envUrl, agentId, accessToken) {
   };
 }
 
+// Clone uses the Island API token (same as push/pull) for the given cluster category.
+// args needs tenantId, environmentId, environmentUrl, agentMgmtUrl and agentId.
+async function cloneAgentInto(args, rootFolder, clusterCategory = DEFAULT_CLUSTER_CATEGORY) {
+  const envUrl = args.environmentUrl.replace(/\/+$/, "");
+
+  const cpsToken = await getOrAcquireIslandToken(args.tenantId, clusterCategory, "Island API");
+
+  const dvToken = await getOrAcquireToken(args.tenantId, VSCODE_CLIENT_ID, [`${envUrl}/.default`], "Dataverse API");
+
+  // Fetch agent info and solution versions from Dataverse
+  const [agentInfo, solVersions] = await Promise.all([
+    fetchAgentInfo(envUrl, args.agentId, dvToken.accessToken),
+    fetchSolutionVersions(envUrl, dvToken.accessToken),
+  ]);
+
+  log(`Cloning agent: ${agentInfo.displayName}`);
+
+  // Start LSP and send clone request
+  const binaryInfo = findBinary();
+  const client = new LspClient(binaryInfo, rootFolder);
+
+  try {
+    await client.start();
+
+    const request = {
+      accountInfo: {
+        accountId: args.accountId || dvToken.account?.homeAccountId || "unknown",
+        accountEmail: args.accountEmail || dvToken.account?.username || undefined,
+        tenantId: args.tenantId,
+        clusterCategory,
+      },
+      copilotStudioAccessToken: cpsToken.accessToken,
+      dataverseAccessToken: dvToken.accessToken,
+      environmentInfo: {
+        agentManagementUrl: args.agentMgmtUrl,
+        dataverseUrl: envUrl,
+        displayName: args.environmentName || "Environment",
+        environmentId: args.environmentId,
+      },
+      solutionVersions: solVersions,
+      agentInfo,
+      assets: { cloneAgent: true, componentcollectionIds: [] },
+      rootFolder,
+    };
+
+    log("Calling powerplatformls/cloneAgent...");
+    return await sendCustomRequestWithRetries(client, "powerplatformls/cloneAgent", request);
+  } finally {
+    await client.stop();
+  }
+}
+
 async function cmdClone(args) {
   if (!args.workspace) die("--workspace is required");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
@@ -2049,68 +2329,20 @@ async function cmdClone(args) {
   if (!args.environmentUrl) die("Could not resolve --environment-url (or CPS_ENVIRONMENT_URL)");
   if (!args.agentMgmtUrl) die("Could not resolve --agent-mgmt-url (or CPS_AGENT_MGMT_URL)");
 
-  const envUrl = args.environmentUrl.replace(/\/+$/, "");
-
-  const cpsToken = await getOrAcquireIslandToken(args.tenantId, clusterCategory, "Island API");
-
-  const dvToken = await getOrAcquireToken(args.tenantId, VSCODE_CLIENT_ID, [`${envUrl}/.default`], "Dataverse API");
-
-  // Fetch agent info and solution versions from Dataverse
-  const [agentInfo, solVersions] = await Promise.all([
-    fetchAgentInfo(envUrl, args.agentId, dvToken.accessToken),
-    fetchSolutionVersions(envUrl, dvToken.accessToken),
-  ]);
-
-  log(`Cloning agent: ${agentInfo.displayName}`);
-
-  const rootFolder = path.resolve(args.workspace);
-
-  // Start LSP and send clone request
-  const binaryInfo = findBinary();
-  const client = new LspClient(binaryInfo, rootFolder);
-
-  try {
-    await client.start();
-
-    const request = {
-      accountInfo: {
-        accountId: args.accountId || dvToken.account?.homeAccountId || "unknown",
-        accountEmail: args.accountEmail || dvToken.account?.username || undefined,
-        tenantId: args.tenantId,
-        clusterCategory,
-      },
-      copilotStudioAccessToken: cpsToken.accessToken,
-      dataverseAccessToken: dvToken.accessToken,
-      environmentInfo: {
-        agentManagementUrl: args.agentMgmtUrl,
-        dataverseUrl: envUrl,
-        displayName: args.environmentName || "Environment",
-        environmentId: args.environmentId,
-      },
-      solutionVersions: solVersions,
-      agentInfo,
-      assets: { cloneAgent: true, componentcollectionIds: [] },
-      rootFolder,
-    };
-
-    log("Calling powerplatformls/cloneAgent...");
-    const result = await sendCustomRequestWithRetries(
-      client,
-      "powerplatformls/cloneAgent",
-      request
-    );
-
-    process.stdout.write(
-      JSON.stringify({ status: "ok", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
-    );
-  } finally {
-    await client.stop();
-  }
+  const result = await cloneAgentInto(args, path.resolve(args.workspace), clusterCategory);
+  process.stdout.write(
+    JSON.stringify({ status: "ok", method: "powerplatformls/cloneAgent", result }, null, 2) + "\n"
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+
+// pull --dry-run is remote-changes. Everything else runs as typed.
+function resolveCommand(args) {
+  return args.command === "pull" && args.dryRun ? "remote-changes" : args.command;
+}
 
 function cmdDoctor(args) {
   const result = doctor.runDoctor(doctor.makeContext(args), {
@@ -2131,7 +2363,7 @@ async function main() {
   const args = parseArgs();
 
   try {
-    switch (args.command) {
+    switch (resolveCommand(args)) {
       case "auth":
         await cmdAuth(args);
         break;
@@ -2140,6 +2372,12 @@ async function main() {
         break;
       case "pull":
         await cmdWithLsp(args, "powerplatformls/syncPull");
+        break;
+      case "remote-changes":
+        await cmdRemoteChanges(args);
+        break;
+      case "verify":
+        await cmdVerify(args);
         break;
       case "clone":
         await cmdClone(args);

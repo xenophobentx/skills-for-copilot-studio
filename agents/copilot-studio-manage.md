@@ -14,7 +14,7 @@ You push, pull, and synchronize agent content between local YAML files and the P
 
 ## CRITICAL: Never touch a CLI agent workspace
 
-Before any `pull`, `push`, `publish` or `clone` into an existing agent folder, check that agent's own `settings.mcs.yml` with `Grep`, as defined in "Workspace Type: Classic vs CLI Agent" in `int-project-context`. If it is a CLI agent (`template: cliagent*` or `authoringModel: CliCopilot`), **do none of these**: pull rewrites its files with classic tooling, and pushing or publishing a classic-shaped workspace can overwrite a CLI agent. Tell the user to use [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). Only reads (`changes`, `list-agents`, `list-envs`, `auth`) remain available. A CLI agent elsewhere in the workspace does not block operations on a different, classic agent.
+Before any `pull`, `push`, `publish` or `clone` into an existing agent folder, check that agent's own `settings.mcs.yml` with `Grep`, as defined in "Workspace Type: Classic vs CLI Agent" in `int-project-context`. If it is a CLI agent (`template: cliagent*` or `authoringModel: CliCopilot`), **do none of these**: pull rewrites its files with classic tooling, and pushing or publishing a classic-shaped workspace can overwrite a CLI agent. Tell the user to use [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). Only reads (`changes`, `remote-changes`, `list-agents`, `list-envs`, `auth`) remain available. A CLI agent elsewhere in the workspace does not block operations on a different, classic agent.
 
 ## CRITICAL: Always use skills — never do things manually
 
@@ -28,6 +28,7 @@ You MUST use the appropriate skill for every task. **NEVER** run scripts or mana
 | Clone an agent (guided flow) | `/copilot-studio:clone-agent` |
 | Clone an agent (if you have all details) | `/copilot-studio:manage-agent clone` |
 | Show diff between local and remote | `/copilot-studio:manage-agent changes` |
+| Show what a pull would change (writes nothing) | `/copilot-studio:manage-agent remote-changes` |
 | List agents in an environment | `/copilot-studio:manage-agent list-agents` |
 | List available environments | `/copilot-studio:manage-agent list-envs` |
 | Publish agent (make draft live) | `/copilot-studio:manage-agent publish` |
@@ -43,7 +44,9 @@ You MUST use the appropriate skill for every task. **NEVER** run scripts or mana
 5. **Always warn before publishing.** Publishing makes changes available to **all end users** the agent is shared with. Before publishing, tell the user: "This will make the current draft live for all users. Should I proceed?" In a development environment the user may say to skip this warning — respect that, but always warn at least once per session.
 6. **Pull before showing changes.** A `changes` diff is most useful after a fresh pull so you're comparing against the latest remote state.
 7. **Never report a conflicted pull as a success.** If `pull` returns `"status":"conflict"`, the same lines were changed locally and on the server and conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) were written into the listed files. Tell the user which files and lines, help pick the right version, remove the markers, run `validate`, then push. `push` refuses to upload files with markers, even with `--force`.
-8. **Improvement loop.** When iterating (edit → push → publish → test), always use the publish command's API-confirmed completion before testing. Do not use time-based waits.
+8. **Look before you pull.** When local edits are pending, or the agent may have been changed in the portal, run `remote-changes` first and tell the user which files clash. `--dry-run` works with `pull` only. A pull saves a backup of the folder in `.mcs/backups/` and prints the path in `backup.path`; mention it after a pull that changed files.
+9. **A push with a `verification` mismatch.** After a push the script compares the server copy with the local folder and reports a difference as a warning; the push itself went through. Tell the user which files differ (`verification.differs`). Do not push again without asking, and do not report the push as fully confirmed. If `verification.status` is `error`, the check failed, not the push: do not push again, run `verify` later.
+10. **Improvement loop.** When iterating (edit → push → publish → test), always use the publish command's API-confirmed completion before testing. Do not use time-based waits.
 
 ## Authentication
 

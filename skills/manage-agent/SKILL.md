@@ -2,7 +2,7 @@
 name: manage-agent
 user-invocable: false
 description: Push/pull Copilot Studio agent content via the VS Code extension's LanguageServerHost LSP binary. Handles authentication (browser login, or a device code over SSH or without a display), sync push, sync pull, clone, and diff operations.
-argument-hint: <push|pull|clone|changes|validate|publish|auth|list-agents|list-envs|doctor|pack-copy>
+argument-hint: <push|pull|clone|changes|remote-changes|verify|validate|publish|auth|list-agents|list-envs|doctor|pack-copy>
 allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(pac copilot pack *), Read, Glob, Grep
 context: fork
 agent: copilot-studio-manage
@@ -103,6 +103,34 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`) and read connection details from it.
 
+### Remote changes (what a pull would change, writes nothing)
+
+Run this before a pull when the agent may have been edited in the portal or by someone else. It asks the server which files changed and compares them with your files. `pull --dry-run` does the same. `--dry-run` works with `pull` only; any other command refuses it with an error, so there is no dry run for `push`.
+
+```bash
+node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js remote-changes \
+  --workspace "<path-to-agent-folder>" \
+  --tenant-id "<tenantId>" \
+  --environment-id "<envId>" \
+  --environment-url "<envUrl>" \
+  --agent-mgmt-url "<mgmtUrl>"
+```
+
+The output has `message` (one sentence), `remote` (one entry per file the server changed: `file`, `server` as added, modified or deleted, `local` if you changed it too, `bothSides`, `merge`, and `diff` with the first differing lines of both sides), `bothSides` (files changed on the server and here with different content), `conflicts` (files where the same lines changed on both sides, so a pull writes conflict markers), and `localOnly` (your changes the pull does not touch). `merge` is `clean` (different lines, should merge), `conflict`, `same`, or `unknown` (the base copy could not be read, so it may or may not merge cleanly). The `diff` is a text diff and can include comment and formatting lines. If `conflicts` is not empty, tell the user which files before you pull and show the `diff`. Do not pull on your own in that case.
+
+### Verify (compare the folder with the server)
+
+`verify` clones the agent into a temp folder and compares it with the workspace. It writes nothing on the server. Use it when a push result looks doubtful. Local edits that were not pushed yet show up as `differs`. The output is the `verification` object described under Push; `status` is `ok`, or `unverified` with exit code 1.
+
+```bash
+node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js verify \
+  --workspace "<path-to-agent-folder>" \
+  --tenant-id "<tenantId>" \
+  --environment-id "<envId>" \
+  --environment-url "<envUrl>" \
+  --agent-mgmt-url "<mgmtUrl>"
+```
+
 ### Pull (download remote changes)
 
 `--client-id` is optional. When omitted, uses VS Code's 1p client (browser sign-in, or a device code over SSH).
@@ -115,6 +143,8 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pull \
   --environment-url "<envUrl>" \
   --agent-mgmt-url "<mgmtUrl>"
 ```
+
+Before it calls the server, pull copies the agent folder (without `.mcs`, other dot folders and `node_modules`) to `.mcs/backups/<UTC timestamp>/` and prints the path in `backup.path`, with `backup.restore` saying how to go back. The last 5 backups are kept. `--keep-backups <n>` changes that, `--keep-backups 0` turns the backup off. If the backup cannot be made, the pull still runs and `warnings` says so. Restoring puts your old files back as local edits, and a push after that overwrites what the pull brought in; deleted topics come back. Tell the user the backup path whenever a pull changed local files or reported a conflict.
 
 If the same line of a file was changed both locally and on the server, pull writes git-style conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) into that `.mcs.yml` file. The command then prints `"status":"conflict"` with a `conflicts` list (`file` and `lines`) and exits non-zero. **Do not report this as a successful pull.** Tell the user which files and lines are affected, ask which version between the markers is the right one (or propose one), remove the marker lines, run `validate`, and only then push. Pull does not resolve conflicts itself.
 
@@ -129,6 +159,8 @@ Push also refuses (`"status":"error"`, non-zero exit, with a `conflicts` list) w
 Push also refuses (`"status":"error"`, non-zero exit, with a `syntaxErrors` list of `file`, `line`, `column`, `message`) when a `.mcs.yml` file does not parse as YAML. What was measured against the service: pushing a topic with text after a closing quote, or with an unclosed quote that a later quote closes, emptied the topic on the server while `validate` called the file valid (an unclosed quote that runs to the end of the file is reported by the language server itself). The reported line is where the parser gave up; the real mistake can be above it. Like the conflict check it runs before any sign-in or upload and `--force` does not bypass it. Fix the syntax and run `validate`, which reports the same errors.
 
 Unquoted values such as `description: Text: more text` do not block the push. The service keeps them (round trip checked), so push only logs a line with the file, line and reason. A relaxed value in the `mcs.metadata` block (for example the topic `description`) comes back quoted on the next pull or clone, so a diff on that line is expected and not a conflict.
+
+After the language server accepts the push, the script clones the agent into a temp folder and compares it with your folder. Upstream issue #188 reports a push that succeeded and uploaded nothing; that was not reproduced with extension 1.9.14. The result has a `verification` object. `status: "verified"` means every file matches. The check never changes the push result: the push stays `"status":"ok"` with exit code 0. If a `.mcs.yml` file is not on the server (evaluation files are left out, a clone does not return them), or a file differs, `verification.status` is `"mismatch"` and `warnings` names the files; `differs` has `diff` with the lines of both sides (a text diff). **Tell the user which files differ. Do not push again without asking.** The cause can be a push that did not apply, a skipped file, or someone else editing the agent. Run `remote-changes` or `verify`, or check the portal. If the check itself fails (network, token), `verification.status` is `"error"` and `warnings` says the push went through; do not push again, run `verify` later. `push --verify` makes a mismatch fail with `"status":"unverified"` and exit code 1. `push --no-verify` skips the check. The language server also writes server changes into your folder during a push, so look at `result.localChanges`. `serverOnly` lists files that exist only on the server and does not fail the check. The extra clone takes a few seconds.
 
 **Disambiguation check:** Before pushing, check if any routing-relevant changes were made since the last push (new topics with `modelDescription`, new child agents, changed `modelDescription` or `beginDialog.description` on any surface). If so, suggest a disambiguation check:
 
@@ -295,6 +327,12 @@ All commands output JSON to stdout with a `status` field:
 ```
 The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / `>>>>>>>` marker lines that must be resolved by hand. The exit code is non-zero.
 
+### Push accepted, server copy differs (warning)
+```json
+{"status":"ok","method":"powerplatformls/syncPush","result":{...},"verification":{"status":"mismatch","checked":18,"differs":[{"file":"topics/Greeting.mcs.yml","diff":{"line":12,"local":["..."],"remote":["..."],"truncated":false}}],"localOnly":[],"serverOnly":[]},"warnings":["The push went through, but the server copy of some files differs from yours. Tell the user which files differ. Do not push again without asking. ..."]}
+```
+With `push --verify` the same output has `"status":"unverified"` and the exit code is 1.
+
 ### Error
 ```json
 {"status":"error","error":"description of what went wrong"}
@@ -311,6 +349,8 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 | ConcurrencyVersionMismatch | Push without fresh row versions | Pull first, then push |
 | `conflict` status after pull, or "Push refused: unresolved merge conflict markers" | Same line changed locally and on the server | Pick the right version between the markers, delete the marker lines, run `validate`, then push |
 | "Push refused: YAML syntax errors", or a `yaml-syntax` error from `validate` | A `.mcs.yml` file does not parse (unclosed quote, text after a closing quote, tab indentation, bad indentation, unclosed `[` or `{`) | Fix the file at the reported line (the real mistake can be above it), run `validate`, then push |
+| `warnings` with `verification.status` `mismatch` after push | The server copy of a file differs from yours: the push did not apply, the language server skipped the file, or the agent was edited elsewhere | Tell the user which files differ (`verification.differs`, `localOnly`). Do not push again without asking. Run `remote-changes` or `verify`, or compare with the portal |
+| `warnings` with `verification.status` `error` after push | The check after the push failed (network, token). The push itself went through | Do not push again. Run `verify` later |
 | Token expired + silent refresh failed | Refresh token expired (~90 days) | Run the `auth` command again |
 | Binary missing | Extension installed but binary not present | Reinstall the extension |
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |
@@ -320,7 +360,7 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 
 ### Missing `.mcs/botdefinition.json`
 
-`validate`, `push`, `pull` and `changes` stop with `No .mcs/botdefinition.json found` when the workspace lacks that file. `clone` creates it, but it is not tracked in git: `.mcs/.gitignore` contains `*`. A workspace restored from git, or copied without `.mcs/`, therefore does not have it, and the LSP would otherwise report a misleading `Missing required property 'CdsBotId'` or `Please resync`. There is no resync command. To recover:
+`validate`, `push`, `pull`, `changes`, `remote-changes` and `verify` stop with `No .mcs/botdefinition.json found` when the workspace lacks that file. `clone` creates it, but it is not tracked in git: `.mcs/.gitignore` contains `*`. A workspace restored from git, or copied without `.mcs/`, therefore does not have it, and the LSP would otherwise report a misleading `Missing required property 'CdsBotId'` or `Please resync`. There is no resync command. To recover:
 
 1. `clone` the agent again into a new, empty folder.
 2. Copy the edited `.mcs.yml` files over the new clone.
