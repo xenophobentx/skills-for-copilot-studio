@@ -182,7 +182,6 @@ Spec rules for uploading a public REST API as a tool: response `type: object`, J
 **Read this pattern when:**
 - The user writes an OpenAPI spec for a REST API, or a REST API tool fails at upload or at runtime
 - The error is `JsonReaderException`, `Expecting Record but received Table` or a tool that ignores its parameters
-- The user asks how REST API tools differ from connector actions
 
 ### Data Visualization in Chat → [data-visualization.md](${CLAUDE_SKILL_DIR}/../../patterns/data-visualization.md)
 

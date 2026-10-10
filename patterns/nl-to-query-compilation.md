@@ -10,7 +10,7 @@ tags: [modelDescription, glossary, api, tools, AutomaticTaskInput, orchestrator,
 
 The generative orchestrator reads the `modelDescription` of a tool and the `description` of each input when it decides which tool to call and what to pass in. Put what it needs to know there: what the API returns, what each parameter does, which values are valid, and for coded APIs a glossary from the user's words to the API's codes. No custom model and no topic code are involved. The orchestrator does the translation when it plans the call.
 
-An OpenAPI upload fills `modelDescription` with the `summary` of the operation. That is rarely enough.
+An OpenAPI upload prepopulates the tool description from the description fields of the spec (or the operation `summary`). That is rarely enough.
 
 Edit `modelDescription` with `edit-action` after the tool has been added in the portal and pulled.
 
@@ -53,7 +53,7 @@ GLOSSARY: "[user term]"/"[alias]"->[param]=[value]. "[user term]"->[param]=[valu
 An example:
 
 ```yaml
-modelDescription: 'Retrieves ECB monetary and exchange rate data via SDMX. GLOSSARY: "refi rate"/"MRR"/"main refinancing rate"->flowRef=FM key=B.U2.EUR.4F.KR.MRR_FR.LEV. "deposit rate"/"DFR"->flowRef=FM key=B.U2.EUR.4F.KR.DFR.LEV. "marginal lending"/"MLF"->flowRef=FM key=B.U2.EUR.4F.KR.MLF_FR.LEV. "EUR/USD"/"euro dollar"->flowRef=EXR key=D.USD.EUR.SP00.A. startPeriod and endPeriod are YYYY-MM. format=jsondata.'
+modelDescription: 'Retrieves ECB monetary and exchange rate data via SDMX. GLOSSARY: "refi rate"/"MRR"/"main refinancing rate"->flowRef=FM key=B.U2.EUR.4F.KR.MRR_FR.LEV. "deposit rate"/"DFR"->flowRef=FM key=B.U2.EUR.4F.KR.DFR.LEV. "marginal lending"/"MLF"->flowRef=FM key=B.U2.EUR.4F.KR.MLFR.LEV. "EUR/USD"/"euro dollar"->flowRef=EXR key=D.USD.EUR.SP00.A. startPeriod and endPeriod are YYYY-MM. format=jsondata.'
 ```
 
 ## Glossary rules
@@ -63,16 +63,20 @@ modelDescription: 'Retrieves ECB monetary and exchange rate data via SDMX. GLOSS
 3. When one term needs several parameters, list them together: `flowRef=FM key=B.U2...`.
 4. Give format hints for dates and times: `YYYY-MM`, `YYYY`, `ISO-8601`.
 5. List fixed defaults, such as `format=jsondata`.
-6. Quote the whole value. A glossary contains `: ` (after `GLOSSARY`), and an unquoted YAML value ends at that point, so the file is no longer valid YAML. This fork's `validate` reports it as "bad indentation of a mapping entry". Single quotes work with the double quotes inside the glossary. Double an apostrophe inside the text (`don''t`).
+6. Quote the whole value. A glossary contains `: ` (after `GLOSSARY`), and a strict YAML parser rejects an unquoted value with that sequence. The service keeps such a value as plain text, so a push can still work, and `validate` reports a `yaml-lenient` warning ("Unquoted value contains ': '") instead of an error. Other tools that read the file will fail on it, so quote it anyway. Single quotes work with the double quotes inside the glossary. Double an apostrophe inside the text (`don''t`).
 
-On line breaks: `validate` on language server 1.9.14 accepts `modelDescription` as a `|`, `>` or `>-` block scalar. What I did not check is how the server stores a value with line breaks and how the orchestrator reads it. Start with one single-quoted line. If the glossary gets long enough that you want line breaks, test the tool in the Test pane after the push before you rely on it.
+## Keep modelDescription on one line
+
+Do not use a multi-line `modelDescription` (a `|` or `>` block). Multi-line values have been reported to break tool registration after a push: in upstream issue #91 an MCP tool went blank after its `modelDescription` was expanded to several lines, and going back to one line fixed it. The `edit-action` skill gives the same advice for MCP actions.
+
+Block scalars are valid YAML and `validate` accepts them, but a passing `validate` says nothing about what the service does on a push. The report covers MCP actions, and it is not known whether other action kinds are affected, so use one line for all of them. A long glossary on one single-quoted line is fine. If you still try line breaks, push to a test agent first and check that the tool still works in the Test pane.
 
 ## Where things belong
 
 | Content | Where |
 |---|---|
 | API parameter mappings, glossaries, dimension codes | `modelDescription` of the action file |
-| Persona, tone, output format, date defaults | Agent instructions (`settings.mcs.yml`) |
+| Persona, tone, output format, date defaults | Agent instructions (`agent.mcs.yml`) |
 | Orchestration across tools, follow-up suggestions | Agent instructions |
 
 Keep each mapping in one place. If it is in `modelDescription`, do not repeat it in the instructions, or the two copies drift apart.
