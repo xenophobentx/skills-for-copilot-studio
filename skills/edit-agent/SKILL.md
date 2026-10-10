@@ -14,6 +14,15 @@ Modify agent metadata (`agent.mcs.yml`) or configuration (`settings.mcs.yml`).
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/edit-agent/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it.
+
 ## Instructions
 
 1. **Auto-discover the agent directory**:
@@ -28,7 +37,7 @@ Modify agent metadata (`agent.mcs.yml`) or configuration (`settings.mcs.yml`).
 
 3. **If the user wants to change the AI model**, run the schema lookup tool first:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js models
+   node <pluginRoot>/scripts/schema-lookup.bundle.js models
    ```
    Use the output to determine the correct `modelNameHint` and `provider` values.
    **CRITICAL:** Do NOT include `kind` in the model block — the agent-level schema uses `CurrentModelsNoKind`.

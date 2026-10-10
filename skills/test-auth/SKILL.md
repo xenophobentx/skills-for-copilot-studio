@@ -16,6 +16,15 @@ agent: copilot-studio-test
 Authenticate with the Power Platform API for evaluation and SDK chat workflows.
 This caches a token in the `"test-agent"` slot that is shared by `run-eval` and `chat-sdk`.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/test-auth/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## Step 1: Find the workspace
 
 Locate the agent workspace (directory containing `.mcs/conn.json`):
@@ -65,7 +74,7 @@ If the user doesn't have one, guide them:
 Run the auth command (opens a browser; over SSH or without a display it prints a device code instead, and `--auth-mode device|interactive` forces one flow):
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/eval-api.bundle.js auth --workspace <path> --client-id <id>
+node <pluginRoot>/scripts/eval-api.bundle.js auth --workspace <path> --client-id <id>
 ```
 
 A foreground Bash call returns its output only when the command ends, so start it in the background (Claude Code: `run_in_background: true`; GitHub Copilot CLI: bash `mode: "async"`), check its output after a few seconds, and when it has a `{"status":"device_code",...}` line show the user the `verificationUri` and `userCode` right away. Then wait for the command to finish.

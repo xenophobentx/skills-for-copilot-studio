@@ -14,6 +14,15 @@ Add a new node to an existing Copilot Studio topic, or modify an existing one.
 
 **Before you change anything.** Search the agent's own `settings.mcs.yml` for `template: cliagent*` or `authoringModel: CliCopilot` (details under "Workspace Type" in skill `int-project-context`). A match means a CLI agent: stop, change nothing, and point the user to https://github.com/microsoft/copilot-studio-plugin. Do this even for a one-line change.
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/add-node/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it.
+
 In Copilot Studio, the elements inside a topic's `actions` array are **nodes** (SendActivity, Question, ConditionGroup, etc.). These are different from **actions** (`actions/*.mcs.yml`), which are connector-based TaskDialogs. This skill handles nodes within topics.
 
 **For generative answers (SearchAndSummarizeContent, AnswerQuestionWithAI)**, use the `/add-generative-answers` skill instead — it has the specific patterns, follow-up ConditionGroup logic, and disambiguation guidance needed to set them up correctly.
@@ -33,7 +42,7 @@ In Copilot Studio, the elements inside a topic's `actions` array are **nodes** (
 
 3. **Look up the node schema**:
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/schema-lookup.bundle.js resolve <NodeType>
+   node <pluginRoot>/scripts/schema-lookup.bundle.js resolve <NodeType>
    ```
 
 4. **Read the existing topic file** to understand its current structure.

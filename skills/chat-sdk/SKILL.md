@@ -11,6 +11,15 @@ agent: copilot-studio-test
 
 Send a single utterance to a published agent via the Copilot Studio Client SDK. Use this for agents with **integrated authentication / Entra ID SSO** (authenticationmode 2).
 
+## Locate the plugin files
+
+`<pluginRoot>` below is the plugin folder, the one that holds `skills/`, `scripts/` and `templates/`. Work it out once and use absolute paths from then on.
+
+1. This file is `<pluginRoot>/skills/chat-sdk/SKILL.md`. In Claude Code `<pluginRoot>` is `${CLAUDE_SKILL_DIR}/../..`. If that shows up as literal text, your client does not fill it in: take the folder two levels above the folder of this file.
+2. Otherwise read `pluginRoot` from `~/.copilot-studio-cli/sfcs-plugin-paths.json`. The setup hook writes it, so it can name another installed copy.
+
+Check that the file you need exists under `<pluginRoot>` before you use it. If a script fails with `Cannot find module` or says the native dependencies are missing, run `node "<pluginRoot>/hooks/setup.js" --ensure` once and try again. It installs them without a hook and can take a minute.
+
 ## Prerequisites
 
 Requires prior authentication via `/copilot-studio:test-auth`. Do NOT ask the user for a client ID yourself — the test-auth skill handles app registration setup and authentication.
@@ -20,7 +29,7 @@ Requires prior authentication via `/copilot-studio:test-auth`. Do NOT ask the us
 1. Run the script with `--client-id` and the utterance from `$ARGUMENTS`:
 
    ```bash
-   node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+   node <pluginRoot>/scripts/chat-with-agent.bundle.js \
      --client-id "<clientId>" "<utterance>" [--agent-dir <path>]
    ```
 
@@ -51,7 +60,7 @@ Display the agent's response from the `activities` array:
 On Windows PowerShell 5.1 a message that contains double quotes is split into several arguments, and the script stops with "separate message arguments". Write the message to a UTF-8 file and pass `--message-file` instead of the message:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+node <pluginRoot>/scripts/chat-with-agent.bundle.js \
   --client-id "<clientId>" --message-file "<path>"
 ```
 
@@ -60,7 +69,7 @@ node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
 Pass `--conversation-id` from the previous response:
 
 ```bash
-node ${CLAUDE_SKILL_DIR}/../../scripts/chat-with-agent.bundle.js \
+node <pluginRoot>/scripts/chat-with-agent.bundle.js \
   --client-id "<id>" "<follow-up>" --conversation-id "<id>"
 ```
 
