@@ -135,7 +135,9 @@ function makeWorkspace(opts = {}) {
 
 try {
   // ---- node
-  assertEqual(level(makeCtx({ nodeVersion: "18.0.0" }), null, "node"), ["OK"], "node 18 is fine");
+  assertEqual(level(makeCtx({ nodeVersion: "18.20.4" }), null, "node"), ["FAIL"], "node 18 fails");
+  assertEqual(level(makeCtx({ nodeVersion: "19.9.0" }), null, "node"), ["FAIL"], "node 19 fails");
+  assertEqual(level(makeCtx({ nodeVersion: "20.0.0" }), null, "node"), ["OK"], "node 20 is the floor");
   assertEqual(level(makeCtx({ nodeVersion: "20.11.1" }), null, "node"), ["OK"], "node 20 is fine");
   assertEqual(level(makeCtx({ nodeVersion: "16.20.2" }), null, "node"), ["FAIL"], "node 16 fails");
   assertEqual(level(makeCtx({ nodeVersion: undefined }), null, "node"), ["FAIL"], "unknown node version fails, no throw");

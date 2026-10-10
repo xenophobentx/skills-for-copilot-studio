@@ -12,7 +12,7 @@
 
 const path = require("path");
 
-const MIN_NODE_MAJOR = 18;
+const MIN_NODE_MAJOR = 20;
 const MIN_PAC_VERSION = "2.13.1";
 const NATIVE_MODULES = ["keytar", "@azure/msal-node-extensions", "vscode-jsonrpc"];
 

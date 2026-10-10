@@ -26,7 +26,7 @@ Show the user the WARN and FAIL lines as they are, and say what the line tells t
 
 ## What it checks
 
-- Node 18 or newer, the OS, a guess at the Windows shell, and how sign-in will run (browser or device code, same rule as the sign-in itself).
+- Node 20 or newer, the OS, a guess at the Windows shell, and how sign-in will run (browser or device code, same rule as the sign-in itself).
 - LanguageServerHost from the VS Code extension (path, version, executable bit, `CPS_LSP_BINARY`).
 - keytar, `@azure/msal-node-extensions` and `vscode-jsonrpc` load, and the setup marker `native-deps.json` matches. The path of `install.log` is shown when it exists. The folder is found the way the scripts find it: `SFCS_PLUGIN_DATA`, then `~/.copilot-studio-cli/sfcs-plugin-paths.json`, then `CLAUDE_PLUGIN_DATA` or the old `plugin-paths.json` only if that folder holds this plugin's `native-deps.json`.
 - `~/.copilot-studio-cli/sfcs-plugin-paths.json` exists and points to a folder that exists (a broken file is a WARN, the scripts ignore it). The old shared `plugin-paths.json` is shown for information only: another plugin can write it, this plugin no longer does.

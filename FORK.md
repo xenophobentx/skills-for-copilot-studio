@@ -55,7 +55,7 @@ This fork follows [microsoft/skills-for-copilot-studio](https://github.com/micro
 ## CI
 
 - `.github/workflows/fork-ci.yml` runs on push and pull requests to `main` and `xeno/**`. It runs every `tests/*.test.js` on ubuntu, macOS and Windows with Node 22 and 24, and on ubuntu with Node 20. It rebuilds the bundles and fails when they differ from the committed ones, and it runs `claude plugin validate` with a pinned Claude Code CLI. No secrets are used.
-- The README said "Node 18+", which is stale. The dependencies in `scripts/package-lock.json` (msal-node, agents-activity, agents-copilotstudio-client, open) declare `node >=20`, so 20 is the floor and the README now says so. `doctor` still has `MIN_NODE_MAJOR = 18`.
+- The README said "Node 18+", which is stale. The dependencies in `scripts/package-lock.json` (msal-node, agents-activity, agents-copilotstudio-client, open) declare `node >=20`, so 20 is the floor and the README now says so. `doctor` and the doctor skill check for 20 as well.
 - `.gitattributes` checks text files out with LF. On a Windows runner with `core.autocrlf=true` several tests read the script sources by line and fail on CRLF. A Windows clone that was checked out before this file existed keeps CRLF until it is checked out again once. In PowerShell 5.1 run these two commands (no `&&`), in a clean working tree:
 
   ```

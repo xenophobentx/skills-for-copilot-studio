@@ -18183,7 +18183,7 @@ var require_shared_auth = __commonJS({
 var require_doctor = __commonJS({
   "src/doctor.js"(exports2, module2) {
     var path3 = require("path");
-    var MIN_NODE_MAJOR = 18;
+    var MIN_NODE_MAJOR = 20;
     var MIN_PAC_VERSION = "2.13.1";
     var NATIVE_MODULES = ["keytar", "@azure/msal-node-extensions", "vscode-jsonrpc"];
     function firstLine(e) {
