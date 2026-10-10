@@ -2,8 +2,8 @@
 name: manage-agent
 user-invocable: false
 description: Push/pull Copilot Studio agent content via the VS Code extension's LanguageServerHost LSP binary. Handles authentication (browser login, or a device code over SSH or without a display), sync push, sync pull, clone, and diff operations.
-argument-hint: <push|pull|clone|changes|validate|publish|auth|list-agents|list-envs|doctor>
-allowed-tools: Bash(node *manage-agent.bundle.js *), Read, Glob, Grep
+argument-hint: <push|pull|clone|changes|validate|publish|auth|list-agents|list-envs|doctor|pack-copy>
+allowed-tools: Bash(node *manage-agent.bundle.js *), Bash(pac copilot pack *), Read, Glob, Grep
 context: fork
 agent: copilot-studio-manage
 ---
@@ -99,7 +99,7 @@ The user didn't authenticate in time. Re-run the `auth` command and remind them 
 
 ## Phase 2: Execute Command
 
-**Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin).
+**Do not pull, push, publish or clone into a CLI agent workspace** (`template: cliagent*` or `authoringModel: CliCopilot` in that agent's `settings.mcs.yml`). Check it first as described in "Workspace Type" in `int-project-context`, and point the user to [microsoft/copilot-studio-plugin](https://github.com/microsoft/copilot-studio-plugin). `pull` and `push` also refuse such a workspace themselves. Never pass `--allow-cli-agent` unless the user names that flag. A pull into one was reported to cut the tail off `settings.mcs.yml` (upstream issue #180).
 
 All commands auto-detect the agent directory (finds the subfolder with `.mcs/conn.json`) and read connection details from it.
 
@@ -235,6 +235,23 @@ Optional: `--agent-id "<agentId>"` overrides the bot ID from `conn.json`.
 - In an improvement loop (edit → push → publish → test), publish is required between push and test
 - The command confirms publish completion via API — **do not use time-based waits**
 
+### Pack for `pac copilot pack` (pack-copy)
+
+Only for a user who wants a solution zip of the topics. `pac copilot pack` (2.13.1) accepts only `agent.mcs.yml`, `settings.mcs.yml`, `icon.png`, `.mcs/` and `topics/*.mcs.yml`. Any other file or folder in the agent folder stops it with `Unsupported directory: workflows/.` (or `knowledge/`, `agents/`, `actions/`, `.git/`) or `Unsupported file: README.md.` (a `.DS_Store` from Finder counts too), although clone and pull create several of them (upstream issue #185). A `.mcs.yml` in a subfolder of `topics/` is not refused, pac silently leaves it out of the zip. `pack-copy` copies the accepted entries into a new folder:
+
+```bash
+node ${CLAUDE_SKILL_DIR}/../../scripts/manage-agent.bundle.js pack-copy \
+  --workspace "<path-to-agent-folder>" --out "<new empty folder>"
+```
+
+Read the `skipped` list in the output and show it to the user before you pack. It is everything the zip will not contain: flows, knowledge sources, actions, child agents, variables. The zip is not a copy of the agent, and an agent whose topics use those will be incomplete or broken after import. Only if the user still wants it, run:
+
+```bash
+pac copilot pack --publisher-prefix <prefix> --project-dir "<new empty folder>" --output-path "<zip folder>"
+```
+
+`--out` must be a new or empty folder outside the agent folder (a symlink into it counts as inside). A symlinked `topics` folder is refused. Nothing is changed in the agent folder, and the command makes no network calls.
+
 ### List Agents
 
 Uses Dataverse REST API directly (no LSP binary needed). `--client-id` is optional.
@@ -299,6 +316,7 @@ The pull itself completed, but the listed files contain `<<<<<<<` / `=======` / 
 | PvaPublish failed | Insufficient permissions or bot not found | Verify the user has publish permissions and the agent ID is correct |
 | Publish timed out | Publish still in progress after timeout | Increase `--timeout` or check the Copilot Studio UI for status |
 | `No .mcs/botdefinition.json found in ...` | The workspace has no `.mcs/botdefinition.json`. `.mcs/.gitignore` ignores everything, so a workspace that went through git, or was copied without `.mcs/`, loses it | See "Missing `.mcs/botdefinition.json`" below |
+| `Can't read file outside of client workspace` in the LSP log, with `pull failed: A task was canceled.` or a `validate` result of `incomplete` | LanguageServerHost could not resolve a file inside the workspace (upstream issue #178, seen with extension 1.5.57 on Windows with many child agents). The cause is not known. | Check that `--workspace` is spelled with the real case of the folder, update the Copilot Studio VS Code extension, and if it stays, do this step in the extension. The command prints this hint after the error. |
 
 ### Missing `.mcs/botdefinition.json`
 

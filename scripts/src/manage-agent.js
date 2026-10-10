@@ -13,6 +13,7 @@
  *   node manage-agent.bundle.js list-agents                   # List agents in environment
  *   node manage-agent.bundle.js list-envs                     # List environments
  *   node manage-agent.bundle.js doctor [--workspace <path>]   # Read-only environment check
+ *   node manage-agent.bundle.js pack-copy --workspace <path> --out <new folder>   # Copy what pac copilot pack accepts
  *
  * Environment variables (all optional):
  *   CPS_LSP_BINARY          Override path to LanguageServerHost binary
@@ -126,6 +127,8 @@ function parseArgs() {
     force: false,
     clusterCategory: null,
     url: null,
+    out: null,
+    allowCliAgent: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -181,6 +184,12 @@ function parseArgs() {
       case "--url":
         parsed.url = args[++i];
         break;
+      case "--out":
+        parsed.out = args[++i];
+        break;
+      case "--allow-cli-agent":
+        parsed.allowCliAgent = true;
+        break;
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
         break;
@@ -195,7 +204,7 @@ function parseArgs() {
   if (!parsed.command) {
     die(
       "Usage: manage-agent <command> [options]\n" +
-        "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
+        "Commands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor, pack-copy"
     );
   }
 
@@ -372,6 +381,20 @@ function findBinary() {
 // LSP client — spawn binary, connect via named pipe, JSON-RPC lifecycle
 // ---------------------------------------------------------------------------
 
+// Known faults inside LanguageServerHost, recognized from its log messages.
+// Returns a one-sentence explanation, or null.
+function lspFaultHint(message) {
+  if (typeof message === "string" && /Can't read file outside of client workspace/i.test(message)) {
+    return (
+      "LanguageServerHost could not resolve a file inside the workspace (\"Can't read file outside of client workspace\", " +
+      "microsoft/skills-for-copilot-studio#178, seen with extension 1.5.57 on Windows on a workspace with many child agents). " +
+      "Check that --workspace is spelled with the real case of the folder, update the extension, " +
+      "and if it still happens, do this step in the extension."
+    );
+  }
+  return null;
+}
+
 class LspClient {
   constructor(binaryInfo, workspaceRoot) {
     this.binaryPath = binaryInfo.binaryPath;
@@ -386,6 +409,7 @@ class LspClient {
     this._onDiagnosticsCallback = null;
     this._onExitCallback = null;
     this.exitInfo = null; // set when the LSP process exits or errors
+    this.faultHint = null; // set when the LSP logs a known internal fault
   }
 
   async start() {
@@ -483,6 +507,7 @@ class LspClient {
     });
 
     this._connection.onUnhandledNotification((msg) => {
+      if (msg.method === "window/logMessage") this._noteLogMessage(msg.params);
       const detail = msg.params
         ? ` ${JSON.stringify(msg.params).substring(0, 300)}`
         : "";
@@ -513,6 +538,10 @@ class LspClient {
     this.running = true;
 
     return initResult;
+  }
+
+  _noteLogMessage(params) {
+    if (!this.faultHint && params) this.faultHint = lspFaultHint(params.message);
   }
 
   async sendCustomRequest(method, params) {
@@ -1066,6 +1095,7 @@ async function runValidation(client, args, tokens) {
       problems.push(`${why}; no diagnostics received for ${missing.length} of ${filePaths.length} file(s)`);
     }
     if (unreadable.length > 0) problems.push(`${unreadable.length} file(s) could not be read`);
+    if (client.faultHint) problems.push(client.faultHint);
     incomplete = {
       reason: missing.length > 0 ? reason || "timeout" : "unreadable",
       message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
@@ -1325,8 +1355,32 @@ async function acquireLspTokens(args) {
   return { copilotStudio: cpsToken, dataverse: dvToken };
 }
 
+// CLI agents (template cliagent-*, authoringModel CliCopilot) are not classic
+// agents. This plugin's sync is not made for them, and a pull into one was
+// reported to cut the tail off settings.mcs.yml (upstream issue #180, not
+// reproduced here). The detection is the one doctor uses.
+function isCliAgentWorkspace(agentDir) {
+  try {
+    return doctor.isCliAgentSettings(fs.readFileSync(path.join(agentDir, "settings.mcs.yml"), "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+function requireClassicWorkspace(args, what) {
+  if (args.allowCliAgent) return;
+  if (isCliAgentWorkspace(findAgentDir(args.workspace, true))) {
+    die(
+      `${what} refused: this is a CLI agent workspace (template cliagent or authoringModel CliCopilot in settings.mcs.yml). ` +
+        "This plugin syncs classic agents. Use microsoft/copilot-studio-plugin for CLI agents. " +
+        "A pull into one was reported to cut the tail off settings.mcs.yml (upstream issue #180)."
+    );
+  }
+}
+
 async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
+  requireClassicWorkspace(args, method === "powerplatformls/syncPush" ? "Push" : "Pull");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
   requireBotDefinition(args);
@@ -1409,7 +1463,13 @@ async function cmdWithLsp(args, method) {
 
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
-    const result = await sendCustomRequestWithRetries(client, method, request);
+    let result;
+    try {
+      result = await sendCustomRequestWithRetries(client, method, request);
+    } catch (e) {
+      if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+      throw e;
+    }
 
     // syncPull reports success even when it wrote merge markers into a file.
     const conflicts = method === "powerplatformls/syncPull"
@@ -1798,9 +1858,112 @@ async function cmdChanges(args) {
         2
       ) + "\n"
     );
+  } catch (e) {
+    if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+    throw e;
   } finally {
     await client.stop();
   }
+}
+
+// ---------------------------------------------------------------------------
+// pack-copy — a folder that `pac copilot pack` accepts (microsoft/skills-for-copilot-studio#185)
+// ---------------------------------------------------------------------------
+
+// pac 2.13.1 packs only these entries and fails on anything else in the folder,
+// including workflows/, knowledge/, agents/, a README or .git. Clone and pull
+// create several of those.
+function planPackCopy(agentDir) {
+  const copy = [];
+  const skipped = [];
+  const symlinks = [];
+  for (const entry of fs.readdirSync(agentDir, { withFileTypes: true })) {
+    const name = entry.name;
+    if (entry.isSymbolicLink() && name === "topics") symlinks.push(name);
+    else if (entry.isDirectory() && name === ".mcs") copy.push(name);
+    else if (entry.isDirectory() && name === "topics") {
+      for (const t of fs.readdirSync(path.join(agentDir, name), { withFileTypes: true })) {
+        const rel = `${name}/${t.name}`;
+        if (t.isFile() && t.name.endsWith(".mcs.yml")) copy.push(rel);
+        else skipped.push(t.isDirectory() ? `${rel}/` : rel);
+      }
+    } else if (entry.isFile() && ["agent.mcs.yml", "settings.mcs.yml", "icon.png"].includes(name)) copy.push(name);
+    else skipped.push(entry.isDirectory() ? `${name}/` : name);
+  }
+  return { copy: copy.sort(), skipped: skipped.sort(), symlinks };
+}
+
+// The real path of p, or of its nearest existing parent plus the rest, so a
+// symlink in --out or in a parent of it cannot hide where the copy lands.
+function realPathOfNewPath(p) {
+  let cur = path.resolve(p);
+  const rest = [];
+  for (;;) {
+    try {
+      fs.lstatSync(cur);
+      break;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      rest.unshift(path.basename(cur));
+      cur = parent;
+    }
+  }
+  return path.join(fs.realpathSync.native(cur), ...rest);
+}
+
+function isInsideOrSame(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel));
+}
+
+function cmdPackCopy(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.out) die("--out <new folder> is required");
+  const agentDir = findAgentDir(args.workspace);
+  let realAgent;
+  let out;
+  try {
+    realAgent = fs.realpathSync.native(agentDir);
+    out = realPathOfNewPath(args.out);
+  } catch (e) {
+    die(`Cannot resolve the folders: ${e.message}`);
+  }
+  if (isInsideOrSame(realAgent, out)) {
+    die("--out must be outside the agent folder (the real path is compared, a symlink into it counts as inside).");
+  }
+  if (fs.existsSync(out) && fs.readdirSync(out).length > 0) {
+    die(`${out} already exists and is not empty. Give --out a new folder.`);
+  }
+  const { copy, skipped, symlinks } = planPackCopy(agentDir);
+  if (symlinks.length > 0) {
+    die(`${symlinks.join(", ")} in ${agentDir} is a symbolic link. pack-copy does not follow it, and a pack without topics would be empty. Use the real folder.`);
+  }
+  for (const required of ["agent.mcs.yml", "settings.mcs.yml"]) {
+    if (!copy.includes(required)) die(`${required} is missing in ${agentDir}`);
+  }
+  fs.mkdirSync(out, { recursive: true });
+  for (const item of copy) {
+    const dest = path.join(out, item);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.cpSync(path.join(agentDir, item), dest, { recursive: true });
+  }
+  process.stdout.write(
+    JSON.stringify(
+      {
+        status: "ok",
+        out,
+        copied: copy,
+        skipped,
+        message:
+          skipped.length > 0
+            ? `Copied the ${copy.length} entries pac copilot pack accepts. Left out: ${skipped.join(", ")}. The packed solution will not contain them.`
+            : `Copied the ${copy.length} entries pac copilot pack accepts.`,
+      },
+      null,
+      2
+    ) + "\n"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1998,6 +2161,9 @@ async function main() {
         break;
       case "doctor":
         cmdDoctor(args);
+        break;
+      case "pack-copy":
+        cmdPackCopy(args);
         break;
       default:
         die(`Unknown command: ${args.command}`);

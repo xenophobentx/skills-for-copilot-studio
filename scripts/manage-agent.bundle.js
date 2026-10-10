@@ -18492,6 +18492,9 @@ var require_doctor = __commonJS({
         add("pac", "OK", `${note}pac ${newest} at ${pac} (newest installed, only used by the optional pac backend)`);
       }
     }
+    function isCliAgentSettings(text) {
+      return /^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im.test(text);
+    }
     function looksLikeWorkspace(ctx, dir) {
       return ["agent.mcs.yml", "settings.mcs.yml", ".mcs"].some((n) => exists(ctx, path3.join(dir, n)));
     }
@@ -18546,7 +18549,7 @@ var require_doctor = __commonJS({
         settings = ctx.fs.readFileSync(path3.join(dir, "settings.mcs.yml"), "utf8");
       } catch {
       }
-      if (/^\s*(template:\s*['"]?cliagent|authoring(Mode|Model):\s*['"]?CliCopilot)/im.test(settings)) {
+      if (isCliAgentSettings(settings)) {
         add("workspace-type", "WARN", "CLI agent workspace", "Do not pull, push or publish here, use microsoft/copilot-studio-plugin.");
       } else {
         add("workspace-type", "OK", "classic agent workspace");
@@ -18629,7 +18632,7 @@ var require_doctor = __commonJS({
         }
       };
     }
-    module2.exports = { runDoctor, formatLine, makeContext, pluginData };
+    module2.exports = { runDoctor, formatLine, makeContext, pluginData, isCliAgentSettings };
   }
 });
 
@@ -18700,7 +18703,9 @@ function parseArgs() {
     // default: 5 minutes for publish polling
     force: false,
     clusterCategory: null,
-    url: null
+    url: null,
+    out: null,
+    allowCliAgent: false
   };
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -18755,6 +18760,12 @@ function parseArgs() {
       case "--url":
         parsed.url = args[++i];
         break;
+      case "--out":
+        parsed.out = args[++i];
+        break;
+      case "--allow-cli-agent":
+        parsed.allowCliAgent = true;
+        break;
       case "--auth-mode":
         setAuthModeOverride(args[++i]);
         break;
@@ -18767,7 +18778,7 @@ function parseArgs() {
   }
   if (!parsed.command) {
     die(
-      "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor"
+      "Usage: manage-agent <command> [options]\nCommands: auth, push, pull, clone, changes, validate, publish, list-agents, list-envs, doctor, pack-copy"
     );
   }
   if (parsed.clusterCategory != null && parsed.command !== "clone") {
@@ -18906,6 +18917,12 @@ Install from: https://marketplace.visualstudio.com/items?itemName=ms-copilotstud
 Or set CPS_LSP_BINARY env var to the LanguageServerHost path.`
   );
 }
+function lspFaultHint(message) {
+  if (typeof message === "string" && /Can't read file outside of client workspace/i.test(message)) {
+    return `LanguageServerHost could not resolve a file inside the workspace ("Can't read file outside of client workspace", microsoft/skills-for-copilot-studio#178, seen with extension 1.5.57 on Windows on a workspace with many child agents). Check that --workspace is spelled with the real case of the folder, update the extension, and if it still happens, do this step in the extension.`;
+  }
+  return null;
+}
 var LspClient = class {
   constructor(binaryInfo, workspaceRoot) {
     this.binaryPath = binaryInfo.binaryPath;
@@ -18920,6 +18937,7 @@ var LspClient = class {
     this._onDiagnosticsCallback = null;
     this._onExitCallback = null;
     this.exitInfo = null;
+    this.faultHint = null;
   }
   async start() {
     if (this.running) return;
@@ -18992,6 +19010,7 @@ var LspClient = class {
       if (this._onDiagnosticsCallback) this._onDiagnosticsCallback(uri, diagnostics || []);
     });
     this._connection.onUnhandledNotification((msg) => {
+      if (msg.method === "window/logMessage") this._noteLogMessage(msg.params);
       const detail = msg.params ? ` ${JSON.stringify(msg.params).substring(0, 300)}` : "";
       log(`[LSP notification] ${msg.method}${detail}`);
     });
@@ -19013,6 +19032,9 @@ var LspClient = class {
     this._connection.sendNotification("initialized", {});
     this.running = true;
     return initResult;
+  }
+  _noteLogMessage(params) {
+    if (!this.faultHint && params) this.faultHint = lspFaultHint(params.message);
   }
   async sendCustomRequest(method, params) {
     if (!this.running) throw new Error("LSP client not running");
@@ -19452,6 +19474,7 @@ async function runValidation(client, args, tokens) {
       problems.push(`${why}; no diagnostics received for ${missing.length} of ${filePaths.length} file(s)`);
     }
     if (unreadable.length > 0) problems.push(`${unreadable.length} file(s) could not be read`);
+    if (client.faultHint) problems.push(client.faultHint);
     incomplete = {
       reason: missing.length > 0 ? reason || "timeout" : "unreadable",
       message: `Validation incomplete: ${problems.join("; ")}. This is not a clean pass.`,
@@ -19650,8 +19673,24 @@ async function acquireLspTokens(args) {
   }
   return { copilotStudio: cpsToken, dataverse: dvToken };
 }
+function isCliAgentWorkspace(agentDir) {
+  try {
+    return doctor.isCliAgentSettings(fs6.readFileSync(path2.join(agentDir, "settings.mcs.yml"), "utf8"));
+  } catch {
+    return false;
+  }
+}
+function requireClassicWorkspace(args, what) {
+  if (args.allowCliAgent) return;
+  if (isCliAgentWorkspace(findAgentDir(args.workspace, true))) {
+    die(
+      `${what} refused: this is a CLI agent workspace (template cliagent or authoringModel CliCopilot in settings.mcs.yml). This plugin syncs classic agents. Use microsoft/copilot-studio-plugin for CLI agents. A pull into one was reported to cut the tail off settings.mcs.yml (upstream issue #180).`
+    );
+  }
+}
 async function cmdWithLsp(args, method) {
   if (!args.workspace) die("--workspace is required");
+  requireClassicWorkspace(args, method === "powerplatformls/syncPush" ? "Push" : "Pull");
   if (!args.tenantId) die("--tenant-id (or CPS_TENANT_ID) is required");
   if (!args.environmentId) die("--environment-id (or --url / CPS_ENVIRONMENT_ID) is required");
   requireBotDefinition(args);
@@ -19716,7 +19755,13 @@ async function cmdWithLsp(args, method) {
     }
     const request = buildSyncRequest(args, tokens);
     log(`Calling ${method}...`);
-    const result = await sendCustomRequestWithRetries(client, method, request);
+    let result;
+    try {
+      result = await sendCustomRequestWithRetries(client, method, request);
+    } catch (e) {
+      if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+      throw e;
+    }
     const conflicts = method === "powerplatformls/syncPull" ? findConflictMarkers(agentDir) : [];
     if (conflicts.length > 0) {
       process.stdout.write(
@@ -20024,9 +20069,96 @@ async function cmdChanges(args) {
         2
       ) + "\n"
     );
+  } catch (e) {
+    if (client.faultHint) throw new Error(`${e.message}. ${client.faultHint}`);
+    throw e;
   } finally {
     await client.stop();
   }
+}
+function planPackCopy(agentDir) {
+  const copy = [];
+  const skipped = [];
+  const symlinks = [];
+  for (const entry of fs6.readdirSync(agentDir, { withFileTypes: true })) {
+    const name = entry.name;
+    if (entry.isSymbolicLink() && name === "topics") symlinks.push(name);
+    else if (entry.isDirectory() && name === ".mcs") copy.push(name);
+    else if (entry.isDirectory() && name === "topics") {
+      for (const t of fs6.readdirSync(path2.join(agentDir, name), { withFileTypes: true })) {
+        const rel = `${name}/${t.name}`;
+        if (t.isFile() && t.name.endsWith(".mcs.yml")) copy.push(rel);
+        else skipped.push(t.isDirectory() ? `${rel}/` : rel);
+      }
+    } else if (entry.isFile() && ["agent.mcs.yml", "settings.mcs.yml", "icon.png"].includes(name)) copy.push(name);
+    else skipped.push(entry.isDirectory() ? `${name}/` : name);
+  }
+  return { copy: copy.sort(), skipped: skipped.sort(), symlinks };
+}
+function realPathOfNewPath(p) {
+  let cur = path2.resolve(p);
+  const rest = [];
+  for (; ; ) {
+    try {
+      fs6.lstatSync(cur);
+      break;
+    } catch {
+      const parent = path2.dirname(cur);
+      if (parent === cur) break;
+      rest.unshift(path2.basename(cur));
+      cur = parent;
+    }
+  }
+  return path2.join(fs6.realpathSync.native(cur), ...rest);
+}
+function isInsideOrSame(parent, child) {
+  const rel = path2.relative(parent, child);
+  return rel === "" || rel !== ".." && !rel.startsWith(".." + path2.sep) && !path2.isAbsolute(rel);
+}
+function cmdPackCopy(args) {
+  if (!args.workspace) die("--workspace is required");
+  if (!args.out) die("--out <new folder> is required");
+  const agentDir = findAgentDir(args.workspace);
+  let realAgent;
+  let out;
+  try {
+    realAgent = fs6.realpathSync.native(agentDir);
+    out = realPathOfNewPath(args.out);
+  } catch (e) {
+    die(`Cannot resolve the folders: ${e.message}`);
+  }
+  if (isInsideOrSame(realAgent, out)) {
+    die("--out must be outside the agent folder (the real path is compared, a symlink into it counts as inside).");
+  }
+  if (fs6.existsSync(out) && fs6.readdirSync(out).length > 0) {
+    die(`${out} already exists and is not empty. Give --out a new folder.`);
+  }
+  const { copy, skipped, symlinks } = planPackCopy(agentDir);
+  if (symlinks.length > 0) {
+    die(`${symlinks.join(", ")} in ${agentDir} is a symbolic link. pack-copy does not follow it, and a pack without topics would be empty. Use the real folder.`);
+  }
+  for (const required of ["agent.mcs.yml", "settings.mcs.yml"]) {
+    if (!copy.includes(required)) die(`${required} is missing in ${agentDir}`);
+  }
+  fs6.mkdirSync(out, { recursive: true });
+  for (const item of copy) {
+    const dest = path2.join(out, item);
+    fs6.mkdirSync(path2.dirname(dest), { recursive: true });
+    fs6.cpSync(path2.join(agentDir, item), dest, { recursive: true });
+  }
+  process.stdout.write(
+    JSON.stringify(
+      {
+        status: "ok",
+        out,
+        copied: copy,
+        skipped,
+        message: skipped.length > 0 ? `Copied the ${copy.length} entries pac copilot pack accepts. Left out: ${skipped.join(", ")}. The packed solution will not contain them.` : `Copied the ${copy.length} entries pac copilot pack accepts.`
+      },
+      null,
+      2
+    ) + "\n"
+  );
 }
 var SOLUTION_NAMES = [
   "msft_AIPlatformExtensionsComponents",
@@ -20182,6 +20314,9 @@ async function main() {
         break;
       case "doctor":
         cmdDoctor(args);
+        break;
+      case "pack-copy":
+        cmdPackCopy(args);
         break;
       default:
         die(`Unknown command: ${args.command}`);

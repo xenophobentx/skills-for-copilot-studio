@@ -186,6 +186,8 @@ Then push, publish, and test again to verify the agent now responds with grounde
 | Plugin not found | Not installed or wrong path | Run `/plugin list` to verify |
 | Extension not found (clone/push/pull) | Copilot Studio VS Code Extension not installed | [Install from marketplace](https://github.com/microsoft/vscode-copilotstudio) |
 | ConcurrencyVersionMismatch on push | Stale row versions | Pull first, then push |
+| `pac copilot pack` fails with `Unsupported directory: workflows/.` | pac packs only `agent.mcs.yml`, `settings.mcs.yml`, `icon.png`, `.mcs/` and `topics/` | Pack a copy that holds only those entries. `manage-agent pack-copy --workspace <agent> --out <new folder>` makes one and lists what it leaves out (see the manage-agent skill) |
+| Pull or validate fails with `Can't read file outside of client workspace` in the log | LanguageServerHost could not resolve a file inside the workspace (upstream issue #178, cause not known) | Spell `--workspace` with the real case of the folder, update the Copilot Studio VS Code extension, or do the step in the extension |
 
 If clone, push or pull fails and the cause is not clear, run `/copilot-studio:doctor`. It checks Node, the LanguageServerHost binary, the native modules, `pac` and your workspace, and prints one line each with what to do. It is read-only and makes no network calls.
 
